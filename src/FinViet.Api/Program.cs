@@ -1,16 +1,27 @@
-using Microsoft.EntityFrameworkCore;
+using FinViet.Api.Middlewares;
+using FinViet.Application;
+using FinViet.Infrastructure;
+using Microsoft.OpenApi;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddDbContext<FinVietDbContext>(options =>
-    options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
-    
-builder.Services.AddEndpointsApiExplorer(); 
-builder.Services.AddSwaggerGen();           
+builder.Services.AddApplication();
+builder.Services.AddInfrastructure(builder.Configuration);
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen(options =>
+{
+    options.SwaggerDoc("v1", new OpenApiInfo
+    {
+        Title = "FinViet API",
+        Version = "v1"
+    });
+});
 
-builder.Services.AddControllers();          
+builder.Services.AddControllers();
 
 var app = builder.Build();
+
+app.UseMiddleware<ExceptionHandlingMiddleware>();
 
 if (app.Environment.IsDevelopment())
 {
@@ -19,7 +30,6 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
-
-app.MapControllers(); 
-
+app.MapGet("/", () => Results.Redirect("/swagger"));
+app.MapControllers();
 app.Run();
