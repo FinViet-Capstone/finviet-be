@@ -1,7 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
-    <ProjectReference Include="..\1.FinViet.Domain\FinViet.Domain.csproj" />
+    <ProjectReference Include="..\FinViet.Domain\FinViet.Domain.csproj" />
   </ItemGroup>
 
   <PropertyGroup>

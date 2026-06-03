@@ -5,15 +5,15 @@ VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{827E0CD3-B72D-47B6-A68D-7590B98EB39B}"
 EndProject
-Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "1.FinViet.Domain", "1.FinViet.Domain", "{10C01991-9095-E759-DE9C-24FC505FD2FD}"
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "FinViet.Domain", "FinViet.Domain", "{10C01991-9095-E759-DE9C-24FC505FD2FD}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FinViet.Domain", "src\1.FinViet.Domain\FinViet.Domain.csproj", "{F9F1BA11-4ED6-41B0-B0E3-EA8AB3251FC7}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FinViet.Domain", "src\FinViet.Domain\FinViet.Domain.csproj", "{F9F1BA11-4ED6-41B0-B0E3-EA8AB3251FC7}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FinViet.Application", "src\2.FinViet.Application\FinViet.Application.csproj", "{7DCC8E98-E444-448A-8527-975F6424C689}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FinViet.Application", "src\FinViet.Application\FinViet.Application.csproj", "{7DCC8E98-E444-448A-8527-975F6424C689}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FinViet.Infrastructure", "src\3.FinViet.Infrastructure\FinViet.Infrastructure.csproj", "{FEB0E584-0ACA-4A77-8DC3-FF4C5D61717A}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FinViet.Infrastructure", "src\FinViet.Infrastructure\FinViet.Infrastructure.csproj", "{FEB0E584-0ACA-4A77-8DC3-FF4C5D61717A}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FinViet.Api", "src\4.FinViet.Api\FinViet.Api.csproj", "{6A80DBAE-1890-4179-B624-1E56D1462225}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FinViet.Api", "src\FinViet.Api\FinViet.Api.csproj", "{6A80DBAE-1890-4179-B624-1E56D1462225}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FinViet.Application.UnitTests", "tests\FinViet.Application.UnitTests\FinViet.Application.UnitTests.csproj", "{9B9D0C16-C4B4-434A-901D-BCD29109E1FF}"
 EndProject

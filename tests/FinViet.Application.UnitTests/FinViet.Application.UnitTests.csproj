@@ -19,7 +19,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\2.FinViet.Application\FinViet.Application.csproj" />
+    <ProjectReference Include="..\..\src\FinViet.Application\FinViet.Application.csproj" />
   </ItemGroup>
 
 </Project>
