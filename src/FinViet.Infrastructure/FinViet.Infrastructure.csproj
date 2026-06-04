@@ -2,9 +2,12 @@
 
   <ItemGroup>
     <ProjectReference Include="..\FinViet.Application\FinViet.Application.csproj" />
+    <ProjectReference Include="..\FinViet.Domain\FinViet.Domain.csproj" />
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="ExcelDataReader" Version="3.7.0" />
+    <PackageReference Include="ExcelDataReader.DataSet" Version="3.7.0" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="8.0.11" />
   </ItemGroup>
 
