@@ -28,7 +28,14 @@ public class WalletService : IWalletService
             .AsNoTracking()
             .Where(w => w.CustomerId == customerId)
             .OrderBy(w => w.WalletName)
-            .Select(w => ToResponse(w))
+            .Select(w => new WalletResponse
+            {
+                WalletId = w.WalletId,
+                CustomerId = w.CustomerId ?? Guid.Empty,
+                WalletName = w.WalletName,
+                WalletType = w.WalletType,
+                Balance = w.Balance ?? 0m
+            })
             .ToListAsync(cancellationToken);
     }
 
