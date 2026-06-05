@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 
 namespace FinViet.Infrastructure.Persistence.Entities;
@@ -19,6 +19,23 @@ public partial class Customer
 
     public DateTime? CreatedAt { get; set; }
 
+    // ── Auth & Profile fields ────────────────────────────────
+    public string? AvatarUrl { get; set; }
+
+    public decimal? MonthlyIncomeExpected { get; set; }
+
+    /// <summary>Firebase UID for Google OAuth users</summary>
+    public string? GoogleId { get; set; }
+
+    public bool IsEmailVerified { get; set; }
+
+    public DateTime? EmailVerifiedAt { get; set; }
+
+    public bool IsActive { get; set; }
+
+    public DateTime? DeletedAt { get; set; }
+
+    // ── Navigation ───────────────────────────────────────────
     public virtual Admin? Admin { get; set; }
 
     public virtual ICollection<AiReport> AiReports { get; set; } = new List<AiReport>();
@@ -40,4 +57,8 @@ public partial class Customer
     public virtual ICollection<SavingGoal> SavingGoals { get; set; } = new List<SavingGoal>();
 
     public virtual ICollection<Wallet> Wallets { get; set; } = new List<Wallet>();
+
+    public virtual ICollection<RefreshToken> RefreshTokens { get; set; } = new List<RefreshToken>();
+
+    public virtual ICollection<EmailVerificationToken> EmailVerificationTokens { get; set; } = new List<EmailVerificationToken>();
 }

@@ -1,0 +1,72 @@
+using FinViet.Application.Common;
+using FinViet.Application.Common.Exceptions;
+using FluentValidation;
+using Microsoft.AspNetCore.Mvc;
+using System.Text.Json;
+
+namespace FinViet.Api.Middlewares;
+
+public class ExceptionHandlingMiddleware
+{
+    private readonly RequestDelegate _next;
+    private readonly ILogger<ExceptionHandlingMiddleware> _logger;
+
+    public ExceptionHandlingMiddleware(RequestDelegate next, ILogger<ExceptionHandlingMiddleware> logger)
+    {
+        _next   = next;
+        _logger = logger;
+    }
+
+    public async Task InvokeAsync(HttpContext context)
+    {
+        try
+        {
+            await _next(context);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Unhandled exception: {Message}", ex.Message);
+            await HandleExceptionAsync(context, ex);
+        }
+    }
+
+    private static async Task HandleExceptionAsync(HttpContext context, Exception exception)
+    {
+        context.Response.ContentType = "application/json";
+
+        (int statusCode, string message, object? errors) = exception switch
+        {
+            ValidationException ve => (
+                StatusCodes.Status400BadRequest,
+                "Validation failed.",
+                ve.Errors
+                  .GroupBy(e => e.PropertyName)
+                  .ToDictionary(
+                      g => g.Key,
+                      g => g.Select(e => e.ErrorMessage).ToArray())),
+
+            BadRequestException bre   => (StatusCodes.Status400BadRequest,   bre.Message, null),
+            NotFoundException nfe     => (StatusCodes.Status404NotFound,      nfe.Message, null),
+            ConflictException ce      => (StatusCodes.Status409Conflict,      ce.Message,  null),
+            UnauthorizedException ue  => (StatusCodes.Status401Unauthorized,  ue.Message,  null),
+            ForbiddenException fe     => (StatusCodes.Status403Forbidden,     fe.Message,  null),
+            _                         => (StatusCodes.Status500InternalServerError, "An unexpected error occurred.", null)
+        };
+
+        context.Response.StatusCode = statusCode;
+
+        var response = new
+        {
+            success = false,
+            message,
+            errors
+        };
+
+        var json = JsonSerializer.Serialize(response, new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+        });
+
+        await context.Response.WriteAsync(json);
+    }
+}

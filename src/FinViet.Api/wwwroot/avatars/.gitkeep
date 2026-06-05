@@ -1,0 +1,2 @@
+# Avatar storage directory
+# Images uploaded via POST /api/profile/avatar are stored here
