@@ -35,6 +35,7 @@ public class ExceptionHandlingMiddleware
     {
         var (statusCode, message) = exception switch
         {
+            UnauthorizedAccessException => (HttpStatusCode.Unauthorized, exception.Message),
             ValidationException => (HttpStatusCode.BadRequest, exception.Message),
             NotFoundException => (HttpStatusCode.NotFound, exception.Message),
             _ => (HttpStatusCode.InternalServerError, "An unexpected error occurred.")

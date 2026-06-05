@@ -7,13 +7,13 @@ public partial class Wallet
 {
     public Guid WalletId { get; set; }
 
-    public Guid? CustomerId { get; set; }
+    public Guid CustomerId { get; set; }
 
     public string WalletName { get; set; } = null!;
 
     public string WalletType { get; set; } = null!;
 
-    public decimal? Balance { get; set; }
+    public decimal Balance { get; set; }
 
     public virtual Customer? Customer { get; set; }
 
