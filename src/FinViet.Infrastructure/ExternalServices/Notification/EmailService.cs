@@ -93,8 +93,11 @@ public class EmailService : IEmailService
         if (!response.IsSuccessStatusCode)
         {
             var body = await response.Body.ReadAsStringAsync();
-            _logger.LogError("SendGrid error: {Status} – {Body}", response.StatusCode, body);
-            throw new InvalidOperationException($"SendGrid error: {response.StatusCode}");
+            _logger.LogError(
+                "SendGrid send failed. Status={Status} From={From} To={To} Body={Body}",
+                response.StatusCode, _from.Email, toEmail, body);
+            throw new InvalidOperationException(
+                $"SendGrid rejected the email (status {response.StatusCode}): {body}");
         }
     }
 }

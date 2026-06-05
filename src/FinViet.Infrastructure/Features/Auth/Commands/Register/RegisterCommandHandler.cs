@@ -6,6 +6,7 @@ using FinViet.Infrastructure.Persistence.Entities;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 
 namespace FinViet.Infrastructure.Features.Auth.Commands.Register;
 
@@ -14,12 +15,18 @@ public class RegisterCommandHandler : IRequestHandler<RegisterCommand, string>
     private readonly FinVietDbContext _db;
     private readonly IEmailService _emailService;
     private readonly IConfiguration _config;
+    private readonly ILogger<RegisterCommandHandler> _logger;
 
-    public RegisterCommandHandler(FinVietDbContext db, IEmailService emailService, IConfiguration config)
+    public RegisterCommandHandler(
+        FinVietDbContext db,
+        IEmailService emailService,
+        IConfiguration config,
+        ILogger<RegisterCommandHandler> logger)
     {
         _db = db;
         _emailService = emailService;
         _config = config;
+        _logger = logger;
     }
 
     public async Task<string> Handle(RegisterCommand request, CancellationToken cancellationToken)
@@ -71,7 +78,19 @@ public class RegisterCommandHandler : IRequestHandler<RegisterCommand, string>
         var frontendUrl = _config["AppSettings:FrontendUrl"] ?? "http://localhost:3000";
         var verifyUrl   = $"{frontendUrl}/verify-email?token={rawToken}";
 
-        await _emailService.SendVerificationEmailAsync(customer.Email, customer.FullName, verifyUrl);
+        try
+        {
+            await _emailService.SendVerificationEmailAsync(customer.Email, customer.FullName, verifyUrl);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "Account {Email} created but verification email failed to send. Token: {Token}",
+                customer.Email, rawToken);
+
+            return "Registration successful, but the verification email could not be sent. " +
+                   "Please contact support or use the resend endpoint.";
+        }
 
         return "Registration successful. Please check your email to verify your account.";
     }

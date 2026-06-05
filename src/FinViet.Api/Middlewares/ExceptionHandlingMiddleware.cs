@@ -1,7 +1,7 @@
 using FinViet.Application.Common;
 using FinViet.Application.Common.Exceptions;
 using FluentValidation;
-using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Hosting;
 using System.Text.Json;
 
 namespace FinViet.Api.Middlewares;
@@ -10,11 +10,16 @@ public class ExceptionHandlingMiddleware
 {
     private readonly RequestDelegate _next;
     private readonly ILogger<ExceptionHandlingMiddleware> _logger;
+    private readonly IWebHostEnvironment _env;
 
-    public ExceptionHandlingMiddleware(RequestDelegate next, ILogger<ExceptionHandlingMiddleware> logger)
+    public ExceptionHandlingMiddleware(
+        RequestDelegate next,
+        ILogger<ExceptionHandlingMiddleware> logger,
+        IWebHostEnvironment env)
     {
         _next   = next;
         _logger = logger;
+        _env    = env;
     }
 
     public async Task InvokeAsync(HttpContext context)
@@ -30,7 +35,7 @@ public class ExceptionHandlingMiddleware
         }
     }
 
-    private static async Task HandleExceptionAsync(HttpContext context, Exception exception)
+    private async Task HandleExceptionAsync(HttpContext context, Exception exception)
     {
         context.Response.ContentType = "application/json";
 
@@ -39,7 +44,7 @@ public class ExceptionHandlingMiddleware
             ValidationException ve => (
                 StatusCodes.Status400BadRequest,
                 "Validation failed.",
-                ve.Errors
+                (object?)ve.Errors
                   .GroupBy(e => e.PropertyName)
                   .ToDictionary(
                       g => g.Key,
@@ -50,7 +55,13 @@ public class ExceptionHandlingMiddleware
             ConflictException ce      => (StatusCodes.Status409Conflict,      ce.Message,  null),
             UnauthorizedException ue  => (StatusCodes.Status401Unauthorized,  ue.Message,  null),
             ForbiddenException fe     => (StatusCodes.Status403Forbidden,     fe.Message,  null),
-            _                         => (StatusCodes.Status500InternalServerError, "An unexpected error occurred.", null)
+            _                         => (StatusCodes.Status500InternalServerError,
+                                          _env.IsDevelopment()
+                                              ? exception.Message
+                                              : "An unexpected error occurred.",
+                                          _env.IsDevelopment()
+                                              ? new { stackTrace = exception.StackTrace, type = exception.GetType().Name }
+                                              : null)
         };
 
         context.Response.StatusCode = statusCode;
