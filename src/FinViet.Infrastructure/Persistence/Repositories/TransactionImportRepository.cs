@@ -44,7 +44,7 @@ public class TransactionImportRepository : ITransactionImportRepository
 
         _context.ImportBatches.Add(batch);
 
-        decimal balance = wallet.Balance ?? 0;
+        decimal balance = wallet.Balance;
         foreach (var row in rows)
         {
             if (row.Amount <= 0)
@@ -89,7 +89,7 @@ public class TransactionImportRepository : ITransactionImportRepository
         await _context.SaveChangesAsync(cancellationToken);
 
         response.BatchId = batch.BatchId;
-        response.NewWalletBalance = wallet.Balance ?? 0;
+        response.NewWalletBalance = wallet.Balance;
         return response;
     }
 }

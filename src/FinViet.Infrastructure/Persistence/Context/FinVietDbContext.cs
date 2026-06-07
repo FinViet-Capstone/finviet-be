@@ -677,13 +677,18 @@ public partial class FinVietDbContext : DbContext
             entity.Property(e => e.Balance)
                 .HasPrecision(15, 2)
                 .HasDefaultValueSql("0.00")
+                .IsRequired()
                 .HasColumnName("balance");
-            entity.Property(e => e.CustomerId).HasColumnName("customer_id");
+            entity.Property(e => e.CustomerId)
+                .IsRequired()
+                .HasColumnName("customer_id");
             entity.Property(e => e.WalletName)
                 .HasMaxLength(100)
+                .IsRequired()
                 .HasColumnName("wallet_name");
             entity.Property(e => e.WalletType)
                 .HasMaxLength(50)
+                .IsRequired()
                 .HasColumnName("wallet_type");
 
             entity.HasOne(d => d.Customer).WithMany(p => p.Wallets)

@@ -122,10 +122,10 @@ public class WalletRepository : IWalletRepository
         return new WalletDto
         {
             WalletId = wallet.WalletId,
-            CustomerId = wallet.CustomerId ?? Guid.Empty,
+            CustomerId = wallet.CustomerId,
             WalletName = wallet.WalletName,
             WalletType = wallet.WalletType,
-            Balance = wallet.Balance ?? 0
+            Balance = wallet.Balance
         };
     }
 
@@ -142,10 +142,10 @@ public class WalletRepository : IWalletRepository
         return new WalletDto
         {
             WalletId = wallet.WalletId,
-            CustomerId = wallet.CustomerId ?? Guid.Empty,
+            CustomerId = wallet.CustomerId,
             WalletName = wallet.WalletName,
             WalletType = wallet.WalletType,
-            Balance = wallet.Balance ?? 0
+            Balance = wallet.Balance
         };
     }
 }

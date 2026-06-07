@@ -1,13 +1,14 @@
 using FinViet.Application.Interfaces;
 using FinViet.Infrastructure.ExternalServices;
+using FinViet.Infrastructure.ExternalServices.TransactionImport;
 using FinViet.Infrastructure.Features.Auth.Commands.Login;
 using FinViet.Infrastructure.Identity;
 using FinViet.Infrastructure.Persistence.Context;
+using FinViet.Infrastructure.Persistence.Repositories;
+using FinViet.Infrastructure.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using FinViet.Infrastructure.Persistence.Repositories;
-using FinViet.Infrastructure.ExternalServices.TransactionImport;
 
 namespace FinViet.Infrastructure;
 
@@ -33,7 +34,7 @@ public static class DependencyInjection
         // Avatar storage
         services.AddScoped<IAvatarService, AvatarService>();
 
-         // Repositories
+        // Repositories
         services.AddScoped<ITransactionRepository, TransactionRepository>();
         services.AddScoped<IWalletRepository, WalletRepository>();
         services.AddScoped<ITransactionImportRepository, TransactionImportRepository>();
@@ -41,6 +42,9 @@ public static class DependencyInjection
         // Transaction Import
         services.AddScoped<IBankStatementParser, BankStatementExcelParser>();
         services.AddScoped<ISmsTransactionParser, SmsTransactionParser>();
+
+        // Wallet Service
+        services.AddScoped<IWalletService, WalletService>();
 
         // LoginCommandHandler exposed as scoped service for GoogleLoginCommandHandler to reuse
         services.AddScoped<LoginCommandHandler>();

@@ -20,7 +20,7 @@ var builder = WebApplication.CreateBuilder(args);
 // Application layer (FluentValidation + ValidationBehavior)
 builder.Services.AddApplicationServices();
 
-// Infrastructure layer (DbContext, JWT, Email, Firebase, Avatar)
+// Infrastructure layer (DbContext, JWT, Email, Firebase, Avatar, Wallets)
 builder.Services.AddInfrastructureServices(builder.Configuration);
 
 // Register MediatR handlers from Infrastructure (where handlers live in pragmatic arch)
@@ -139,7 +139,6 @@ app.UseCors();
 
 app.UseAuthentication();
 app.UseAuthorization();
-
 
 app.MapControllers();
 

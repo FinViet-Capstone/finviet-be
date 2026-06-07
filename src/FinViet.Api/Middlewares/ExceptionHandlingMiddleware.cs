@@ -30,7 +30,30 @@ public class ExceptionHandlingMiddleware
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Unhandled exception: {Message}", ex.Message);
+            if (ex is BadRequestException
+                or NotFoundException
+                or ConflictException
+                or UnauthorizedException
+                or ForbiddenException
+                or ValidationException
+                or FinViet.Application.Exceptions.NotFoundException
+                or FinViet.Application.Exceptions.ValidationException)
+            {
+                _logger.LogWarning(
+                    ex,
+                    "Handled exception while processing {Method} {Path}",
+                    context.Request.Method,
+                    context.Request.Path);
+            }
+            else
+            {
+                _logger.LogError(
+                    ex,
+                    "Unhandled exception while processing {Method} {Path}",
+                    context.Request.Method,
+                    context.Request.Path);
+            }
+
             await HandleExceptionAsync(context, ex);
         }
     }
@@ -50,11 +73,18 @@ public class ExceptionHandlingMiddleware
                       g => g.Key,
                       g => g.Select(e => e.ErrorMessage).ToArray())),
 
+            FinViet.Application.Exceptions.ValidationException ve2 =>
+                (StatusCodes.Status400BadRequest, ve2.Message, null),
+
             BadRequestException bre   => (StatusCodes.Status400BadRequest,   bre.Message, null),
             NotFoundException nfe     => (StatusCodes.Status404NotFound,      nfe.Message, null),
+            FinViet.Application.Exceptions.NotFoundException nfe2 =>
+                                         (StatusCodes.Status404NotFound,      nfe2.Message, null),
             ConflictException ce      => (StatusCodes.Status409Conflict,      ce.Message,  null),
             UnauthorizedException ue  => (StatusCodes.Status401Unauthorized,  ue.Message,  null),
             ForbiddenException fe     => (StatusCodes.Status403Forbidden,     fe.Message,  null),
+            UnauthorizedAccessException uae =>
+                                         (StatusCodes.Status401Unauthorized,  uae.Message, null),
             _                         => (StatusCodes.Status500InternalServerError,
                                           _env.IsDevelopment()
                                               ? exception.Message
