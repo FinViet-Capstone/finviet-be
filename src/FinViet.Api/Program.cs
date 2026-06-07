@@ -9,6 +9,9 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
+using FinViet.Application.Interfaces;
+using FinViet.Infrastructure.Persistence.Repositories;
+using FinViet.Infrastructure.ExternalServices.TransactionImport;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -136,6 +139,7 @@ app.UseCors();
 
 app.UseAuthentication();
 app.UseAuthorization();
+
 
 app.MapControllers();
 

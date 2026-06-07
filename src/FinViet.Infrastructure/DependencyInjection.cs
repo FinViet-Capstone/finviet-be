@@ -6,6 +6,8 @@ using FinViet.Infrastructure.Persistence.Context;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using FinViet.Infrastructure.Persistence.Repositories;
+using FinViet.Infrastructure.ExternalServices.TransactionImport;
 
 namespace FinViet.Infrastructure;
 
@@ -30,6 +32,15 @@ public static class DependencyInjection
 
         // Avatar storage
         services.AddScoped<IAvatarService, AvatarService>();
+
+         // Repositories
+        services.AddScoped<ITransactionRepository, TransactionRepository>();
+        services.AddScoped<IWalletRepository, WalletRepository>();
+        services.AddScoped<ITransactionImportRepository, TransactionImportRepository>();
+
+        // Transaction Import
+        services.AddScoped<IBankStatementParser, BankStatementExcelParser>();
+        services.AddScoped<ISmsTransactionParser, SmsTransactionParser>();
 
         // LoginCommandHandler exposed as scoped service for GoogleLoginCommandHandler to reuse
         services.AddScoped<LoginCommandHandler>();
