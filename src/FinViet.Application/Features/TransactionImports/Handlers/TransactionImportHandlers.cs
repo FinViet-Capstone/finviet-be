@@ -20,12 +20,12 @@ public class ImportBankExcelHandler : IRequestHandler<ImportBankExcelCommand, Im
 
     public Task<ImportTransactionsResponseDto> Handle(ImportBankExcelCommand request, CancellationToken cancellationToken)
     {
-        var rows = _bankStatementParser.Parse(request.FileStream, request.MaxRows);
+        var parseResult = _bankStatementParser.Parse(request.FileStream, request.MaxRows);
         return _transactionImportRepository.SaveImportedTransactionsAsync(
             request.WalletId,
             request.CustomerId,
             request.FileName,
-            rows,
+            parseResult,
             cancellationToken);
     }
 }
@@ -45,12 +45,12 @@ public class ImportSmsPasteHandler : IRequestHandler<ImportSmsPasteCommand, Impo
 
     public Task<ImportTransactionsResponseDto> Handle(ImportSmsPasteCommand request, CancellationToken cancellationToken)
     {
-        var rows = _smsTransactionParser.Parse(request.Content);
+        var parseResult = _smsTransactionParser.Parse(request.Content);
         return _transactionImportRepository.SaveImportedTransactionsAsync(
             request.WalletId,
             request.CustomerId,
             "sms-paste",
-            rows,
+            parseResult,
             cancellationToken);
     }
 }

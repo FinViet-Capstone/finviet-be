@@ -25,6 +25,7 @@ public class TransactionRepository : ITransactionRepository
             TransactionId = transaction.TransactionId,
             WalletId = transaction.WalletId ?? Guid.Empty,
             CategoryId = transaction.CategoryId,
+            SourceId = transaction.SourceId,
             TransactionType = transaction.TransactionType,
             Amount = transaction.Amount,
             TransactionDate = transaction.TransactionDate ?? DateTime.Now,
@@ -55,6 +56,7 @@ public class TransactionRepository : ITransactionRepository
             TransactionId = transaction.TransactionId,
             WalletId = transaction.WalletId ?? Guid.Empty,
             CategoryId = transaction.CategoryId,
+            SourceId = transaction.SourceId,
             TransactionType = transaction.TransactionType,
             Amount = transaction.Amount,
             TransactionDate = transaction.TransactionDate ?? DateTime.Now,
@@ -84,6 +86,7 @@ public class TransactionRepository : ITransactionRepository
             TransactionId = transaction.TransactionId,
             WalletId = transaction.WalletId ?? Guid.Empty,
             CategoryId = transaction.CategoryId,
+            SourceId = transaction.SourceId,
             TransactionType = transaction.TransactionType,
             Amount = transaction.Amount,
             TransactionDate = transaction.TransactionDate ?? DateTime.Now,
@@ -101,6 +104,31 @@ public class TransactionRepository : ITransactionRepository
         _context.Transactions.Remove(transaction);
         await _context.SaveChangesAsync(cancellationToken);
         return true;
+    }
+
+    public async Task<TransactionResponseDto?> ClassifyAsync(Guid transactionId, Guid? categoryId, Guid? sourceId, CancellationToken cancellationToken = default)
+    {
+        var transaction = await _context.Transactions.FindAsync(new object[] { transactionId }, cancellationToken: cancellationToken);
+        if (transaction == null)
+            return null;
+
+        transaction.CategoryId = categoryId;
+        transaction.SourceId = sourceId;
+
+        await _context.SaveChangesAsync(cancellationToken);
+
+        return new TransactionResponseDto
+        {
+            TransactionId = transaction.TransactionId,
+            WalletId = transaction.WalletId ?? Guid.Empty,
+            CategoryId = transaction.CategoryId,
+            SourceId = transaction.SourceId,
+            TransactionType = transaction.TransactionType,
+            Amount = transaction.Amount,
+            TransactionDate = transaction.TransactionDate ?? DateTime.Now,
+            Note = transaction.Note,
+            CreatedAt = transaction.TransactionDate ?? DateTime.Now
+        };
     }
 }
 

@@ -17,19 +17,27 @@ public class TransactionImportRepository : ITransactionImportRepository
 
     public async Task<ImportTransactionsResponseDto> SaveImportedTransactionsAsync(
         Guid walletId,
-        Guid? customerId,
+        Guid customerId,
         string fileName,
-        List<ParsedTransactionDto> rows,
+        ParseResult parseResult,
         CancellationToken cancellationToken = default)
     {
+        var rows = parseResult.Rows;
         var response = new ImportTransactionsResponseDto
         {
-            TotalParsed = rows.Count
+            TotalRowsScanned = parseResult.TotalRowsScanned,
+            TotalParsed = rows.Count,
+            Skipped = parseResult.SkippedDuringParse,
+            Errors = new List<string>(parseResult.ParseErrors)
         };
 
         var wallet = await _context.Wallets.FindAsync(new object[] { walletId }, cancellationToken: cancellationToken);
         if (wallet == null)
             throw new NotFoundException("Wallet", walletId);
+
+        // Ownership check: the wallet must belong to the authenticated customer.
+        if (wallet.CustomerId != customerId)
+            throw new ForbiddenException("You do not have access to this wallet.");
 
         if (rows.Count == 0)
             return response;
@@ -37,7 +45,7 @@ public class TransactionImportRepository : ITransactionImportRepository
         var batch = new ImportBatch
         {
             BatchId = Guid.NewGuid(),
-            CustomerId = customerId ?? wallet.CustomerId,
+            CustomerId = customerId,
             WalletId = wallet.WalletId,
             FileName = fileName,
             ImportDate = DateTime.UtcNow

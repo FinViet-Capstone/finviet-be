@@ -6,8 +6,8 @@ public interface ITransactionImportRepository
 {
     Task<ImportTransactionsResponseDto> SaveImportedTransactionsAsync(
         Guid walletId,
-        Guid? customerId,
+        Guid customerId,
         string fileName,
-        List<ParsedTransactionDto> rows,
+        ParseResult parseResult,
         CancellationToken cancellationToken = default);
 }

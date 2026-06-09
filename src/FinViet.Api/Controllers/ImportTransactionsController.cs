@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using FinViet.Application.DTOs;
 using FinViet.Application.Features.TransactionImports.Commands;
 using MediatR;
@@ -28,7 +29,7 @@ public class ImportTransactionsController : ControllerBase
         var command = new ImportBankExcelCommand
         {
             WalletId = request.WalletId,
-            CustomerId = request.CustomerId,
+            CustomerId = GetCustomerId(),
             FileName = request.File.FileName,
             FileStream = stream,
             MaxRows = request.MaxRows
@@ -47,12 +48,22 @@ public class ImportTransactionsController : ControllerBase
         var command = new ImportSmsPasteCommand
         {
             WalletId = request.WalletId,
-            CustomerId = request.CustomerId,
+            CustomerId = GetCustomerId(),
             Content = request.Content
         };
 
         var result = await _mediator.Send(command, cancellationToken);
         return Ok(result);
+    }
+
+    private Guid GetCustomerId()
+    {
+        var claimValue = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
+
+        if (!Guid.TryParse(claimValue, out var customerId))
+            throw new UnauthorizedAccessException("Authenticated user does not have a valid customer identifier claim.");
+
+        return customerId;
     }
 }
 
