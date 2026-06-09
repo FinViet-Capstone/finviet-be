@@ -1,3 +1,4 @@
+using FinViet.Application.Common.Exceptions;
 using FinViet.Application.DTOs;
 using FinViet.Application.Interfaces;
 using FinViet.Infrastructure.Persistence.Context;
@@ -28,7 +29,7 @@ public class TransactionImportRepository : ITransactionImportRepository
 
         var wallet = await _context.Wallets.FindAsync(new object[] { walletId }, cancellationToken: cancellationToken);
         if (wallet == null)
-            throw new Exception($"Wallet {walletId} not found");
+            throw new NotFoundException("Wallet", walletId);
 
         if (rows.Count == 0)
             return response;

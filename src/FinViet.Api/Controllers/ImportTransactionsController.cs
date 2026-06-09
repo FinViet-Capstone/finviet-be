@@ -1,12 +1,14 @@
 using FinViet.Application.DTOs;
 using FinViet.Application.Features.TransactionImports.Commands;
 using MediatR;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace FinViet.Api.Controllers;
 
 [ApiController]
 [Route("api/import-transactions")]
+[Authorize(Roles = "Customer")]
 public class ImportTransactionsController : ControllerBase
 {
     private readonly IMediator _mediator;

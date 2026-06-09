@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MediatR;
 using FinViet.Application.Features.Transactions.Commands;
@@ -7,6 +8,7 @@ namespace FinViet.Api.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
+[Authorize(Roles = "Customer")]
 public class TransactionsController : ControllerBase
 {
     private readonly IMediator _mediator;

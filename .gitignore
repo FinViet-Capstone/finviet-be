@@ -482,3 +482,5 @@ $RECYCLE.BIN/
 
 # Vim temporary swap files
 *.swp
+src/FinViet.Api/appsettings.json
+src/FinViet.Api/appsettings.json
