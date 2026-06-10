@@ -51,6 +51,10 @@ public static class DependencyInjection
         services.AddScoped<IIncomeSourceService, IncomeSourceService>();
         services.AddScoped<ICategoryRequestService, CategoryRequestService>();
 
+        // Saving Goals & Notifications
+        services.AddScoped<INotificationService, NotificationService>();
+        services.AddScoped<ISavingGoalService, SavingGoalService>();
+
         // LoginCommandHandler exposed as scoped service for GoogleLoginCommandHandler to reuse
         services.AddScoped<LoginCommandHandler>();
 
