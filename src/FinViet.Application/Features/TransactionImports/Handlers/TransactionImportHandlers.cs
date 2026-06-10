@@ -25,6 +25,7 @@ public class ImportBankExcelHandler : IRequestHandler<ImportBankExcelCommand, Im
             request.WalletId,
             request.CustomerId,
             request.FileName,
+            "CSV",
             parseResult,
             cancellationToken);
     }
@@ -50,6 +51,7 @@ public class ImportSmsPasteHandler : IRequestHandler<ImportSmsPasteCommand, Impo
             request.WalletId,
             request.CustomerId,
             "sms-paste",
+            "SMS",
             parseResult,
             cancellationToken);
     }

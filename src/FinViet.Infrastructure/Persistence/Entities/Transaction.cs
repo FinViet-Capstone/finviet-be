@@ -7,7 +7,7 @@ public partial class Transaction
 {
     public Guid TransactionId { get; set; }
 
-    public Guid? WalletId { get; set; }
+    public Guid WalletId { get; set; }
 
     public Guid? CategoryId { get; set; }
 
@@ -18,6 +18,9 @@ public partial class Transaction
     public Guid? ReportId { get; set; }
 
     public string TransactionType { get; set; } = null!;
+
+    /// <summary>How the transaction entered the system: SMS, MANUAL, CSV, or LINKED.</summary>
+    public string SourceChannel { get; set; } = null!;
 
     public decimal Amount { get; set; }
 

@@ -23,10 +23,11 @@ public class TransactionRepository : ITransactionRepository
         return new TransactionResponseDto
         {
             TransactionId = transaction.TransactionId,
-            WalletId = transaction.WalletId ?? Guid.Empty,
+            WalletId = transaction.WalletId,
             CategoryId = transaction.CategoryId,
             SourceId = transaction.SourceId,
             TransactionType = transaction.TransactionType,
+            SourceChannel = transaction.SourceChannel,
             Amount = transaction.Amount,
             TransactionDate = transaction.TransactionDate ?? DateTime.Now,
             Note = transaction.Note,
@@ -43,6 +44,7 @@ public class TransactionRepository : ITransactionRepository
             CategoryId = categoryId,
             SourceId = sourceId,
             TransactionType = transactionType,
+            SourceChannel = "MANUAL",
             Amount = amount,
             TransactionDate = transactionDate,
             Note = note
@@ -54,10 +56,11 @@ public class TransactionRepository : ITransactionRepository
         return new TransactionResponseDto
         {
             TransactionId = transaction.TransactionId,
-            WalletId = transaction.WalletId ?? Guid.Empty,
+            WalletId = transaction.WalletId,
             CategoryId = transaction.CategoryId,
             SourceId = transaction.SourceId,
             TransactionType = transaction.TransactionType,
+            SourceChannel = transaction.SourceChannel,
             Amount = transaction.Amount,
             TransactionDate = transaction.TransactionDate ?? DateTime.Now,
             Note = transaction.Note,
@@ -84,10 +87,11 @@ public class TransactionRepository : ITransactionRepository
         return new TransactionResponseDto
         {
             TransactionId = transaction.TransactionId,
-            WalletId = transaction.WalletId ?? Guid.Empty,
+            WalletId = transaction.WalletId,
             CategoryId = transaction.CategoryId,
             SourceId = transaction.SourceId,
             TransactionType = transaction.TransactionType,
+            SourceChannel = transaction.SourceChannel,
             Amount = transaction.Amount,
             TransactionDate = transaction.TransactionDate ?? DateTime.Now,
             Note = transaction.Note,
@@ -120,10 +124,11 @@ public class TransactionRepository : ITransactionRepository
         return new TransactionResponseDto
         {
             TransactionId = transaction.TransactionId,
-            WalletId = transaction.WalletId ?? Guid.Empty,
+            WalletId = transaction.WalletId,
             CategoryId = transaction.CategoryId,
             SourceId = transaction.SourceId,
             TransactionType = transaction.TransactionType,
+            SourceChannel = transaction.SourceChannel,
             Amount = transaction.Amount,
             TransactionDate = transaction.TransactionDate ?? DateTime.Now,
             Note = transaction.Note,

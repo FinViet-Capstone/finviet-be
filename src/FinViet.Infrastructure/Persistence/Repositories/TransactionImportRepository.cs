@@ -19,6 +19,7 @@ public class TransactionImportRepository : ITransactionImportRepository
         Guid walletId,
         Guid customerId,
         string fileName,
+        string sourceChannel,
         ParseResult parseResult,
         CancellationToken cancellationToken = default)
     {
@@ -71,6 +72,7 @@ public class TransactionImportRepository : ITransactionImportRepository
                 SourceId = null,
                 BatchId = batch.BatchId,
                 TransactionType = row.TransactionType,
+                SourceChannel = sourceChannel,
                 Amount = row.Amount,
                 TransactionDate = DateTime.SpecifyKind(row.TransactionDate, DateTimeKind.Utc),
                 Note = row.Note

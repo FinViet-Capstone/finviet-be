@@ -191,6 +191,7 @@ public class WalletService : IWalletService
                 TransactionId = Guid.NewGuid(),
                 WalletId = fromWallet.WalletId,
                 TransactionType = "TRANSFER",
+                SourceChannel = "MANUAL",
                 Amount = request.Amount,
                 TransactionDate = now,
                 Note = $"OUT: {description}"
@@ -200,6 +201,7 @@ public class WalletService : IWalletService
                 TransactionId = Guid.NewGuid(),
                 WalletId = toWallet.WalletId,
                 TransactionType = "TRANSFER",
+                SourceChannel = "MANUAL",
                 Amount = request.Amount,
                 TransactionDate = now,
                 Note = $"IN: {description}"
@@ -284,7 +286,7 @@ public class WalletService : IWalletService
             .Select(x => new WalletTransactionResponse
             {
                 TransactionId = x.TransactionId,
-                WalletId = x.WalletId ?? Guid.Empty,
+                WalletId = x.WalletId,
                 CategoryId = x.CategoryId,
                 TransactionType = x.TransactionType,
                 Amount = x.Amount,

@@ -8,6 +8,7 @@ public interface ITransactionImportRepository
         Guid walletId,
         Guid customerId,
         string fileName,
+        string sourceChannel,
         ParseResult parseResult,
         CancellationToken cancellationToken = default);
 }

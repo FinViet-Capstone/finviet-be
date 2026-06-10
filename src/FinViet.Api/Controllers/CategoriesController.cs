@@ -7,7 +7,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace FinViet.Api.Controllers;
 
 [ApiController]
-[Authorize(Roles = "Customer")]
+[Authorize]
 [Route("api/categories")]
 public class CategoriesController : ControllerBase
 {
@@ -46,6 +46,7 @@ public class CategoriesController : ControllerBase
     }
 
     [HttpPost]
+    [Authorize(Roles = "Admin")]
     public async Task<ActionResult<ApiResponse<CategoryResponse>>> CreateCategory(
         [FromBody] CreateCategoryRequest request,
         CancellationToken cancellationToken)
@@ -61,6 +62,7 @@ public class CategoriesController : ControllerBase
     }
 
     [HttpPatch("{id:guid}")]
+    [Authorize(Roles = "Admin")]
     public async Task<ActionResult<ApiResponse<CategoryResponse>>> UpdateCategory(
         [FromRoute] Guid id,
         [FromBody] UpdateCategoryRequest request,
@@ -77,6 +79,7 @@ public class CategoriesController : ControllerBase
     }
 
     [HttpDelete("{id:guid}")]
+    [Authorize(Roles = "Admin")]
     public async Task<ActionResult<ApiResponse<object?>>> DeleteCategory(
         [FromRoute] Guid id,
         CancellationToken cancellationToken)
