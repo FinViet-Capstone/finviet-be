@@ -29,3 +29,11 @@ public class DeleteTransactionCommand : IRequest<bool>
 {
     public Guid TransactionId { get; set; }
 }
+
+public class ClassifyTransactionCommand : IRequest<TransactionResponseDto>
+{
+    public Guid CustomerId { get; set; }
+    public Guid TransactionId { get; set; }
+    public Guid? CategoryId { get; set; }
+    public Guid? SourceId { get; set; }
+}

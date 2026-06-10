@@ -7,9 +7,9 @@ namespace FinViet.Infrastructure.ExternalServices.TransactionImport;
 
 public class SmsTransactionParser : ISmsTransactionParser
 {
-    public List<ParsedTransactionDto> Parse(string content)
+    public ParseResult Parse(string content)
     {
-        var result = new List<ParsedTransactionDto>();
+        var result = new ParseResult();
         var messages = Regex.Split(content.Trim(), @"\r?\n\s*\r?\n")
             .Select(x => x.Trim())
             .Where(x => !string.IsNullOrWhiteSpace(x))
@@ -18,11 +18,18 @@ public class SmsTransactionParser : ISmsTransactionParser
         if (messages.Count == 0 && !string.IsNullOrWhiteSpace(content))
             messages.Add(content.Trim());
 
-        foreach (var message in messages)
+        result.TotalRowsScanned = messages.Count;
+
+        for (var i = 0; i < messages.Count; i++)
         {
+            var message = messages[i];
             var amount = ExtractAmount(message);
             if (amount <= 0)
+            {
+                result.SkippedDuringParse++;
+                result.ParseErrors.Add($"Message {i + 1}: could not detect an amount.");
                 continue;
+            }
 
             var lowered = message.ToLowerInvariant();
             var isIncome = lowered.Contains("cong")
@@ -43,7 +50,7 @@ public class SmsTransactionParser : ISmsTransactionParser
             var transactionType = isIncome && !isExpense ? "INCOME" : "EXPENSE";
             var transactionDate = ExtractDateTime(message) ?? DateTime.UtcNow;
 
-            result.Add(new ParsedTransactionDto
+            result.Rows.Add(new ParsedTransactionDto
             {
                 TransactionType = transactionType,
                 Amount = amount,

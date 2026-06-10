@@ -1,3 +1,4 @@
+using FinViet.Application.Common.Exceptions;
 using FinViet.Application.DTOs;
 using FinViet.Application.Interfaces;
 using FinViet.Infrastructure.Persistence.Context;
@@ -16,19 +17,30 @@ public class TransactionImportRepository : ITransactionImportRepository
 
     public async Task<ImportTransactionsResponseDto> SaveImportedTransactionsAsync(
         Guid walletId,
-        Guid? customerId,
+        Guid customerId,
         string fileName,
-        List<ParsedTransactionDto> rows,
+        string sourceChannel,
+        ParseResult parseResult,
         CancellationToken cancellationToken = default)
     {
+        var rows = parseResult.Rows;
         var response = new ImportTransactionsResponseDto
         {
-            TotalParsed = rows.Count
+            TotalRowsScanned = parseResult.TotalRowsScanned,
+            TotalParsed = rows.Count,
+            Skipped = parseResult.SkippedDuringParse,
+            Errors = new List<string>(parseResult.ParseErrors)
         };
 
         var wallet = await _context.Wallets.FindAsync(new object[] { walletId }, cancellationToken: cancellationToken);
         if (wallet == null)
-            throw new Exception($"Wallet {walletId} not found");
+            throw new NotFoundException("Wallet", walletId);
+
+        var walletCustomerId = GetRequiredCustomerId(wallet);
+
+        // Ownership check: the wallet must belong to the authenticated customer.
+        if (walletCustomerId != customerId)
+            throw new ForbiddenException("You do not have access to this wallet.");
 
         if (rows.Count == 0)
             return response;
@@ -36,7 +48,7 @@ public class TransactionImportRepository : ITransactionImportRepository
         var batch = new ImportBatch
         {
             BatchId = Guid.NewGuid(),
-            CustomerId = customerId ?? GetRequiredCustomerId(wallet),
+            CustomerId = walletCustomerId,
             WalletId = wallet.WalletId,
             FileName = fileName,
             ImportDate = DateTime.UtcNow
@@ -62,6 +74,7 @@ public class TransactionImportRepository : ITransactionImportRepository
                 SourceId = null,
                 BatchId = batch.BatchId,
                 TransactionType = row.TransactionType,
+                SourceChannel = sourceChannel,
                 Amount = row.Amount,
                 TransactionDate = DateTime.SpecifyKind(row.TransactionDate, DateTimeKind.Utc),
                 Note = row.Note

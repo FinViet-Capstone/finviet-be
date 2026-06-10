@@ -637,7 +637,13 @@ public partial class FinVietDbContext : DbContext
             entity.Property(e => e.TransactionType)
                 .HasMaxLength(50)
                 .HasColumnName("transaction_type");
-            entity.Property(e => e.WalletId).HasColumnName("wallet_id");
+            entity.Property(e => e.SourceChannel)
+                .HasMaxLength(20)
+                .IsRequired()
+                .HasColumnName("source_channel");
+            entity.Property(e => e.WalletId)
+                .IsRequired()
+                .HasColumnName("wallet_id");
 
             entity.HasOne(d => d.Batch).WithMany(p => p.Transactions)
                 .HasForeignKey(d => d.BatchId)

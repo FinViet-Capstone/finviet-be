@@ -48,6 +48,15 @@ public static class DependencyInjection
         services.AddScoped<IWalletService, WalletService>();
         services.AddScoped<IBudgetService, BudgetService>();
 
+        // Category & Income Source Services
+        services.AddScoped<ICategoryService, CategoryService>();
+        services.AddScoped<IIncomeSourceService, IncomeSourceService>();
+        services.AddScoped<ICategoryRequestService, CategoryRequestService>();
+
+        // Saving Goals & Notifications
+        services.AddScoped<INotificationService, NotificationService>();
+        services.AddScoped<ISavingGoalService, SavingGoalService>();
+
         // LoginCommandHandler exposed as scoped service for GoogleLoginCommandHandler to reuse
         services.AddScoped<LoginCommandHandler>();
 

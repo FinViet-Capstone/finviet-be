@@ -9,35 +9,37 @@ namespace FinViet.Infrastructure.ExternalServices.TransactionImport;
 
 public class BankStatementExcelParser : IBankStatementParser
 {
-    public List<ParsedTransactionDto> Parse(Stream fileStream, int? maxRows = null)
+    public ParseResult Parse(Stream fileStream, int? maxRows = null)
     {
         Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 
         using var reader = ExcelReaderFactory.CreateReader(fileStream);
         var dataSet = reader.AsDataSet();
 
-        var rows = new List<ParsedTransactionDto>();
+        var result = new ParseResult();
         foreach (DataTable sheet in dataSet.Tables)
         {
-            rows.AddRange(ParseSheet(sheet));
+            ParseSheet(sheet, result);
         }
 
-        if (maxRows.HasValue && maxRows.Value > 0)
-            rows = rows.Take(maxRows.Value).ToList();
+        if (maxRows.HasValue && maxRows.Value > 0 && result.Rows.Count > maxRows.Value)
+            result.Rows = result.Rows.Take(maxRows.Value).ToList();
 
-        return rows;
+        return result;
     }
 
-    private static List<ParsedTransactionDto> ParseSheet(DataTable sheet)
+    private static void ParseSheet(DataTable sheet, ParseResult result)
     {
-        var result = new List<ParsedTransactionDto>();
-
         for (var i = 0; i < sheet.Rows.Count; i++)
         {
             var row = sheet.Rows[i];
             var no = GetCell(row, 1);
+
+            // Rows without a numeric STT are headers/blank lines, not data — ignore silently.
             if (!int.TryParse(no, out _))
                 continue;
+
+            result.TotalRowsScanned++;
 
             var dateText = GetCell(row, 2);
             var debit = ParseMoney(GetCell(row, 5));
@@ -46,15 +48,26 @@ public class BankStatementExcelParser : IBankStatementParser
             var correspondent = GetCell(row, 13);
 
             var amount = credit > 0 ? credit : debit;
-            if (amount <= 0 || !TryParseVietnameseDateTime(dateText, out var transactionDate))
+            if (amount <= 0)
+            {
+                result.SkippedDuringParse++;
+                result.ParseErrors.Add($"Row {no}: no valid debit/credit amount.");
                 continue;
+            }
+
+            if (!TryParseVietnameseDateTime(dateText, out var transactionDate))
+            {
+                result.SkippedDuringParse++;
+                result.ParseErrors.Add($"Row {no}: unrecognized date '{dateText}'.");
+                continue;
+            }
 
             var transactionType = credit > 0 ? "INCOME" : "EXPENSE";
             var note = string.IsNullOrWhiteSpace(correspondent)
                 ? description
                 : $"{description} | Doi ung: {correspondent}";
 
-            result.Add(new ParsedTransactionDto
+            result.Rows.Add(new ParsedTransactionDto
             {
                 TransactionType = transactionType,
                 Amount = amount,
@@ -63,8 +76,6 @@ public class BankStatementExcelParser : IBankStatementParser
                 RawText = string.Join(" | ", row.ItemArray.Select(x => x?.ToString()))
             });
         }
-
-        return result;
     }
 
     private static string GetCell(DataRow row, int index)

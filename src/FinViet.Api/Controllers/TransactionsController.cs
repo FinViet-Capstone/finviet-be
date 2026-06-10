@@ -1,3 +1,5 @@
+using System.Security.Claims;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MediatR;
 using FinViet.Application.Features.Transactions.Commands;
@@ -7,6 +9,7 @@ namespace FinViet.Api.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
+[Authorize(Roles = "Customer")]
 public class TransactionsController : ControllerBase
 {
     private readonly IMediator _mediator;
@@ -58,5 +61,30 @@ public class TransactionsController : ControllerBase
         var command = new DeleteTransactionCommand { TransactionId = id };
         var result = await _mediator.Send(command);
         return Ok(result);
+    }
+
+    [HttpPatch("{id}/classify")]
+    public async Task<ActionResult<TransactionResponseDto>> ClassifyTransaction(Guid id, [FromBody] ClassifyTransactionDto dto)
+    {
+        var command = new ClassifyTransactionCommand
+        {
+            CustomerId = GetCustomerId(),
+            TransactionId = id,
+            CategoryId = dto.CategoryId,
+            SourceId = dto.SourceId
+        };
+
+        var result = await _mediator.Send(command);
+        return Ok(result);
+    }
+
+    private Guid GetCustomerId()
+    {
+        var claimValue = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
+
+        if (!Guid.TryParse(claimValue, out var customerId))
+            throw new UnauthorizedAccessException("Authenticated user does not have a valid customer identifier claim.");
+
+        return customerId;
     }
 }
