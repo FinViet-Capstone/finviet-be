@@ -122,10 +122,10 @@ public class WalletRepository : IWalletRepository
         return new WalletDto
         {
             WalletId = wallet.WalletId,
-            CustomerId = wallet.CustomerId,
+            CustomerId = GetRequiredCustomerId(wallet),
             WalletName = wallet.WalletName,
             WalletType = wallet.WalletType,
-            Balance = wallet.Balance
+            Balance = GetRequiredBalance(wallet)
         };
     }
 
@@ -142,11 +142,19 @@ public class WalletRepository : IWalletRepository
         return new WalletDto
         {
             WalletId = wallet.WalletId,
-            CustomerId = wallet.CustomerId,
+            CustomerId = GetRequiredCustomerId(wallet),
             WalletName = wallet.WalletName,
             WalletType = wallet.WalletType,
-            Balance = wallet.Balance
+            Balance = GetRequiredBalance(wallet)
         };
     }
+
+    private static Guid GetRequiredCustomerId(Wallet wallet)
+        => wallet.CustomerId
+           ?? throw new InvalidOperationException($"Wallet {wallet.WalletId} is missing customer_id.");
+
+    private static decimal GetRequiredBalance(Wallet wallet)
+        => wallet.Balance
+           ?? throw new InvalidOperationException($"Wallet {wallet.WalletId} is missing balance.");
 }
 

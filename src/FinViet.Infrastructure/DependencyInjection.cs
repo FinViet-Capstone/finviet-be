@@ -30,6 +30,7 @@ public static class DependencyInjection
 
         // Firebase Auth
         services.AddScoped<IFirebaseAuthService, FirebaseAuthService>();
+        services.AddScoped<IBudgetAlertNotifier, FirebaseBudgetAlertNotifier>();
 
         // Avatar storage
         services.AddScoped<IAvatarService, AvatarService>();
@@ -45,6 +46,7 @@ public static class DependencyInjection
 
         // Wallet Service
         services.AddScoped<IWalletService, WalletService>();
+        services.AddScoped<IBudgetService, BudgetService>();
 
         // LoginCommandHandler exposed as scoped service for GoogleLoginCommandHandler to reuse
         services.AddScoped<LoginCommandHandler>();

@@ -36,7 +36,7 @@ public class TransactionImportRepository : ITransactionImportRepository
         var batch = new ImportBatch
         {
             BatchId = Guid.NewGuid(),
-            CustomerId = customerId ?? wallet.CustomerId,
+            CustomerId = customerId ?? GetRequiredCustomerId(wallet),
             WalletId = wallet.WalletId,
             FileName = fileName,
             ImportDate = DateTime.UtcNow
@@ -44,7 +44,7 @@ public class TransactionImportRepository : ITransactionImportRepository
 
         _context.ImportBatches.Add(batch);
 
-        decimal balance = wallet.Balance;
+        var balance = GetRequiredBalance(wallet);
         foreach (var row in rows)
         {
             if (row.Amount <= 0)
@@ -89,7 +89,15 @@ public class TransactionImportRepository : ITransactionImportRepository
         await _context.SaveChangesAsync(cancellationToken);
 
         response.BatchId = batch.BatchId;
-        response.NewWalletBalance = wallet.Balance;
+        response.NewWalletBalance = GetRequiredBalance(wallet);
         return response;
     }
+
+    private static Guid GetRequiredCustomerId(Wallet wallet)
+        => wallet.CustomerId
+           ?? throw new InvalidOperationException($"Wallet {wallet.WalletId} is missing customer_id.");
+
+    private static decimal GetRequiredBalance(Wallet wallet)
+        => wallet.Balance
+           ?? throw new InvalidOperationException($"Wallet {wallet.WalletId} is missing balance.");
 }

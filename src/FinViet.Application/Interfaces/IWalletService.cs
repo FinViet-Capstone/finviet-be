@@ -5,7 +5,7 @@ namespace FinViet.Application.Interfaces;
 
 public interface IWalletService
 {
-    Task<IReadOnlyList<WalletResponse>> GetWalletsAsync(
+    Task<WalletListResponse> GetWalletsAsync(
         Guid customerId,
         CancellationToken cancellationToken = default);
 

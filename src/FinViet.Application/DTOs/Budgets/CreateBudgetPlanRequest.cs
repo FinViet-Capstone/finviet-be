@@ -1,0 +1,32 @@
+﻿using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+
+namespace FinViet.Application.DTOs.Budgets
+{
+    public class CreateBudgetPlanRequest
+    {
+        public string PlanName { get; set; } = string.Empty;
+
+        public Guid? ModelId { get; set; }
+
+        public DateOnly StartDate { get; set; }
+
+        public DateOnly EndDate { get; set; }
+
+        public List<CreateCategoryBudgetRequest> CategoryBudgets { get; set; } = new();
+    }
+
+    public class CreateCategoryBudgetRequest
+    {
+        public Guid CategoryId { get; set; }
+
+        public decimal AmountLimit { get; set; }
+
+        public decimal? ThresholdPct { get; set; } = 80;
+
+        public string? ThresholdType { get; set; } = "PERCENT";
+    }
+}

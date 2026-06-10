@@ -26,21 +26,27 @@ public class WalletService : IWalletService
         _dbContext = dbContext;
     }
 
-    public async Task<IReadOnlyList<WalletResponse>> GetWalletsAsync(Guid customerId, CancellationToken cancellationToken = default)
+    public async Task<WalletListResponse> GetWalletsAsync(Guid customerId, CancellationToken cancellationToken = default)
     {
-        return await _dbContext.Wallets
+        var wallets = await _dbContext.Wallets
             .AsNoTracking()
             .Where(w => w.CustomerId == customerId)
             .OrderBy(w => w.WalletName)
             .Select(w => new WalletResponse
             {
                 WalletId = w.WalletId,
-                CustomerId = w.CustomerId,
+                CustomerId = customerId,
                 WalletName = w.WalletName,
                 WalletType = w.WalletType,
-                Balance = w.Balance
+                Balance = w.Balance ?? 0m
             })
             .ToListAsync(cancellationToken);
+
+        return new WalletListResponse
+        {
+            TotalBalance = wallets.Sum(x => x.Balance),
+            Wallets = wallets
+        };
     }
 
     public async Task<WalletResponse?> GetWalletByIdAsync(Guid customerId, Guid walletId, CancellationToken cancellationToken = default)
@@ -108,8 +114,9 @@ public class WalletService : IWalletService
         if (!string.IsNullOrWhiteSpace(request.WalletType))
         {
             var normalizedWalletType = NormalizeWalletType(request.WalletType);
+            var walletBalance = GetRequiredBalance(wallet);
 
-            if (wallet.Balance < 0 && !normalizedWalletType.Equals(CreditCardWalletType, StringComparison.OrdinalIgnoreCase))
+            if (walletBalance < 0 && !normalizedWalletType.Equals(CreditCardWalletType, StringComparison.OrdinalIgnoreCase))
                 throw new ValidationException("Cannot change wallet type while the wallet has outstanding negative balance.");
 
             wallet.WalletType = normalizedWalletType;
@@ -127,7 +134,7 @@ public class WalletService : IWalletService
         if (wallet is null)
             return false;
 
-        if (wallet.Balance != 0m)
+        if (GetRequiredBalance(wallet) != 0m)
             throw new ValidationException("Cannot delete wallet with remaining balance or outstanding debt.");
 
         var hasTransactions = await _dbContext.Transactions
@@ -174,11 +181,14 @@ public class WalletService : IWalletService
         if (toWallet is null)
             throw new NotFoundException("To wallet not found.");
 
-        if (fromWallet.Balance < request.Amount && !fromWallet.WalletType.Equals(CreditCardWalletType, StringComparison.OrdinalIgnoreCase))
+        var fromWalletBalance = GetRequiredBalance(fromWallet);
+        var toWalletBalance = GetRequiredBalance(toWallet);
+
+        if (fromWalletBalance < request.Amount && !fromWallet.WalletType.Equals(CreditCardWalletType, StringComparison.OrdinalIgnoreCase))
             throw new ValidationException("Source wallet does not have enough balance.");
 
-        fromWallet.Balance -= request.Amount;
-        toWallet.Balance += request.Amount;
+        fromWallet.Balance = fromWalletBalance - request.Amount;
+        toWallet.Balance = toWalletBalance + request.Amount;
 
         var now = DateTime.UtcNow;
         var description = string.IsNullOrWhiteSpace(request.Description)
@@ -212,8 +222,8 @@ public class WalletService : IWalletService
         {
             FromWalletId = fromWallet.WalletId,
             ToWalletId = toWallet.WalletId,
-            FromWalletBalance = fromWallet.Balance,
-            ToWalletBalance = toWallet.Balance
+            FromWalletBalance = GetRequiredBalance(fromWallet),
+            ToWalletBalance = GetRequiredBalance(toWallet)
         };
     }
 
@@ -249,6 +259,12 @@ public class WalletService : IWalletService
         {
             transactionsQuery = transactionsQuery
                 .Where(x => x.TransactionDate <= query.ToDate.Value.UtcDateTime);
+        }
+
+        if (query.CategoryId.HasValue)
+        {
+            transactionsQuery = transactionsQuery
+                .Where(x => x.CategoryId == query.CategoryId.Value);
         }
 
         if (!string.IsNullOrWhiteSpace(query.TransactionType))
@@ -346,11 +362,19 @@ public class WalletService : IWalletService
         => new()
         {
             WalletId = wallet.WalletId,
-            CustomerId = wallet.CustomerId,
+            CustomerId = GetRequiredCustomerId(wallet),
             WalletName = wallet.WalletName,
             WalletType = wallet.WalletType,
-            Balance = wallet.Balance
+            Balance = GetRequiredBalance(wallet)
         };
+
+    private static Guid GetRequiredCustomerId(Wallet wallet)
+        => wallet.CustomerId
+           ?? throw new InvalidOperationException($"Wallet {wallet.WalletId} is missing customer_id.");
+
+    private static decimal GetRequiredBalance(Wallet wallet)
+        => wallet.Balance
+           ?? throw new InvalidOperationException($"Wallet {wallet.WalletId} is missing balance.");
 
     private async Task<bool> WalletNameExistsAsync(
         Guid customerId,

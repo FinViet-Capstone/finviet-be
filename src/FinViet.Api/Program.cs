@@ -1,17 +1,15 @@
-using System.Text;
 using FinViet.Api.Middlewares;
+using Microsoft.OpenApi.Models;
+
+using System.Text;
+
 using FinViet.Application;
 using FinViet.Infrastructure;
 using FinViet.Infrastructure.Persistence;
 using FinViet.Infrastructure.Persistence.Context;
-using MediatR;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
-using Microsoft.OpenApi.Models;
-using FinViet.Application.Interfaces;
-using FinViet.Infrastructure.Persistence.Repositories;
-using FinViet.Infrastructure.ExternalServices.TransactionImport;
+
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -76,7 +74,7 @@ builder.Services.AddSwaggerGen(options =>
         Scheme       = "Bearer",
         BearerFormat = "JWT",
         In           = ParameterLocation.Header,
-        Description  = "Enter: Bearer {your JWT access token}"
+        Description  = "Paste only the accessToken value returned from /api/auth/login. Swagger will add the Bearer prefix automatically."
     });
 
     options.AddSecurityRequirement(new OpenApiSecurityRequirement

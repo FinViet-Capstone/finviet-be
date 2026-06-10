@@ -1,4 +1,4 @@
-using System.Security.Claims;
+using FinViet.Api.Common;
 using FinViet.Application.Common;
 using FinViet.Application.DTOs.Wallets;
 using FinViet.Application.Interfaces;
@@ -20,13 +20,13 @@ public class WalletsController : ControllerBase
     }
 
     [HttpGet]
-    public async Task<ActionResult<ApiResponse<IReadOnlyList<WalletResponse>>>> GetWallets(
+    public async Task<ActionResult<ApiResponse<WalletListResponse>>> GetWallets(
         CancellationToken cancellationToken)
     {
-        var customerId = GetCustomerId();
+        var customerId = User.GetCustomerId();
         var wallets = await _walletService.GetWalletsAsync(customerId, cancellationToken);
 
-        return Ok(ApiResponse<IReadOnlyList<WalletResponse>>.Ok(
+        return Ok(ApiResponse<WalletListResponse>.Ok(
             wallets,
             "Wallets retrieved successfully"));
     }
@@ -36,7 +36,7 @@ public class WalletsController : ControllerBase
         [FromBody] CreateWalletRequest request,
         CancellationToken cancellationToken)
     {
-        var customerId = GetCustomerId();
+        var customerId = User.GetCustomerId();
         var wallet = await _walletService.CreateWalletAsync(
             customerId,
             request,
@@ -55,7 +55,7 @@ public class WalletsController : ControllerBase
         [FromRoute] Guid id,
         CancellationToken cancellationToken)
     {
-        var customerId = GetCustomerId();
+        var customerId = User.GetCustomerId();
         var wallet = await _walletService.GetWalletByIdAsync(
             customerId,
             id,
@@ -75,7 +75,7 @@ public class WalletsController : ControllerBase
         [FromBody] UpdateWalletRequest request,
         CancellationToken cancellationToken)
     {
-        var customerId = GetCustomerId();
+        var customerId = User.GetCustomerId();
         var wallet = await _walletService.UpdateWalletAsync(
             customerId,
             id,
@@ -95,7 +95,7 @@ public class WalletsController : ControllerBase
         [FromRoute] Guid id,
         CancellationToken cancellationToken)
     {
-        var customerId = GetCustomerId();
+        var customerId = User.GetCustomerId();
         var deleted = await _walletService.DeleteWalletAsync(
             customerId,
             id,
@@ -114,7 +114,7 @@ public class WalletsController : ControllerBase
         [FromBody] TransferWalletRequest request,
         CancellationToken cancellationToken)
     {
-        var customerId = GetCustomerId();
+        var customerId = User.GetCustomerId();
         var result = await _walletService.TransferAsync(
             customerId,
             request,
@@ -131,7 +131,7 @@ public class WalletsController : ControllerBase
         [FromQuery] WalletTransactionQuery query,
         CancellationToken cancellationToken)
     {
-        var customerId = GetCustomerId();
+        var customerId = User.GetCustomerId();
         var result = await _walletService.GetWalletTransactionsAsync(
             customerId,
             id,
@@ -143,13 +143,4 @@ public class WalletsController : ControllerBase
             "Wallet transactions retrieved successfully"));
     }
 
-    private Guid GetCustomerId()
-    {
-        var claimValue = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
-
-        if (!Guid.TryParse(claimValue, out var customerId))
-            throw new UnauthorizedAccessException("Authenticated user does not have a valid customer identifier claim.");
-
-        return customerId;
-    }
 }

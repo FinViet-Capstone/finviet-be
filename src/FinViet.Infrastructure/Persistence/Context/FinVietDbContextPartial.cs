@@ -50,7 +50,8 @@ public partial class FinVietDbContext
             entity.HasKey(e => e.TokenId).HasName("refresh_token_pkey");
             entity.ToTable("refresh_token");
 
-            entity.HasIndex(e => e.Token, "idx_refresh_token_token").IsUnique();
+            entity.HasAlternateKey(e => e.Token).HasName("refresh_token_token_key");
+            entity.HasIndex(e => e.CustomerId, "idx_refresh_token_customer_id");
 
             entity.Property(e => e.TokenId)
                 .HasDefaultValueSql("gen_random_uuid()")
@@ -77,7 +78,8 @@ public partial class FinVietDbContext
             entity.HasKey(e => e.TokenId).HasName("email_verification_token_pkey");
             entity.ToTable("email_verification_token");
 
-            entity.HasIndex(e => e.Token, "idx_email_verification_token").IsUnique();
+            entity.HasAlternateKey(e => e.Token).HasName("email_verification_token_token_key");
+            entity.HasIndex(e => e.CustomerId, "idx_email_verification_customer_id");
 
             entity.Property(e => e.TokenId)
                 .HasDefaultValueSql("gen_random_uuid()")
