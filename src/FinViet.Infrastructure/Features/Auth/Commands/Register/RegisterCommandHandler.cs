@@ -75,8 +75,8 @@ public class RegisterCommandHandler : IRequestHandler<RegisterCommand, string>
             throw new ConflictException($"Email '{normalizedEmail}' is already registered.");
         }
 
-        var frontendUrl = _config["AppSettings:FrontendUrl"] ?? "http://localhost:3000";
-        var verifyUrl   = $"{frontendUrl}/verify-email?token={rawToken}";
+        var backendUrl = _config["AppSettings:BackendUrl"] ?? "https://localhost:5001";
+        var verifyUrl  = $"{backendUrl.TrimEnd('/')}/api/auth/verify-email?token={rawToken}";
 
         try
         {

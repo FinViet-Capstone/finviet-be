@@ -6,6 +6,7 @@ using FinViet.Application.Features.Auth.Commands.Login;
 using FinViet.Application.Features.Auth.Commands.Logout;
 using FinViet.Application.Features.Auth.Commands.Register;
 using FinViet.Application.Features.Auth.Commands.RefreshToken;
+using FinViet.Application.Features.Auth.Commands.ResendVerificationEmail;
 using FinViet.Application.Features.Auth.Commands.ResetPassword;
 using FinViet.Application.Features.Auth.Commands.VerifyEmail;
 using MediatR;
@@ -40,6 +41,42 @@ public class AuthController : ControllerBase
     public async Task<IActionResult> VerifyEmail([FromBody] VerifyEmailRequest request, CancellationToken ct)
     {
         var result = await _mediator.Send(new VerifyEmailCommand(request.Token), ct);
+        return Ok(ApiResponse<string>.Ok(result));
+    }
+
+    /// <summary>Xác minh email qua link (GET) – dùng cho cả mobile và web khi user click link trong email.</summary>
+    [HttpGet("verify-email")]
+    [Produces("text/html")]
+    public async Task<IActionResult> VerifyEmailFromLink([FromQuery] string token, CancellationToken ct)
+    {
+        try
+        {
+            await _mediator.Send(new VerifyEmailCommand(token), ct);
+            return new ContentResult
+            {
+                ContentType = "text/html; charset=utf-8",
+                StatusCode  = StatusCodes.Status200OK,
+                Content     = BuildVerifyEmailHtml(true, "Email của bạn đã được xác minh thành công. Bạn có thể quay lại ứng dụng FinViet và đăng nhập.")
+            };
+        }
+        catch (Exception ex) when (ex is FinViet.Application.Common.Exceptions.NotFoundException
+                                   or FinViet.Application.Common.Exceptions.BadRequestException)
+        {
+            return new ContentResult
+            {
+                ContentType = "text/html; charset=utf-8",
+                StatusCode  = StatusCodes.Status200OK,
+                Content     = BuildVerifyEmailHtml(false, ex.Message)
+            };
+        }
+    }
+
+    /// <summary>Gửi lại email xác minh nếu user chưa nhận được hoặc token đã hết hạn.</summary>
+    [HttpPost("resend-verification")]
+    [ProducesResponseType(typeof(ApiResponse<string>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> ResendVerification([FromBody] ResendVerificationRequest request, CancellationToken ct)
+    {
+        var result = await _mediator.Send(new ResendVerificationEmailCommand(request.Email), ct);
         return Ok(ApiResponse<string>.Ok(result));
     }
 
@@ -108,11 +145,35 @@ public class AuthController : ControllerBase
             new ResetPasswordCommand(request.Token, request.NewPassword, request.ConfirmPassword), ct);
         return Ok(ApiResponse<string>.Ok(result));
     }
+
+    private static string BuildVerifyEmailHtml(bool success, string message)
+    {
+        var color   = success ? "#10B981" : "#EF4444";
+        var title   = success ? "Xác minh thành công" : "Xác minh thất bại";
+        var icon    = success ? "&#10004;" : "&#10006;";
+        return $@"<!DOCTYPE html>
+<html lang=""vi"">
+<head>
+  <meta charset=""utf-8""/>
+  <meta name=""viewport"" content=""width=device-width,initial-scale=1""/>
+  <title>FinViet – {title}</title>
+</head>
+<body style=""font-family:Arial,sans-serif;background:#F3F4F6;margin:0;padding:24px;"">
+  <div style=""max-width:480px;margin:48px auto;background:#fff;border-radius:12px;padding:32px;text-align:center;box-shadow:0 4px 12px rgba(0,0,0,0.05);"">
+    <div style=""width:72px;height:72px;border-radius:50%;background:{color};color:#fff;font-size:40px;line-height:72px;margin:0 auto 16px;"">{icon}</div>
+    <h2 style=""color:{color};margin:0 0 12px;"">{title}</h2>
+    <p style=""color:#374151;font-size:16px;line-height:1.5;"">{System.Net.WebUtility.HtmlEncode(message)}</p>
+    <p style=""color:#6B7280;font-size:13px;margin-top:24px;"">Bạn có thể đóng cửa sổ này và quay lại ứng dụng FinViet.</p>
+  </div>
+</body>
+</html>";
+    }
 }
 
 // ── Request DTOs (inline for simplicity) ──────────────────────────────────────
 public record RegisterRequest(string FullName, string Email, string Password);
 public record VerifyEmailRequest(string Token);
+public record ResendVerificationRequest(string Email);
 public record LoginRequest(string Email, string Password);
 public record AdminLoginRequest(string Username, string Password);
 public record GoogleLoginRequest(string IdToken);
