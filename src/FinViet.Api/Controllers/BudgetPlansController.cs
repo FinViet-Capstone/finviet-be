@@ -140,4 +140,35 @@ public class BudgetPlansController : ControllerBase
             result,
             "Current month budget reset successfully"));
     }
+
+    [HttpGet("{planId:guid}/bucket-tracking")]
+    public async Task<ActionResult<ApiResponse<BucketTrackingResponse>>> GetBucketTracking(
+    [FromRoute] Guid planId,
+    CancellationToken cancellationToken)
+    {
+        var customerId = User.GetCustomerId();
+        var result = await _budgetService.GetBucketTrackingAsync(
+            customerId,
+            planId,
+            cancellationToken);
+
+        return Ok(ApiResponse<BucketTrackingResponse>.Ok(
+            result,
+            "50-30-20 bucket tracking retrieved successfully"));
+    }
+
+    [HttpGet("current/bucket-tracking")]
+    public async Task<ActionResult<ApiResponse<BucketTrackingResponse>>> GetCurrentBucketTracking(
+        CancellationToken cancellationToken)
+    {
+        var customerId = User.GetCustomerId();
+        var result = await _budgetService.GetCurrentBucketTrackingAsync(
+            customerId,
+            cancellationToken);
+
+        return Ok(ApiResponse<BucketTrackingResponse>.Ok(
+            result,
+            "Current 50-30-20 bucket tracking retrieved successfully"));
+    }
+
 }

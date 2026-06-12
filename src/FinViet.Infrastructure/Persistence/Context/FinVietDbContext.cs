@@ -144,7 +144,15 @@ public partial class FinVietDbContext : DbContext
         {
             entity.HasKey(e => e.PlanId).HasName("budget_plan_pkey");
 
-            entity.ToTable("budget_plan");
+            entity.ToTable("budget_plan", tb =>
+            {
+                tb.HasCheckConstraint(
+                    "budget_plan_bucket_sum_check",
+                    "ABS((needs_pct + wants_pct + savings_pct) - 100) < 0.01");
+                tb.HasCheckConstraint(
+                    "budget_plan_bucket_range_check",
+                    "needs_pct BETWEEN 0 AND 100 AND wants_pct BETWEEN 0 AND 100 AND savings_pct BETWEEN 0 AND 100");
+            });
 
             entity.Property(e => e.PlanId)
                 .HasDefaultValueSql("gen_random_uuid()")
@@ -152,10 +160,22 @@ public partial class FinVietDbContext : DbContext
             entity.Property(e => e.CustomerId).HasColumnName("customer_id");
             entity.Property(e => e.EndDate).HasColumnName("end_date");
             entity.Property(e => e.ModelId).HasColumnName("model_id");
+            entity.Property(e => e.NeedsPct)
+                .HasPrecision(5, 2)
+                .HasDefaultValueSql("50")
+                .HasColumnName("needs_pct");
             entity.Property(e => e.PlanName)
                 .HasMaxLength(100)
                 .HasColumnName("plan_name");
+            entity.Property(e => e.SavingsPct)
+                .HasPrecision(5, 2)
+                .HasDefaultValueSql("20")
+                .HasColumnName("savings_pct");
             entity.Property(e => e.StartDate).HasColumnName("start_date");
+            entity.Property(e => e.WantsPct)
+                .HasPrecision(5, 2)
+                .HasDefaultValueSql("30")
+                .HasColumnName("wants_pct");
 
             entity.HasOne(d => d.Customer).WithMany(p => p.BudgetPlans)
                 .HasForeignKey(d => d.CustomerId)
@@ -200,6 +220,12 @@ public partial class FinVietDbContext : DbContext
 
             entity.ToTable("category_budget");
 
+            entity.HasIndex(e => e.WalletId, "idx_category_budget_wallet_id");
+
+            entity.HasIndex(e => new { e.PlanId, e.CategoryId, e.WalletId }, "ux_category_budget_plan_category_wallet")
+                .IsUnique()
+                .AreNullsDistinct(false);
+
             entity.Property(e => e.CategoryBudgetId)
                 .HasDefaultValueSql("gen_random_uuid()")
                 .HasColumnName("category_budget_id");
@@ -211,6 +237,10 @@ public partial class FinVietDbContext : DbContext
                 .HasPrecision(15, 2)
                 .HasDefaultValueSql("0.00")
                 .HasColumnName("current_spent");
+            entity.Property(e => e.LastAlertThreshold)
+                .HasPrecision(5, 2)
+                .HasDefaultValueSql("0")
+                .HasColumnName("last_alert_threshold");
             entity.Property(e => e.PlanId).HasColumnName("plan_id");
             entity.Property(e => e.ThresholdPct)
                 .HasPrecision(5, 2)
@@ -218,6 +248,7 @@ public partial class FinVietDbContext : DbContext
             entity.Property(e => e.ThresholdType)
                 .HasMaxLength(50)
                 .HasColumnName("threshold_type");
+            entity.Property(e => e.WalletId).HasColumnName("wallet_id");
 
             entity.HasOne(d => d.Category).WithMany(p => p.CategoryBudgets)
                 .HasForeignKey(d => d.CategoryId)
@@ -228,6 +259,11 @@ public partial class FinVietDbContext : DbContext
                 .HasForeignKey(d => d.PlanId)
                 .OnDelete(DeleteBehavior.Cascade)
                 .HasConstraintName("category_budget_plan_id_fkey");
+
+            entity.HasOne(d => d.Wallet).WithMany(p => p.CategoryBudgets)
+                .HasForeignKey(d => d.WalletId)
+                .OnDelete(DeleteBehavior.Cascade)
+                .HasConstraintName("category_budget_wallet_id_fkey");
         });
 
         modelBuilder.Entity<CategoryCorrectionLog>(entity =>

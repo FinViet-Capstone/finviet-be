@@ -46,5 +46,15 @@ namespace FinViet.Application.Interfaces
         Task<BudgetPlanResponse> ResetCurrentMonthBudgetAsync(
             Guid customerId,
             CancellationToken cancellationToken = default);
+        // Theo dõi ngân sách theo mô hình 50-30-20 cho một plan cụ thể.
+        Task<BucketTrackingResponse> GetBucketTrackingAsync(
+            Guid customerId,
+            Guid planId,
+            CancellationToken cancellationToken = default);
+
+        // Theo dõi 50-30-20 cho plan đang hoạt động của tháng hiện tại.
+        Task<BucketTrackingResponse> GetCurrentBucketTrackingAsync(
+            Guid customerId,
+            CancellationToken cancellationToken = default);
     }
 }

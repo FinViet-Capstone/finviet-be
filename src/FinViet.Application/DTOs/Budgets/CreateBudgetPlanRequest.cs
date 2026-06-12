@@ -16,12 +16,23 @@ namespace FinViet.Application.DTOs.Budgets
 
         public DateOnly EndDate { get; set; }
 
+        // Phân bổ 50-30-20 (tùy chỉnh được). Tổng phải = 100.
+        // Để null cả 3 → mặc định 50/30/20.
+        public decimal? NeedsPct { get; set; }
+
+        public decimal? WantsPct { get; set; }
+
+        public decimal? SavingsPct { get; set; }
+
         public List<CreateCategoryBudgetRequest> CategoryBudgets { get; set; } = new();
     }
 
     public class CreateCategoryBudgetRequest
     {
         public Guid CategoryId { get; set; }
+
+        // null = áp dụng cho mọi ví; có giá trị = chỉ cho ví cụ thể.
+        public Guid? WalletId { get; set; }
 
         public decimal AmountLimit { get; set; }
 

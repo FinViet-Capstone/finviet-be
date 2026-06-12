@@ -17,6 +17,12 @@ public partial class BudgetPlan
 
     public DateOnly EndDate { get; set; }
 
+    public decimal NeedsPct { get; set; } = 50m;
+
+    public decimal WantsPct { get; set; } = 30m;
+
+    public decimal SavingsPct { get; set; } = 20m;
+
     public virtual ICollection<CategoryBudget> CategoryBudgets { get; set; } = new List<CategoryBudget>();
 
     public virtual Customer? Customer { get; set; }
