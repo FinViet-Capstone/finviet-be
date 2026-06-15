@@ -485,3 +485,5 @@ $RECYCLE.BIN/
 src/FinViet.Api/appsettings.json
 src/FinViet.Api/appsettings.json
 src/FinViet.Api/appsettings.json
+appsettings.json
+appsettings.Development.json
