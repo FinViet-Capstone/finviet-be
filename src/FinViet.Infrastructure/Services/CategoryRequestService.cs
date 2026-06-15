@@ -142,8 +142,7 @@ public class CategoryRequestService : ICategoryRequestService
                 CategoryName = entity.CategoryName,
                 Type = entity.Type,
                 IsMandatory = false,
-                ExpenseClass = entity.ExpenseClass,
-                ModelBucket = null
+                ExpenseClass = entity.ExpenseClass
             };
             _dbContext.Categories.Add(category);
         }

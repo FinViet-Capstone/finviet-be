@@ -128,7 +128,6 @@ public class BudgetService : IBudgetService
         {
             PlanId = Guid.NewGuid(),
             CustomerId = customerId,
-            ModelId = request.ModelId,
             PlanName = request.PlanName.Trim(),
             StartDate = request.StartDate,
             EndDate = request.EndDate,
@@ -357,7 +356,6 @@ public class BudgetService : IBudgetService
         {
             PlanId = Guid.NewGuid(),
             CustomerId = customerId,
-            ModelId = lastPlan.ModelId,
             PlanName = $"Budget {today.Month}/{today.Year}",
             StartDate = currentMonthStart,
             EndDate = currentMonthEnd,
@@ -740,7 +738,7 @@ public class BudgetService : IBudgetService
             .FirstOrDefaultAsync(cancellationToken);
 
         // Gom chi tiêu theo bucket trong kỳ, chỉ EXPENSE của customer.
-        // ModelBucket là override chính; nếu data cũ bị null/sai thì fallback sang ExpenseClass.
+        // Bucket được xác định bằng ExpenseClass của category.
         var spentRows = await (
             from transaction in _dbContext.Transactions.AsNoTracking()
             join wallet in _dbContext.Wallets.AsNoTracking()
@@ -757,7 +755,6 @@ public class BudgetService : IBudgetService
                 transaction.Amount,
                 transaction.CategoryId,
                 category.CategoryName,
-                category.ModelBucket,
                 category.ExpenseClass
             })
             .ToListAsync(cancellationToken);
@@ -785,7 +782,7 @@ public class BudgetService : IBudgetService
             var limit = Math.Round(monthlyIncome * pct / 100m, 2);
 
             var rows = spentRows
-                .Where(x => NormalizeBucket(x.ModelBucket, x.ExpenseClass) == bucket
+                .Where(x => NormalizeBucket(x.ExpenseClass) == bucket
                             && (uncategorizedId is null || x.CategoryId != uncategorizedId.Value))
                 .ToList();
 
@@ -869,23 +866,13 @@ public class BudgetService : IBudgetService
         return Math.Max(0m, Math.Min(100m, Math.Round(score, 2)));
     }
 
-    // Chuẩn hóa bucket về NEEDS/WANTS/SAVINGS.
-    // Ưu tiên ModelBucket, fallback sang ExpenseClass để chịu được seed data cũ bị sai.
-    private static string NormalizeBucket(string? modelBucket, string? expenseClass = null)
+    // Chuẩn hóa bucket về NEEDS/WANTS/SAVINGS dựa trên ExpenseClass.
+    private static string NormalizeBucket(string? expenseClass)
     {
-        var normalizedModelBucket = NormalizeBucketValue(modelBucket);
-        if (normalizedModelBucket != "UNASSIGNED")
-            return normalizedModelBucket;
-
-        return NormalizeBucketValue(expenseClass);
-    }
-
-    private static string NormalizeBucketValue(string? bucket)
-    {
-        if (string.IsNullOrWhiteSpace(bucket))
+        if (string.IsNullOrWhiteSpace(expenseClass))
             return "UNASSIGNED";
 
-        var value = bucket.Trim().ToUpperInvariant();
+        var value = expenseClass.Trim().ToUpperInvariant();
         return value switch
         {
             "NEED" or "NEEDS" => "NEEDS",

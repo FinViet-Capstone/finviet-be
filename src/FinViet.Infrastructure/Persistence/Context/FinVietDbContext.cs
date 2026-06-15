@@ -36,13 +36,9 @@ public partial class FinVietDbContext : DbContext
 
     public virtual DbSet<CustomerSubscription> CustomerSubscriptions { get; set; }
 
-    public virtual DbSet<FinancialModel> FinancialModels { get; set; }
-
     public virtual DbSet<ImportBatch> ImportBatches { get; set; }
 
     public virtual DbSet<IncomeSource> IncomeSources { get; set; }
-
-    public virtual DbSet<ModelAllocation> ModelAllocations { get; set; }
 
     public virtual DbSet<Notification> Notifications { get; set; }
 
@@ -159,7 +155,6 @@ public partial class FinVietDbContext : DbContext
                 .HasColumnName("plan_id");
             entity.Property(e => e.CustomerId).HasColumnName("customer_id");
             entity.Property(e => e.EndDate).HasColumnName("end_date");
-            entity.Property(e => e.ModelId).HasColumnName("model_id");
             entity.Property(e => e.NeedsPct)
                 .HasPrecision(5, 2)
                 .HasDefaultValueSql("50")
@@ -181,11 +176,6 @@ public partial class FinVietDbContext : DbContext
                 .HasForeignKey(d => d.CustomerId)
                 .OnDelete(DeleteBehavior.Cascade)
                 .HasConstraintName("budget_plan_customer_id_fkey");
-
-            entity.HasOne(d => d.Model).WithMany(p => p.BudgetPlans)
-                .HasForeignKey(d => d.ModelId)
-                .OnDelete(DeleteBehavior.SetNull)
-                .HasConstraintName("budget_plan_model_id_fkey");
         });
 
         modelBuilder.Entity<Category>(entity =>
@@ -206,9 +196,6 @@ public partial class FinVietDbContext : DbContext
             entity.Property(e => e.IsMandatory)
                 .HasDefaultValue(false)
                 .HasColumnName("is_mandatory");
-            entity.Property(e => e.ModelBucket)
-                .HasMaxLength(50)
-                .HasColumnName("model_bucket");
             entity.Property(e => e.Type)
                 .HasMaxLength(50)
                 .HasColumnName("type");
@@ -401,24 +388,6 @@ public partial class FinVietDbContext : DbContext
                 .HasConstraintName("customer_subscription_plan_id_fkey");
         });
 
-        modelBuilder.Entity<FinancialModel>(entity =>
-        {
-            entity.HasKey(e => e.ModelId).HasName("financial_model_pkey");
-
-            entity.ToTable("financial_model");
-
-            entity.Property(e => e.ModelId)
-                .HasDefaultValueSql("gen_random_uuid()")
-                .HasColumnName("model_id");
-            entity.Property(e => e.AllocationRules)
-                .HasColumnType("jsonb")
-                .HasColumnName("allocation_rules");
-            entity.Property(e => e.Description).HasColumnName("description");
-            entity.Property(e => e.ModelType)
-                .HasMaxLength(50)
-                .HasColumnName("model_type");
-        });
-
         modelBuilder.Entity<ImportBatch>(entity =>
         {
             entity.HasKey(e => e.BatchId).HasName("import_batch_pkey");
@@ -469,29 +438,6 @@ public partial class FinVietDbContext : DbContext
                 .HasForeignKey(d => d.CustomerId)
                 .OnDelete(DeleteBehavior.Cascade)
                 .HasConstraintName("income_source_customer_id_fkey");
-        });
-
-        modelBuilder.Entity<ModelAllocation>(entity =>
-        {
-            entity.HasKey(e => e.AllocationId).HasName("model_allocation_pkey");
-
-            entity.ToTable("model_allocation");
-
-            entity.Property(e => e.AllocationId)
-                .HasDefaultValueSql("gen_random_uuid()")
-                .HasColumnName("allocation_id");
-            entity.Property(e => e.CategoryType)
-                .HasMaxLength(50)
-                .HasColumnName("category_type");
-            entity.Property(e => e.ModelId).HasColumnName("model_id");
-            entity.Property(e => e.Percentage)
-                .HasPrecision(5, 2)
-                .HasColumnName("percentage");
-
-            entity.HasOne(d => d.Model).WithMany(p => p.ModelAllocations)
-                .HasForeignKey(d => d.ModelId)
-                .OnDelete(DeleteBehavior.Cascade)
-                .HasConstraintName("model_allocation_model_id_fkey");
         });
 
         modelBuilder.Entity<Notification>(entity =>

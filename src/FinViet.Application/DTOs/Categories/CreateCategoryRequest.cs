@@ -6,5 +6,4 @@ public class CreateCategoryRequest
     public string Type { get; set; } = string.Empty;
     public bool IsMandatory { get; set; }
     public string? ExpenseClass { get; set; }
-    public string? ModelBucket { get; set; }
 }

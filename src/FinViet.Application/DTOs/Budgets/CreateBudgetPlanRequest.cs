@@ -10,8 +10,6 @@ namespace FinViet.Application.DTOs.Budgets
     {
         public string PlanName { get; set; } = string.Empty;
 
-        public Guid? ModelId { get; set; }
-
         public DateOnly StartDate { get; set; }
 
         public DateOnly EndDate { get; set; }

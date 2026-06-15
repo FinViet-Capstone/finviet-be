@@ -77,8 +77,7 @@ public class CategoryService : ICategoryService
             CategoryName = trimmedName,
             Type = normalizedType,
             IsMandatory = request.IsMandatory,
-            ExpenseClass = normalizedExpenseClass,
-            ModelBucket = string.IsNullOrWhiteSpace(request.ModelBucket) ? null : request.ModelBucket.Trim()
+            ExpenseClass = normalizedExpenseClass
         };
 
         _dbContext.Categories.Add(category);
@@ -120,9 +119,6 @@ public class CategoryService : ICategoryService
 
         if (request.ExpenseClass is not null)
             category.ExpenseClass = NormalizeExpenseClass(request.ExpenseClass);
-
-        if (request.ModelBucket is not null)
-            category.ModelBucket = string.IsNullOrWhiteSpace(request.ModelBucket) ? null : request.ModelBucket.Trim();
 
         await _dbContext.SaveChangesAsync(cancellationToken);
         return ToResponse(category);
@@ -190,7 +186,6 @@ public class CategoryService : ICategoryService
             CategoryName = category.CategoryName,
             Type = category.Type,
             IsMandatory = category.IsMandatory ?? false,
-            ExpenseClass = category.ExpenseClass,
-            ModelBucket = category.ModelBucket
+            ExpenseClass = category.ExpenseClass
         };
 }
