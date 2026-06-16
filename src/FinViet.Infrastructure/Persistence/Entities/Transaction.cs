@@ -28,6 +28,14 @@ public partial class Transaction
 
     public string? Note { get; set; }
 
+    public string? BeneficiaryName { get; set; }
+
+    public bool IsAiClassified { get; set; }
+
+    public decimal? AiConfidence { get; set; }
+
+    public Guid? AiCategoryGuess { get; set; }
+
     public virtual ImportBatch? Batch { get; set; }
 
     public virtual Category? Category { get; set; }

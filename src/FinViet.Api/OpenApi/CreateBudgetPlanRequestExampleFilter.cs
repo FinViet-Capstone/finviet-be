@@ -17,7 +17,6 @@ public sealed class CreateBudgetPlanRequestExampleFilter : IOperationFilter
         jsonContent.Example = new OpenApiObject
         {
             ["planName"] = new OpenApiString("Monthly budget - June 2026"),
-            ["modelId"] = new OpenApiString("3fa85f64-5717-4562-b3fc-2c963f66afa6"),
             ["startDate"] = new OpenApiString("2026-06-12"),
             ["endDate"] = new OpenApiString("2026-06-30"),
             ["needsPct"] = new OpenApiDouble(50),

@@ -22,6 +22,18 @@ public partial class FinVietDbContext : DbContext
 
     public virtual DbSet<AiReportDetail> AiReportDetails { get; set; }
 
+    public virtual DbSet<AiSpendingScore> AiSpendingScores { get; set; }
+
+    public virtual DbSet<AiWeeklyReport> AiWeeklyReports { get; set; }
+
+    public virtual DbSet<AiClassificationQueueItem> AiClassificationQueueItems { get; set; }
+
+    public virtual DbSet<AiUsageLog> AiUsageLogs { get; set; }
+
+    public virtual DbSet<BeneficiaryRule> BeneficiaryRules { get; set; }
+
+    public virtual DbSet<UserCategoryBucket> UserCategoryBuckets { get; set; }
+
     public virtual DbSet<BudgetPlan> BudgetPlans { get; set; }
 
     public virtual DbSet<Category> Categories { get; set; }
@@ -611,6 +623,14 @@ public partial class FinVietDbContext : DbContext
             entity.Property(e => e.BatchId).HasColumnName("batch_id");
             entity.Property(e => e.CategoryId).HasColumnName("category_id");
             entity.Property(e => e.Note).HasColumnName("note");
+            entity.Property(e => e.BeneficiaryName).HasColumnName("beneficiary_name");
+            entity.Property(e => e.IsAiClassified)
+                .HasDefaultValue(false)
+                .HasColumnName("is_ai_classified");
+            entity.Property(e => e.AiConfidence)
+                .HasPrecision(5, 4)
+                .HasColumnName("ai_confidence");
+            entity.Property(e => e.AiCategoryGuess).HasColumnName("ai_category_guess");
             entity.Property(e => e.ReportId).HasColumnName("report_id");
             entity.Property(e => e.SourceId).HasColumnName("source_id");
             entity.Property(e => e.TransactionDate)
@@ -651,6 +671,11 @@ public partial class FinVietDbContext : DbContext
                 .HasForeignKey(d => d.WalletId)
                 .OnDelete(DeleteBehavior.Cascade)
                 .HasConstraintName("transaction_wallet_id_fkey");
+
+            entity.HasOne<Category>().WithMany()
+                .HasForeignKey(d => d.AiCategoryGuess)
+                .OnDelete(DeleteBehavior.SetNull)
+                .HasConstraintName("transaction_ai_category_guess_fkey");
         });
 
         modelBuilder.Entity<Wallet>(entity =>
@@ -682,8 +707,209 @@ public partial class FinVietDbContext : DbContext
                 .HasConstraintName("wallet_customer_id_fkey");
         });
 
+        modelBuilder.Entity<AiSpendingScore>(entity =>
+        {
+            entity.HasKey(e => e.ScoreId).HasName("ai_spending_scores_pkey");
+
+            entity.ToTable("ai_spending_scores");
+
+            entity.HasIndex(e => new { e.CustomerId, e.PeriodType, e.PeriodStart },
+                "ux_ai_spending_scores_customer_period").IsUnique();
+
+            entity.Property(e => e.ScoreId)
+                .HasDefaultValueSql("gen_random_uuid()")
+                .HasColumnName("score_id");
+            entity.Property(e => e.CustomerId).HasColumnName("customer_id");
+            entity.Property(e => e.PeriodType)
+                .HasMaxLength(10)
+                .HasColumnName("period_type");
+            entity.Property(e => e.PeriodStart).HasColumnName("period_start");
+            entity.Property(e => e.PeriodEnd).HasColumnName("period_end");
+            entity.Property(e => e.FinalScore)
+                .HasPrecision(5, 2)
+                .HasColumnName("final_score");
+            entity.Property(e => e.SpikeScore)
+                .HasPrecision(5, 2)
+                .HasColumnName("spike_score");
+            entity.Property(e => e.BudgetScore)
+                .HasPrecision(5, 2)
+                .HasColumnName("budget_score");
+            entity.Property(e => e.SavingsScore)
+                .HasPrecision(5, 2)
+                .HasColumnName("savings_score");
+            entity.Property(e => e.WeightsJson)
+                .HasColumnType("jsonb")
+                .HasColumnName("weights_json");
+            entity.Property(e => e.ColorBadge)
+                .HasMaxLength(20)
+                .HasColumnName("color_badge");
+            entity.Property(e => e.Comment).HasColumnName("comment");
+            entity.Property(e => e.CreatedAt)
+                .HasDefaultValueSql("now()")
+                .HasColumnName("created_at");
+
+            entity.HasOne(d => d.Customer).WithMany()
+                .HasForeignKey(d => d.CustomerId)
+                .OnDelete(DeleteBehavior.Cascade)
+                .HasConstraintName("ai_spending_scores_customer_id_fkey");
+        });
+
+        modelBuilder.Entity<AiWeeklyReport>(entity =>
+        {
+            entity.HasKey(e => e.ReportId).HasName("ai_weekly_reports_pkey");
+
+            entity.ToTable("ai_weekly_reports");
+
+            entity.HasIndex(e => new { e.CustomerId, e.PeriodStart },
+                "ux_ai_weekly_reports_customer_period").IsUnique();
+
+            entity.Property(e => e.ReportId)
+                .HasDefaultValueSql("gen_random_uuid()")
+                .HasColumnName("report_id");
+            entity.Property(e => e.CustomerId).HasColumnName("customer_id");
+            entity.Property(e => e.ScoreId).HasColumnName("score_id");
+            entity.Property(e => e.PeriodStart).HasColumnName("period_start");
+            entity.Property(e => e.PeriodEnd).HasColumnName("period_end");
+            entity.Property(e => e.Narrative).HasColumnName("narrative");
+            entity.Property(e => e.GeneratedAt)
+                .HasDefaultValueSql("now()")
+                .HasColumnName("generated_at");
+
+            entity.HasOne(d => d.Customer).WithMany()
+                .HasForeignKey(d => d.CustomerId)
+                .OnDelete(DeleteBehavior.Cascade)
+                .HasConstraintName("ai_weekly_reports_customer_id_fkey");
+
+            entity.HasOne(d => d.Score).WithMany()
+                .HasForeignKey(d => d.ScoreId)
+                .OnDelete(DeleteBehavior.SetNull)
+                .HasConstraintName("ai_weekly_reports_score_id_fkey");
+        });
+
+        modelBuilder.Entity<AiClassificationQueueItem>(entity =>
+        {
+            entity.HasKey(e => e.QueueId).HasName("ai_classification_queue_pkey");
+
+            entity.ToTable("ai_classification_queue");
+
+            entity.HasIndex(e => new { e.Status, e.NextAttemptAt },
+                "idx_ai_classification_queue_status_next");
+
+            entity.Property(e => e.QueueId)
+                .HasDefaultValueSql("gen_random_uuid()")
+                .HasColumnName("queue_id");
+            entity.Property(e => e.TransactionId).HasColumnName("transaction_id");
+            entity.Property(e => e.CustomerId).HasColumnName("customer_id");
+            entity.Property(e => e.RawInput).HasColumnName("raw_input");
+            entity.Property(e => e.Status)
+                .HasMaxLength(20)
+                .HasDefaultValue("PENDING")
+                .HasColumnName("status");
+            entity.Property(e => e.AttemptCount)
+                .HasDefaultValue(0)
+                .HasColumnName("attempt_count");
+            entity.Property(e => e.LastError).HasColumnName("last_error");
+            entity.Property(e => e.EnqueuedAt)
+                .HasDefaultValueSql("now()")
+                .HasColumnName("enqueued_at");
+            entity.Property(e => e.ProcessedAt).HasColumnName("processed_at");
+            entity.Property(e => e.NextAttemptAt).HasColumnName("next_attempt_at");
+
+            entity.HasOne(d => d.Transaction).WithMany()
+                .HasForeignKey(d => d.TransactionId)
+                .OnDelete(DeleteBehavior.Cascade)
+                .HasConstraintName("ai_classification_queue_transaction_id_fkey");
+
+            entity.HasOne(d => d.Customer).WithMany()
+                .HasForeignKey(d => d.CustomerId)
+                .OnDelete(DeleteBehavior.Cascade)
+                .HasConstraintName("ai_classification_queue_customer_id_fkey");
+        });
+
+        modelBuilder.Entity<AiUsageLog>(entity =>
+        {
+            entity.HasKey(e => e.UsageId).HasName("ai_usage_log_pkey");
+
+            entity.ToTable("ai_usage_log");
+
+            entity.HasIndex(e => new { e.CustomerId, e.CalledAt },
+                "idx_ai_usage_log_customer_called");
+
+            entity.Property(e => e.UsageId)
+                .HasDefaultValueSql("gen_random_uuid()")
+                .HasColumnName("usage_id");
+            entity.Property(e => e.CustomerId).HasColumnName("customer_id");
+            entity.Property(e => e.Feature)
+                .HasMaxLength(30)
+                .HasColumnName("feature");
+            entity.Property(e => e.CalledAt)
+                .HasDefaultValueSql("now()")
+                .HasColumnName("called_at");
+
+            entity.HasOne(d => d.Customer).WithMany()
+                .HasForeignKey(d => d.CustomerId)
+                .OnDelete(DeleteBehavior.Cascade)
+                .HasConstraintName("ai_usage_log_customer_id_fkey");
+        });
+
+        modelBuilder.Entity<BeneficiaryRule>(entity =>
+        {
+            entity.HasKey(e => e.RuleId).HasName("beneficiary_rule_pkey");
+
+            entity.ToTable("beneficiary_rule");
+
+            entity.HasIndex(e => new { e.CustomerId, e.MatchText },
+                "ux_beneficiary_rule_customer_match").IsUnique();
+
+            entity.Property(e => e.RuleId)
+                .HasDefaultValueSql("gen_random_uuid()")
+                .HasColumnName("rule_id");
+            entity.Property(e => e.CustomerId).HasColumnName("customer_id");
+            entity.Property(e => e.MatchText).HasColumnName("match_text");
+            entity.Property(e => e.CategoryId).HasColumnName("category_id");
+            entity.Property(e => e.IsRecurring)
+                .HasDefaultValue(false)
+                .HasColumnName("is_recurring");
+            entity.Property(e => e.CreatedAt)
+                .HasDefaultValueSql("now()")
+                .HasColumnName("created_at");
+
+            entity.HasOne(d => d.Customer).WithMany()
+                .HasForeignKey(d => d.CustomerId)
+                .OnDelete(DeleteBehavior.Cascade)
+                .HasConstraintName("beneficiary_rule_customer_id_fkey");
+
+            entity.HasOne(d => d.Category).WithMany()
+                .HasForeignKey(d => d.CategoryId)
+                .OnDelete(DeleteBehavior.Cascade)
+                .HasConstraintName("beneficiary_rule_category_id_fkey");
+        });
+
+        modelBuilder.Entity<UserCategoryBucket>(entity =>
+        {
+            entity.HasKey(e => new { e.CustomerId, e.CategoryId })
+                .HasName("user_category_buckets_pkey");
+
+            entity.ToTable("user_category_buckets");
+
+            entity.Property(e => e.CustomerId).HasColumnName("customer_id");
+            entity.Property(e => e.CategoryId).HasColumnName("category_id");
+            entity.Property(e => e.Bucket)
+                .HasMaxLength(10)
+                .HasColumnName("bucket");
+
+            entity.HasOne(d => d.Customer).WithMany()
+                .HasForeignKey(d => d.CustomerId)
+                .OnDelete(DeleteBehavior.Cascade)
+                .HasConstraintName("user_category_buckets_customer_id_fkey");
+
+            entity.HasOne(d => d.Category).WithMany()
+                .HasForeignKey(d => d.CategoryId)
+                .OnDelete(DeleteBehavior.Cascade)
+                .HasConstraintName("user_category_buckets_category_id_fkey");
+        });
+
         OnModelCreatingPartial(modelBuilder);
     }
 
-    partial void OnModelCreatingPartial(ModelBuilder modelBuilder);
-}
+    partial void OnModelCreatingPartial(ModelBuilder modelBuilder);}
