@@ -24,6 +24,12 @@ public class ExtractController : ControllerBase
         public string Text { get; set; } = string.Empty;
     }
 
+    public class CsvExtractFormRequest
+    {
+        public IFormFile File { get; set; } = null!;
+        public int? MaxRows { get; set; }
+    }
+
     // POST /api/extract/sms — parse pasted SMS text → candidate rows + AI category suggestions
     [HttpPost("sms")]
     public async Task<ActionResult<ApiResponse<ExtractResponse>>> ExtractSms(
@@ -36,13 +42,13 @@ public class ExtractController : ControllerBase
     // POST /api/extract/csv — parse a bank statement file → candidate rows + AI category suggestions
     [HttpPost("csv")]
     public async Task<ActionResult<ApiResponse<ExtractResponse>>> ExtractCsv(
-        [FromForm] IFormFile file, [FromForm] int? maxRows, CancellationToken cancellationToken)
+        [FromForm] CsvExtractFormRequest request, CancellationToken cancellationToken)
     {
-        if (file == null || file.Length == 0)
+        if (request.File == null || request.File.Length == 0)
             return BadRequest(ApiResponse<ExtractResponse>.Fail("File is required."));
 
-        await using var stream = file.OpenReadStream();
-        var result = await _extract.ExtractCsvAsync(stream, maxRows, cancellationToken);
+        await using var stream = request.File.OpenReadStream();
+        var result = await _extract.ExtractCsvAsync(stream, request.MaxRows, cancellationToken);
         return Ok(ApiResponse<ExtractResponse>.Ok(result, "File extracted successfully"));
     }
 }
