@@ -25,11 +25,16 @@ public class CreateTransactionHandler : IRequestHandler<CreateTransactionCommand
 {
     private readonly ITransactionRepository _transactionRepository;
     private readonly IWalletRepository _walletRepository;
+    private readonly IBudgetService _budgetService;
 
-    public CreateTransactionHandler(ITransactionRepository transactionRepository, IWalletRepository walletRepository)
+    public CreateTransactionHandler(
+        ITransactionRepository transactionRepository,
+        IWalletRepository walletRepository,
+        IBudgetService budgetService)
     {
         _transactionRepository = transactionRepository;
         _walletRepository = walletRepository;
+        _budgetService = budgetService;
     }
 
     public async Task<TransactionResponseDto> Handle(CreateTransactionCommand request, CancellationToken cancellationToken)
@@ -39,6 +44,10 @@ public class CreateTransactionHandler : IRequestHandler<CreateTransactionCommand
         var wallet = await _walletRepository.GetByIdAsync(request.WalletId, cancellationToken);
         if (wallet == null)
             throw new NotFoundException("Wallet", request.WalletId);
+
+        // Ownership: ví phải thuộc về customer đang đăng nhập.
+        if (wallet.CustomerId != request.CustomerId)
+            throw new ForbiddenException("You do not have access to this wallet.");
 
         var transaction = await _transactionRepository.CreateAsync(
             request.WalletId,
@@ -57,7 +66,15 @@ public class CreateTransactionHandler : IRequestHandler<CreateTransactionCommand
         else if (request.TransactionType == "EXPENSE" || request.TransactionType == "TRANSFER" || request.TransactionType == "DEBT_PAYMENT")
             newBalance -= request.Amount;
 
+        // Chặn chi vượt số dư (đẩy ví xuống âm và làm xấu đi). Thu nhập / thao tác cải thiện không bị chặn.
+        if (newBalance < 0 && newBalance < wallet.Balance)
+            throw new BusinessRuleException("Wallet balance is insufficient for this transaction.", "insufficient_balance");
+
         await _walletRepository.UpdateBalanceAsync(request.WalletId, newBalance, cancellationToken);
+
+        // Cập nhật ngân sách + bắn alert 80%/100% theo business logic 2b.
+        await _budgetService.SyncBudgetOnTransactionChangeAsync(
+            wallet.CustomerId, DateOnly.FromDateTime(request.TransactionDate), cancellationToken);
 
         return transaction;
     }
@@ -67,11 +84,16 @@ public class UpdateTransactionHandler : IRequestHandler<UpdateTransactionCommand
 {
     private readonly ITransactionRepository _transactionRepository;
     private readonly IWalletRepository _walletRepository;
+    private readonly IBudgetService _budgetService;
 
-    public UpdateTransactionHandler(ITransactionRepository transactionRepository, IWalletRepository walletRepository)
+    public UpdateTransactionHandler(
+        ITransactionRepository transactionRepository,
+        IWalletRepository walletRepository,
+        IBudgetService budgetService)
     {
         _transactionRepository = transactionRepository;
         _walletRepository = walletRepository;
+        _budgetService = budgetService;
     }
 
     public async Task<TransactionResponseDto> Handle(UpdateTransactionCommand request, CancellationToken cancellationToken)
@@ -86,8 +108,12 @@ public class UpdateTransactionHandler : IRequestHandler<UpdateTransactionCommand
         if (wallet == null)
             throw new NotFoundException("Wallet", transaction.WalletId);
 
+        // Ownership: giao dịch phải thuộc ví của customer đang đăng nhập.
+        if (wallet.CustomerId != request.CustomerId)
+            throw new ForbiddenException("You do not have access to this transaction.");
+
         decimal newBalance = wallet.Balance;
-        
+
         if (transaction.TransactionType == "INCOME")
             newBalance -= transaction.Amount;
         else if (transaction.TransactionType == "EXPENSE" || transaction.TransactionType == "TRANSFER" || transaction.TransactionType == "DEBT_PAYMENT")
@@ -97,6 +123,10 @@ public class UpdateTransactionHandler : IRequestHandler<UpdateTransactionCommand
             newBalance += request.Amount;
         else if (request.TransactionType == "EXPENSE" || request.TransactionType == "TRANSFER" || request.TransactionType == "DEBT_PAYMENT")
             newBalance -= request.Amount;
+
+        // Chặn sửa giao dịch làm ví xuống âm và xấu đi. Sửa để cải thiện số dư vẫn cho phép.
+        if (newBalance < 0 && newBalance < wallet.Balance)
+            throw new BusinessRuleException("Wallet balance is insufficient for this transaction.", "insufficient_balance");
 
         var updatedTransaction = await _transactionRepository.UpdateAsync(
             request.TransactionId,
@@ -111,6 +141,10 @@ public class UpdateTransactionHandler : IRequestHandler<UpdateTransactionCommand
 
         await _walletRepository.UpdateBalanceAsync(transaction.WalletId, newBalance, cancellationToken);
 
+        // Cập nhật ngân sách + alert sau khi sửa giao dịch.
+        await _budgetService.SyncBudgetOnTransactionChangeAsync(
+            wallet.CustomerId, DateOnly.FromDateTime(request.TransactionDate), cancellationToken);
+
         return updatedTransaction;
     }
 }
@@ -119,11 +153,16 @@ public class DeleteTransactionHandler : IRequestHandler<DeleteTransactionCommand
 {
     private readonly ITransactionRepository _transactionRepository;
     private readonly IWalletRepository _walletRepository;
+    private readonly IBudgetService _budgetService;
 
-    public DeleteTransactionHandler(ITransactionRepository transactionRepository, IWalletRepository walletRepository)
+    public DeleteTransactionHandler(
+        ITransactionRepository transactionRepository,
+        IWalletRepository walletRepository,
+        IBudgetService budgetService)
     {
         _transactionRepository = transactionRepository;
         _walletRepository = walletRepository;
+        _budgetService = budgetService;
     }
 
     public async Task<bool> Handle(DeleteTransactionCommand request, CancellationToken cancellationToken)
@@ -132,9 +171,19 @@ public class DeleteTransactionHandler : IRequestHandler<DeleteTransactionCommand
         if (transaction == null)
             throw new NotFoundException("Transaction", request.TransactionId);
 
+        // Transfer: xóa CẢ 2 vế + hoàn tiền 2 ví trong 1 DB transaction (FOR UPDATE) — atomic.
+        // Repo tự kiểm tra ownership theo customerId. Transfer không tính vào budget nên không sync.
+        if (transaction.TransferPairId.HasValue)
+            return await _transactionRepository.DeleteTransferPairAsync(
+                transaction.TransferPairId.Value, request.CustomerId, cancellationToken);
+
         var wallet = await _walletRepository.GetByIdAsync(transaction.WalletId, cancellationToken);
         if (wallet == null)
             throw new NotFoundException("Wallet", transaction.WalletId);
+
+        // Ownership: giao dịch phải thuộc ví của customer đang đăng nhập.
+        if (wallet.CustomerId != request.CustomerId)
+            throw new ForbiddenException("You do not have access to this transaction.");
 
         decimal newBalance = wallet.Balance;
         if (transaction.TransactionType == "INCOME")
@@ -144,6 +193,10 @@ public class DeleteTransactionHandler : IRequestHandler<DeleteTransactionCommand
 
         await _transactionRepository.DeleteAsync(request.TransactionId, cancellationToken);
         await _walletRepository.UpdateBalanceAsync(transaction.WalletId, newBalance, cancellationToken);
+
+        // Cập nhật ngân sách sau khi xóa giao dịch (có thể tụt mốc alert).
+        await _budgetService.SyncBudgetOnTransactionChangeAsync(
+            wallet.CustomerId, DateOnly.FromDateTime(transaction.TransactionDate), cancellationToken);
 
         return true;
     }
@@ -155,17 +208,20 @@ public class ClassifyTransactionHandler : IRequestHandler<ClassifyTransactionCom
     private readonly IWalletRepository _walletRepository;
     private readonly ICategoryService _categoryService;
     private readonly IIncomeSourceService _incomeSourceService;
+    private readonly IBudgetService _budgetService;
 
     public ClassifyTransactionHandler(
         ITransactionRepository transactionRepository,
         IWalletRepository walletRepository,
         ICategoryService categoryService,
-        IIncomeSourceService incomeSourceService)
+        IIncomeSourceService incomeSourceService,
+        IBudgetService budgetService)
     {
         _transactionRepository = transactionRepository;
         _walletRepository = walletRepository;
         _categoryService = categoryService;
         _incomeSourceService = incomeSourceService;
+        _budgetService = budgetService;
     }
 
     public async Task<TransactionResponseDto> Handle(ClassifyTransactionCommand request, CancellationToken cancellationToken)
@@ -202,6 +258,10 @@ public class ClassifyTransactionHandler : IRequestHandler<ClassifyTransactionCom
             request.CategoryId,
             request.SourceId,
             cancellationToken);
+
+        // Đổi danh mục → chi tiêu theo ngân sách thay đổi → cập nhật + alert.
+        await _budgetService.SyncBudgetOnTransactionChangeAsync(
+            request.CustomerId, DateOnly.FromDateTime(classified!.TransactionDate), cancellationToken);
 
         return classified!;
     }

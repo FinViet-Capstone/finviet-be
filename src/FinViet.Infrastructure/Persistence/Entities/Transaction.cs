@@ -36,6 +36,9 @@ public partial class Transaction
 
     public Guid? AiCategoryGuess { get; set; }
 
+    // Nối 2 vế của một lần chuyển quỹ (transfer_out + transfer_in).
+    public Guid? TransferPairId { get; set; }
+
     public virtual ImportBatch? Batch { get; set; }
 
     public virtual Category? Category { get; set; }

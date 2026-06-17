@@ -1,60 +1,58 @@
-﻿using FinViet.Application.DTOs.Budgets;
+using FinViet.Application.DTOs.Budgets;
 using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace FinViet.Application.Interfaces
 {
+    // Flat recurring budgets (schema v2.1 §5 / BUSINESS_LOGIC §6).
+    // `spent` derived theo tháng (ICT); % hũ lấy từ customer; mẫu số bucket = income × pct.
     public interface IBudgetService
     {
-        Task<IReadOnlyList<BudgetPlanResponse>> GetBudgetPlansAsync(
+        // GET /budgets?month — danh sách budget + derived spent/remaining/percentage/status cho tháng.
+        Task<IReadOnlyList<BudgetResponse>> GetBudgetsAsync(
             Guid customerId,
+            string? month,
             CancellationToken cancellationToken = default);
 
-        Task<BudgetPlanResponse> CreateBudgetPlanAsync(
+        // GET /budgets/buckets?month — tóm tắt 3 hũ theo allocationCap (income × pct) + pacing.
+        Task<BucketSummaryListResponse> GetBucketSummaryAsync(
             Guid customerId,
-            CreateBudgetPlanRequest request,
+            string? month,
             CancellationToken cancellationToken = default);
 
-        Task<BudgetTrackingResponse> GetBudgetTrackingAsync(
+        // POST /budgets — upsert theo (customer, category, wallet).
+        Task<BudgetResponse> UpsertBudgetAsync(
             Guid customerId,
-            Guid planId,
+            UpsertBudgetRequest request,
             CancellationToken cancellationToken = default);
 
-        Task<BudgetTrackingResponse> GetCurrentBudgetTrackingAsync(
+        // PATCH /budgets/{id}
+        Task<BudgetResponse> UpdateBudgetAsync(
             Guid customerId,
+            Guid budgetId,
+            UpdateBudgetRequest request,
             CancellationToken cancellationToken = default);
 
-        Task<CategoryBudgetResponse> UpdateCategoryBudgetAsync(
+        // DELETE /budgets/{id}
+        Task<bool> DeleteBudgetAsync(
             Guid customerId,
-            Guid categoryBudgetId,
-            UpdateCategoryBudgetRequest request,
+            Guid budgetId,
             CancellationToken cancellationToken = default);
 
-        Task<bool> DeleteBudgetPlanAsync(
+        // Nguồn chuẩn duy nhất cho điểm Budget Adherence (Metric 2 của Spending Score).
+        // Trả về null nếu chưa có income (để Spending Score re-normalize trọng số).
+        Task<decimal?> ComputeBudgetAdherenceScoreAsync(
             Guid customerId,
-            Guid planId,
+            DateOnly periodStart,
+            DateOnly periodEnd,
             CancellationToken cancellationToken = default);
 
-        Task<IReadOnlyList<BudgetHistoryResponse>> GetBudgetHistoryAsync(
+        // Cập nhật mốc cảnh báo + bắn alert 80%/100% sau khi transaction thay đổi (BL §2b).
+        Task SyncBudgetOnTransactionChangeAsync(
             Guid customerId,
-            int year,
-            CancellationToken cancellationToken = default);
-
-        Task<BudgetPlanResponse> ResetCurrentMonthBudgetAsync(
-            Guid customerId,
-            CancellationToken cancellationToken = default);
-        // Theo dõi ngân sách theo mô hình 50-30-20 cho một plan cụ thể.
-        Task<BucketTrackingResponse> GetBucketTrackingAsync(
-            Guid customerId,
-            Guid planId,
-            CancellationToken cancellationToken = default);
-
-        // Theo dõi 50-30-20 cho plan đang hoạt động của tháng hiện tại.
-        Task<BucketTrackingResponse> GetCurrentBucketTrackingAsync(
-            Guid customerId,
+            DateOnly affectedDate,
             CancellationToken cancellationToken = default);
     }
 }

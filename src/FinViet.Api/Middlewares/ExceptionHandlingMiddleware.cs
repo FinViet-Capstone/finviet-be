@@ -35,6 +35,7 @@ public class ExceptionHandlingMiddleware
                 or ConflictException
                 or UnauthorizedException
                 or ForbiddenException
+                or BusinessRuleException
                 or ValidationException
                 or FinViet.Application.Exceptions.NotFoundException
                 or FinViet.Application.Exceptions.ValidationException)
@@ -62,7 +63,7 @@ public class ExceptionHandlingMiddleware
     {
         context.Response.ContentType = "application/json";
 
-        (int statusCode, string message, object? errors) = exception switch
+        (int statusCode, string message, object? errors, string? code) = exception switch
         {
             ValidationException ve => (
                 StatusCodes.Status400BadRequest,
@@ -71,27 +72,32 @@ public class ExceptionHandlingMiddleware
                   .GroupBy(e => e.PropertyName)
                   .ToDictionary(
                       g => g.Key,
-                      g => g.Select(e => e.ErrorMessage).ToArray())),
+                      g => g.Select(e => e.ErrorMessage).ToArray()),
+                (string?)null),
 
             FinViet.Application.Exceptions.ValidationException ve2 =>
-                (StatusCodes.Status400BadRequest, ve2.Message, null),
+                (StatusCodes.Status400BadRequest, ve2.Message, null, null),
 
-            BadRequestException bre   => (StatusCodes.Status400BadRequest,   bre.Message, null),
-            NotFoundException nfe     => (StatusCodes.Status404NotFound,      nfe.Message, null),
+            // Business rule violation → 422 + machine-readable code (FE maps to VI message).
+            BusinessRuleException bce => (StatusCodes.Status422UnprocessableEntity, bce.Message, null, bce.Code),
+
+            BadRequestException bre   => (StatusCodes.Status400BadRequest,   bre.Message, null, null),
+            NotFoundException nfe     => (StatusCodes.Status404NotFound,      nfe.Message, null, null),
             FinViet.Application.Exceptions.NotFoundException nfe2 =>
-                                         (StatusCodes.Status404NotFound,      nfe2.Message, null),
-            ConflictException ce      => (StatusCodes.Status409Conflict,      ce.Message,  null),
-            UnauthorizedException ue  => (StatusCodes.Status401Unauthorized,  ue.Message,  null),
-            ForbiddenException fe     => (StatusCodes.Status403Forbidden,     fe.Message,  null),
+                                         (StatusCodes.Status404NotFound,      nfe2.Message, null, null),
+            ConflictException ce      => (StatusCodes.Status409Conflict,      ce.Message,  null, null),
+            UnauthorizedException ue  => (StatusCodes.Status401Unauthorized,  ue.Message,  null, null),
+            ForbiddenException fe     => (StatusCodes.Status403Forbidden,     fe.Message,  null, null),
             UnauthorizedAccessException uae =>
-                                         (StatusCodes.Status401Unauthorized,  uae.Message, null),
+                                         (StatusCodes.Status401Unauthorized,  uae.Message, null, null),
             _                         => (StatusCodes.Status500InternalServerError,
                                           _env.IsDevelopment()
                                               ? exception.Message
                                               : "An unexpected error occurred.",
                                           _env.IsDevelopment()
                                               ? new { stackTrace = exception.StackTrace, type = exception.GetType().Name }
-                                              : null)
+                                              : null,
+                                          (string?)null)
         };
 
         context.Response.StatusCode = statusCode;
@@ -100,6 +106,7 @@ public class ExceptionHandlingMiddleware
         {
             success = false,
             message,
+            code,
             errors
         };
 

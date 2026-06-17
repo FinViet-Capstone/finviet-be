@@ -631,6 +631,7 @@ public partial class FinVietDbContext : DbContext
                 .HasPrecision(5, 4)
                 .HasColumnName("ai_confidence");
             entity.Property(e => e.AiCategoryGuess).HasColumnName("ai_category_guess");
+            entity.Property(e => e.TransferPairId).HasColumnName("transfer_pair_id");
             entity.Property(e => e.ReportId).HasColumnName("report_id");
             entity.Property(e => e.SourceId).HasColumnName("source_id");
             entity.Property(e => e.TransactionDate)
@@ -692,6 +693,10 @@ public partial class FinVietDbContext : DbContext
                 .HasDefaultValueSql("0.00")
                 .HasColumnName("balance");
             entity.Property(e => e.CustomerId).HasColumnName("customer_id");
+            entity.Property(e => e.DeletedAt).HasColumnName("deleted_at");
+            entity.Property(e => e.IsDeleted)
+                .HasDefaultValue(false)
+                .HasColumnName("is_deleted");
             entity.Property(e => e.WalletName)
                 .HasMaxLength(100)
                 .IsRequired()

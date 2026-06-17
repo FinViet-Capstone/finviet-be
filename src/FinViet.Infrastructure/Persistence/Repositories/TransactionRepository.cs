@@ -1,7 +1,10 @@
-﻿using FinViet.Application.Interfaces;
+﻿using System.Data;
+using FinViet.Application.Interfaces;
 using FinViet.Application.DTOs;
+using FinViet.Application.Common.Exceptions;
 using FinViet.Infrastructure.Persistence.Context;
 using FinViet.Infrastructure.Persistence.Entities;
+using Microsoft.EntityFrameworkCore;
 
 namespace FinViet.Infrastructure.Persistence.Repositories;
 
@@ -31,8 +34,54 @@ public class TransactionRepository : ITransactionRepository
             Amount = transaction.Amount,
             TransactionDate = transaction.TransactionDate ?? DateTime.Now,
             Note = transaction.Note,
-            CreatedAt = transaction.TransactionDate ?? DateTime.Now
+            CreatedAt = transaction.TransactionDate ?? DateTime.Now,
+            TransferPairId = transaction.TransferPairId
         };
+    }
+
+    public async Task<bool> DeleteTransferPairAsync(Guid transferPairId, Guid customerId, CancellationToken cancellationToken = default)
+    {
+        await using var dbTx = await _context.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted, cancellationToken);
+
+        var legs = await _context.Transactions
+            .Where(t => t.TransferPairId == transferPairId)
+            .ToListAsync(cancellationToken);
+
+        if (legs.Count == 0)
+            return false;
+
+        // Khóa các ví liên quan (kể cả ví đã soft-delete) theo thứ tự cố định để chống deadlock.
+        var walletIds = legs.Select(l => l.WalletId).Distinct().OrderBy(x => x).ToList();
+        var wallets = await _context.Wallets
+            .FromSqlInterpolated($@"
+                SELECT wallet_id, customer_id, wallet_name, wallet_type, balance, is_deleted, deleted_at
+                FROM wallet
+                WHERE wallet_id = ANY({walletIds})
+                ORDER BY wallet_id
+                FOR UPDATE")
+            .ToListAsync(cancellationToken);
+
+        // Ownership: mọi ví của cặp transfer phải thuộc customer hiện tại.
+        if (wallets.Any(w => w.CustomerId != customerId))
+            throw new ForbiddenException("You do not have access to this transfer.");
+
+        foreach (var leg in legs)
+        {
+            var wallet = wallets.FirstOrDefault(w => w.WalletId == leg.WalletId);
+            if (wallet is not null && wallet.Balance.HasValue)
+            {
+                if (leg.TransactionType == "TRANSFER_OUT")
+                    wallet.Balance = wallet.Balance.Value + leg.Amount;   // hoàn lại ví nguồn
+                else if (leg.TransactionType == "TRANSFER_IN")
+                    wallet.Balance = wallet.Balance.Value - leg.Amount;   // rút khỏi ví đích
+            }
+
+            _context.Transactions.Remove(leg);
+        }
+
+        await _context.SaveChangesAsync(cancellationToken);
+        await dbTx.CommitAsync(cancellationToken);
+        return true;
     }
 
     public async Task<TransactionResponseDto> CreateAsync(Guid walletId, Guid? categoryId, Guid? sourceId, string transactionType, decimal amount, DateTime transactionDate, string note, CancellationToken cancellationToken = default)
@@ -148,7 +197,8 @@ public class WalletRepository : IWalletRepository
 
     public async Task<WalletDto> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
     {
-        var wallet = await _context.Wallets.FindAsync(new object[] { id }, cancellationToken: cancellationToken);
+        var wallet = await _context.Wallets
+            .FirstOrDefaultAsync(w => w.WalletId == id && !w.IsDeleted, cancellationToken);
         if (wallet == null)
             return null;
 

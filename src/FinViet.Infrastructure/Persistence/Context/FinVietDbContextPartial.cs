@@ -13,6 +13,9 @@ public partial class FinVietDbContext
     public virtual DbSet<EmailVerificationToken> EmailVerificationTokens { get; set; }
     public virtual DbSet<CategoryRequest> CategoryRequests { get; set; }
 
+    // ── Flat recurring budgets (schema v2.1 §5) ───────────────
+    public virtual DbSet<Budget> Budgets { get; set; }
+
     partial void OnModelCreatingPartial(ModelBuilder modelBuilder)
     {
         // ── Customer: new auth columns ───────────────────────────
@@ -25,6 +28,16 @@ public partial class FinVietDbContext
             entity.Property(e => e.MonthlyIncomeExpected)
                 .HasPrecision(15, 2)
                 .HasColumnName("monthly_income_expected");
+
+            entity.Property(e => e.NeedsPct)
+                .HasDefaultValue(50)
+                .HasColumnName("needs_pct");
+            entity.Property(e => e.WantsPct)
+                .HasDefaultValue(30)
+                .HasColumnName("wants_pct");
+            entity.Property(e => e.SavingsPct)
+                .HasDefaultValue(20)
+                .HasColumnName("savings_pct");
 
             entity.Property(e => e.GoogleId)
                 .HasMaxLength(255)
@@ -132,6 +145,56 @@ public partial class FinVietDbContext
                 .HasForeignKey(d => d.CustomerId)
                 .OnDelete(DeleteBehavior.Cascade)
                 .HasConstraintName("category_request_customer_id_fkey");
+        });
+
+        // ── Budget entity (flat recurring) ───────────────────────
+        modelBuilder.Entity<Budget>(entity =>
+        {
+            entity.HasKey(e => e.BudgetId).HasName("budget_pkey");
+            entity.ToTable("budget");
+
+            entity.HasIndex(e => e.CustomerId, "idx_budget_customer");
+            entity.HasIndex(e => new { e.CustomerId, e.CategoryId, e.WalletId }, "uq_budget_scope")
+                .IsUnique()
+                .AreNullsDistinct(false);
+
+            entity.Property(e => e.BudgetId)
+                .HasDefaultValueSql("gen_random_uuid()")
+                .HasColumnName("budget_id");
+            entity.Property(e => e.CustomerId).HasColumnName("customer_id");
+            entity.Property(e => e.CategoryId).HasColumnName("category_id");
+            entity.Property(e => e.WalletId).HasColumnName("wallet_id");
+            entity.Property(e => e.MonthlyLimit)
+                .HasPrecision(15, 2)
+                .HasColumnName("monthly_limit");
+            entity.Property(e => e.LastAlertThreshold)
+                .HasPrecision(5, 2)
+                .HasDefaultValue(0m)
+                .HasColumnName("last_alert_threshold");
+            entity.Property(e => e.LastAlertMonth)
+                .HasMaxLength(7)
+                .HasColumnName("last_alert_month");
+            entity.Property(e => e.CreatedAt)
+                .HasDefaultValueSql("CURRENT_TIMESTAMP")
+                .HasColumnName("created_at");
+            entity.Property(e => e.UpdatedAt)
+                .HasDefaultValueSql("CURRENT_TIMESTAMP")
+                .HasColumnName("updated_at");
+
+            entity.HasOne(d => d.Customer).WithMany()
+                .HasForeignKey(d => d.CustomerId)
+                .OnDelete(DeleteBehavior.Cascade)
+                .HasConstraintName("budget_customer_id_fkey");
+
+            entity.HasOne(d => d.Category).WithMany()
+                .HasForeignKey(d => d.CategoryId)
+                .OnDelete(DeleteBehavior.Cascade)
+                .HasConstraintName("budget_category_id_fkey");
+
+            entity.HasOne(d => d.Wallet).WithMany()
+                .HasForeignKey(d => d.WalletId)
+                .OnDelete(DeleteBehavior.Cascade)
+                .HasConstraintName("budget_wallet_id_fkey");
         });
     }
 }
