@@ -195,26 +195,37 @@ public class WalletService : IWalletService
             ? $"Transfer from {fromWallet.WalletName} to {toWallet.WalletName}"
             : request.Description.Trim();
 
+        // Two legs sharing a transfer_pair_id so they can be matched and excluded from spend/score.
+        var transferPairId = Guid.NewGuid();
+
         _dbContext.Transactions.AddRange(
             new Transaction
             {
                 TransactionId = Guid.NewGuid(),
                 WalletId = fromWallet.WalletId,
-                TransactionType = "TRANSFER",
-                SourceChannel = "MANUAL",
+                CustomerId = fromWallet.CustomerId,
+                TransactionType = "transfer_out",
+                EntryMethod = "manual",
+                TransferPairId = transferPairId,
                 Amount = request.Amount,
                 TransactionDate = now,
-                Note = $"OUT: {description}"
+                Description = $"OUT: {description}",
+                CreatedAt = now,
+                UpdatedAt = now
             },
             new Transaction
             {
                 TransactionId = Guid.NewGuid(),
                 WalletId = toWallet.WalletId,
-                TransactionType = "TRANSFER",
-                SourceChannel = "MANUAL",
+                CustomerId = toWallet.CustomerId,
+                TransactionType = "transfer_in",
+                EntryMethod = "manual",
+                TransferPairId = transferPairId,
                 Amount = request.Amount,
                 TransactionDate = now,
-                Note = $"IN: {description}"
+                Description = $"IN: {description}",
+                CreatedAt = now,
+                UpdatedAt = now
             });
 
         await _dbContext.SaveChangesAsync(cancellationToken);
@@ -263,27 +274,27 @@ public class WalletService : IWalletService
                 .Where(x => x.TransactionDate <= query.ToDate.Value.UtcDateTime);
         }
 
-        if (query.CategoryId.HasValue)
+        if (!string.IsNullOrWhiteSpace(query.CategoryId))
         {
             transactionsQuery = transactionsQuery
-                .Where(x => x.CategoryId == query.CategoryId.Value);
+                .Where(x => x.CategoryId == query.CategoryId);
         }
 
         if (!string.IsNullOrWhiteSpace(query.TransactionType))
         {
-            var type = query.TransactionType.Trim().ToUpperInvariant();
+            var type = query.TransactionType.Trim().ToLowerInvariant();
             var allowedTypes = new[]
             {
-                "INCOME",
-                "EXPENSE",
-                "TRANSFER",
-                "DEBT_PAYMENT"
+                "expense",
+                "income",
+                "transfer_out",
+                "transfer_in"
             };
 
             if (!allowedTypes.Contains(type))
             {
                 throw new ValidationException(
-                    "Transaction type must be one of: INCOME, EXPENSE, TRANSFER, DEBT_PAYMENT.");
+                    "Transaction type must be one of: expense, income, transfer_out, transfer_in.");
             }
 
             transactionsQuery = transactionsQuery
@@ -305,11 +316,13 @@ public class WalletService : IWalletService
                 WalletId = x.WalletId,
                 CategoryId = x.CategoryId,
                 TransactionType = x.TransactionType,
+                EntryMethod = x.EntryMethod,
                 Amount = x.Amount,
                 TransactionDate = x.TransactionDate.HasValue
                     ? new DateTimeOffset(DateTime.SpecifyKind(x.TransactionDate.Value, DateTimeKind.Utc))
                     : DateTimeOffset.MinValue,
-                Note = x.Note
+                Description = x.Description,
+                Merchant = x.Merchant
             })
             .ToListAsync(cancellationToken);
 

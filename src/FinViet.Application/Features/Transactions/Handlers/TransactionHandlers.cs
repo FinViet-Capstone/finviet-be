@@ -8,7 +8,7 @@ namespace FinViet.Application.Features.Transactions.Handlers;
 
 internal static class TransactionRules
 {
-    public static readonly string[] ValidTypes = { "INCOME", "EXPENSE", "TRANSFER", "DEBT_PAYMENT" };
+    public static readonly string[] ValidTypes = { "expense", "income", "transfer_out", "transfer_in" };
 
     public static void ValidateInput(string transactionType, decimal amount)
     {
@@ -19,6 +19,10 @@ internal static class TransactionRules
         if (amount <= 0)
             throw new BadRequestException("Amount must be greater than zero.");
     }
+
+    /// <summary>income and transfer_in add to the wallet; expense and transfer_out subtract.</summary>
+    public static bool IsCredit(string transactionType)
+        => transactionType is "income" or "transfer_in";
 }
 
 public class CreateTransactionHandler : IRequestHandler<CreateTransactionCommand, TransactionResponseDto>
@@ -42,19 +46,21 @@ public class CreateTransactionHandler : IRequestHandler<CreateTransactionCommand
 
         var transaction = await _transactionRepository.CreateAsync(
             request.WalletId,
+            wallet.CustomerId,
             request.CategoryId,
-            request.SourceId,
             request.TransactionType,
             request.Amount,
             request.TransactionDate,
-            request.Note,
+            request.Description,
+            request.Merchant,
+            request.EntryMethod,
             cancellationToken
         );
 
         decimal newBalance = wallet.Balance;
-        if (request.TransactionType == "INCOME")
+        if (TransactionRules.IsCredit(request.TransactionType))
             newBalance += request.Amount;
-        else if (request.TransactionType == "EXPENSE" || request.TransactionType == "TRANSFER" || request.TransactionType == "DEBT_PAYMENT")
+        else
             newBalance -= request.Amount;
 
         await _walletRepository.UpdateBalanceAsync(request.WalletId, newBalance, cancellationToken);
@@ -87,25 +93,27 @@ public class UpdateTransactionHandler : IRequestHandler<UpdateTransactionCommand
             throw new NotFoundException("Wallet", transaction.WalletId);
 
         decimal newBalance = wallet.Balance;
-        
-        if (transaction.TransactionType == "INCOME")
+
+        // Reverse the old transaction's effect.
+        if (TransactionRules.IsCredit(transaction.TransactionType))
             newBalance -= transaction.Amount;
-        else if (transaction.TransactionType == "EXPENSE" || transaction.TransactionType == "TRANSFER" || transaction.TransactionType == "DEBT_PAYMENT")
+        else
             newBalance += transaction.Amount;
 
-        if (request.TransactionType == "INCOME")
+        // Apply the new transaction's effect.
+        if (TransactionRules.IsCredit(request.TransactionType))
             newBalance += request.Amount;
-        else if (request.TransactionType == "EXPENSE" || request.TransactionType == "TRANSFER" || request.TransactionType == "DEBT_PAYMENT")
+        else
             newBalance -= request.Amount;
 
         var updatedTransaction = await _transactionRepository.UpdateAsync(
             request.TransactionId,
             request.CategoryId,
-            request.SourceId,
             request.TransactionType,
             request.Amount,
             request.TransactionDate,
-            request.Note,
+            request.Description,
+            request.Merchant,
             cancellationToken
         );
 
@@ -137,9 +145,9 @@ public class DeleteTransactionHandler : IRequestHandler<DeleteTransactionCommand
             throw new NotFoundException("Wallet", transaction.WalletId);
 
         decimal newBalance = wallet.Balance;
-        if (transaction.TransactionType == "INCOME")
+        if (TransactionRules.IsCredit(transaction.TransactionType))
             newBalance -= transaction.Amount;
-        else if (transaction.TransactionType == "EXPENSE" || transaction.TransactionType == "TRANSFER" || transaction.TransactionType == "DEBT_PAYMENT")
+        else
             newBalance += transaction.Amount;
 
         await _transactionRepository.DeleteAsync(request.TransactionId, cancellationToken);
@@ -154,18 +162,15 @@ public class ClassifyTransactionHandler : IRequestHandler<ClassifyTransactionCom
     private readonly ITransactionRepository _transactionRepository;
     private readonly IWalletRepository _walletRepository;
     private readonly ICategoryService _categoryService;
-    private readonly IIncomeSourceService _incomeSourceService;
 
     public ClassifyTransactionHandler(
         ITransactionRepository transactionRepository,
         IWalletRepository walletRepository,
-        ICategoryService categoryService,
-        IIncomeSourceService incomeSourceService)
+        ICategoryService categoryService)
     {
         _transactionRepository = transactionRepository;
         _walletRepository = walletRepository;
         _categoryService = categoryService;
-        _incomeSourceService = incomeSourceService;
     }
 
     public async Task<TransactionResponseDto> Handle(ClassifyTransactionCommand request, CancellationToken cancellationToken)
@@ -182,25 +187,16 @@ public class ClassifyTransactionHandler : IRequestHandler<ClassifyTransactionCom
         if (wallet.CustomerId != request.CustomerId)
             throw new ForbiddenException("You do not have access to this transaction.");
 
-        if (request.CategoryId.HasValue)
+        if (!string.IsNullOrWhiteSpace(request.CategoryId))
         {
-            var category = await _categoryService.GetCategoryByIdAsync(request.CategoryId.Value, cancellationToken);
+            var category = await _categoryService.GetCategoryByIdAsync(request.CategoryId, cancellationToken);
             if (category == null)
-                throw new NotFoundException("Category", request.CategoryId.Value);
-        }
-
-        if (request.SourceId.HasValue)
-        {
-            // GetIncomeSourceByIdAsync is scoped by customerId, so this also enforces ownership of the source.
-            var source = await _incomeSourceService.GetIncomeSourceByIdAsync(request.CustomerId, request.SourceId.Value, cancellationToken);
-            if (source == null)
-                throw new NotFoundException("Income source", request.SourceId.Value);
+                throw new NotFoundException("Category", request.CategoryId);
         }
 
         var classified = await _transactionRepository.ClassifyAsync(
             request.TransactionId,
             request.CategoryId,
-            request.SourceId,
             cancellationToken);
 
         return classified!;

@@ -121,7 +121,7 @@ public partial class FinVietDbContext
                 .HasColumnName("status");
             entity.Property(e => e.ReviewedBy).HasColumnName("reviewed_by");
             entity.Property(e => e.ReviewNote).HasMaxLength(500).HasColumnName("review_note");
-            entity.Property(e => e.CreatedCategoryId).HasColumnName("created_category_id");
+            entity.Property(e => e.CreatedCategoryId).HasMaxLength(40).HasColumnName("created_category_id");
             entity.Property(e => e.CreatedAt)
                 .HasDefaultValueSql("CURRENT_TIMESTAMP")
                 .HasColumnName("created_at");

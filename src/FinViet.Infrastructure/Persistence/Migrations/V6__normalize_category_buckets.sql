@@ -49,6 +49,11 @@ WHERE NOT EXISTS (
     FROM category AS c
     WHERE c.category_name = s.category_name
       AND c.type = s.type
+)
+-- Superseded by V9's slug library: once slug categories exist, stop seeding the
+-- legacy UUID/uppercase rows (V6 still re-runs every startup but becomes a no-op).
+AND NOT EXISTS (
+    SELECT 1 FROM category AS slug WHERE slug.category_id LIKE 'cat\_%'
 );
 
 -- 3. Legacy model_bucket repair — ONLY while the column still exists (pre-V7).

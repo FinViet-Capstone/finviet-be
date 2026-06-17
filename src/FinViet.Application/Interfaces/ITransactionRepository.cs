@@ -5,10 +5,10 @@ namespace FinViet.Application.Interfaces;
 public interface ITransactionRepository
 {
     Task<TransactionResponseDto> GetByIdAsync(Guid id, CancellationToken cancellationToken = default);
-    Task<TransactionResponseDto> CreateAsync(Guid walletId, Guid? categoryId, Guid? sourceId, string transactionType, decimal amount, DateTime transactionDate, string note, CancellationToken cancellationToken = default);
-    Task<TransactionResponseDto> UpdateAsync(Guid transactionId, Guid? categoryId, Guid? sourceId, string transactionType, decimal amount, DateTime transactionDate, string note, CancellationToken cancellationToken = default);
+    Task<TransactionResponseDto> CreateAsync(Guid walletId, Guid? customerId, string? categoryId, string transactionType, decimal amount, DateTime transactionDate, string? description, string? merchant, string? entryMethod, CancellationToken cancellationToken = default);
+    Task<TransactionResponseDto> UpdateAsync(Guid transactionId, string? categoryId, string transactionType, decimal amount, DateTime transactionDate, string? description, string? merchant, CancellationToken cancellationToken = default);
     Task<bool> DeleteAsync(Guid id, CancellationToken cancellationToken = default);
-    Task<TransactionResponseDto?> ClassifyAsync(Guid transactionId, Guid? categoryId, Guid? sourceId, CancellationToken cancellationToken = default);
+    Task<TransactionResponseDto?> ClassifyAsync(Guid transactionId, string? categoryId, CancellationToken cancellationToken = default);
 }
 
 public interface IWalletRepository
