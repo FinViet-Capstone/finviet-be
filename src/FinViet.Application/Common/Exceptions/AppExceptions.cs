@@ -30,17 +30,3 @@ public class BadRequestException : Exception
 {
     public BadRequestException(string message) : base(message) { }
 }
-
-/// <summary>
-/// Thrown when a business rule is violated (→ HTTP 422). Carries an optional
-/// machine-readable <see cref="Code"/> (e.g. "last_wallet") that the FE maps to a VI message.
-/// </summary>
-public class BusinessRuleException : Exception
-{
-    public string? Code { get; }
-
-    public BusinessRuleException(string message, string? code = null) : base(message)
-    {
-        Code = code;
-    }
-}

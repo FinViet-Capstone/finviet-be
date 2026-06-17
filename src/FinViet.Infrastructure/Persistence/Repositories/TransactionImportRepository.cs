@@ -3,7 +3,6 @@ using FinViet.Application.DTOs;
 using FinViet.Application.Interfaces;
 using FinViet.Infrastructure.Persistence.Context;
 using FinViet.Infrastructure.Persistence.Entities;
-using Microsoft.EntityFrameworkCore;
 
 namespace FinViet.Infrastructure.Persistence.Repositories;
 
@@ -33,8 +32,7 @@ public class TransactionImportRepository : ITransactionImportRepository
             Errors = new List<string>(parseResult.ParseErrors)
         };
 
-        var wallet = await _context.Wallets
-            .FirstOrDefaultAsync(w => w.WalletId == walletId && !w.IsDeleted, cancellationToken);
+        var wallet = await _context.Wallets.FindAsync(new object[] { walletId }, cancellationToken: cancellationToken);
         if (wallet == null)
             throw new NotFoundException("Wallet", walletId);
 

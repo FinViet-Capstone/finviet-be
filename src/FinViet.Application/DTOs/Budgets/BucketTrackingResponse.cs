@@ -49,12 +49,6 @@ namespace FinViet.Application.DTOs.Budgets
         // Hạn mức = income × allocation%.
         public decimal LimitAmount { get; set; }
 
-        // Tổng hạn mức category budget trong bucket này.
-        public decimal CategoryLimitTotal { get; set; }
-
-        // true khi tổng hạn mức category vượt allocationCap; FE chỉ cảnh báo, không hard-block.
-        public bool OverAllocated { get; set; }
-
         public decimal SpentAmount { get; set; }
 
         public decimal RemainingAmount { get; set; }

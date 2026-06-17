@@ -8,9 +8,6 @@ public interface ITransactionRepository
     Task<TransactionResponseDto> CreateAsync(Guid walletId, Guid? categoryId, Guid? sourceId, string transactionType, decimal amount, DateTime transactionDate, string note, CancellationToken cancellationToken = default);
     Task<TransactionResponseDto> UpdateAsync(Guid transactionId, Guid? categoryId, Guid? sourceId, string transactionType, decimal amount, DateTime transactionDate, string note, CancellationToken cancellationToken = default);
     Task<bool> DeleteAsync(Guid id, CancellationToken cancellationToken = default);
-    // Xóa CẢ cặp transfer (transfer_out + transfer_in) + hoàn 2 ví trong 1 DB transaction
-    // (FOR UPDATE) — atomic. Kiểm tra ownership theo customerId bên trong.
-    Task<bool> DeleteTransferPairAsync(Guid transferPairId, Guid customerId, CancellationToken cancellationToken = default);
     Task<TransactionResponseDto?> ClassifyAsync(Guid transactionId, Guid? categoryId, Guid? sourceId, CancellationToken cancellationToken = default);
 }
 

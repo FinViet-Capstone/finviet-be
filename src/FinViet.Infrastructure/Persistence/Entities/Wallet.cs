@@ -15,10 +15,6 @@ public partial class Wallet
 
     public decimal? Balance { get; set; }
 
-    public bool IsDeleted { get; set; }
-
-    public DateTime? DeletedAt { get; set; }
-
     public virtual Customer? Customer { get; set; }
 
     public virtual ICollection<CategoryBudget> CategoryBudgets { get; set; } = new List<CategoryBudget>();

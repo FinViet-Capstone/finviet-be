@@ -24,7 +24,6 @@ public class TransactionsController : ControllerBase
     {
         var command = new CreateTransactionCommand
         {
-            CustomerId = GetCustomerId(),
             WalletId = dto.WalletId,
             CategoryId = dto.CategoryId,
             SourceId = dto.SourceId,
@@ -43,7 +42,6 @@ public class TransactionsController : ControllerBase
     {
         var command = new UpdateTransactionCommand
         {
-            CustomerId = GetCustomerId(),
             TransactionId = id,
             CategoryId = dto.CategoryId,
             SourceId = dto.SourceId,
@@ -60,7 +58,7 @@ public class TransactionsController : ControllerBase
     [HttpDelete("{id}")]
     public async Task<ActionResult<bool>> DeleteTransaction(Guid id)
     {
-        var command = new DeleteTransactionCommand { CustomerId = GetCustomerId(), TransactionId = id };
+        var command = new DeleteTransactionCommand { TransactionId = id };
         var result = await _mediator.Send(command);
         return Ok(result);
     }

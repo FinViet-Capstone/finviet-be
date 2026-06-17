@@ -18,21 +18,16 @@ public class SpendingScoreService : ISpendingScoreService
 {
     private const decimal SpikeThresholdVnd = 200_000m;
     private const double SpikeZThreshold = 2.0;
+    private const string Uncategorized = "Chưa phân loại";
 
     private readonly FinVietDbContext _db;
     private readonly IGeminiClient _gemini;
-    private readonly IBudgetService _budgetService;
     private readonly ILogger<SpendingScoreService> _logger;
 
-    public SpendingScoreService(
-        FinVietDbContext db,
-        IGeminiClient gemini,
-        IBudgetService budgetService,
-        ILogger<SpendingScoreService> logger)
+    public SpendingScoreService(FinVietDbContext db, IGeminiClient gemini, ILogger<SpendingScoreService> logger)
     {
         _db = db;
         _gemini = gemini;
-        _budgetService = budgetService;
         _logger = logger;
     }
 
@@ -179,10 +174,100 @@ public class SpendingScoreService : ISpendingScoreService
     }
 
     // ── Metric 2: Budget Adherence (pacing) ──────────────────────────────────────────
-    // Nguồn chuẩn nằm ở BudgetService (mô hình bucket 50-30-20 income×%, pacing theo tháng),
-    // dùng chung cho cả màn Budgets lẫn Spending Score để hai bên không lệch nhau.
-    private Task<decimal?> ComputeBudgetAsync(Guid customerId, DateOnly start, DateOnly end, CancellationToken ct)
-        => _budgetService.ComputeBudgetAdherenceScoreAsync(customerId, start, end, ct);
+    private async Task<decimal?> ComputeBudgetAsync(Guid customerId, DateOnly start, DateOnly end, CancellationToken ct)
+    {
+        var plan = await _db.BudgetPlans
+            .Where(p => p.CustomerId == customerId && p.StartDate <= end && p.EndDate >= start)
+            .OrderByDescending(p => p.StartDate)
+            .FirstOrDefaultAsync(ct);
+        if (plan is null)
+            return null;
+
+        var budgets = await _db.CategoryBudgets
+            .Where(cb => cb.PlanId == plan.PlanId && cb.CategoryId != null)
+            .Select(cb => new { cb.CategoryId, cb.AmountLimit })
+            .ToListAsync(ct);
+        if (budgets.Count == 0)
+            return null;
+
+        // User bucket overrides (Needs/Wants) layered over category.expense_class.
+        var userBuckets = await _db.UserCategoryBuckets
+            .Where(u => u.CustomerId == customerId)
+            .ToDictionaryAsync(u => u.CategoryId, u => u.Bucket, ct);
+
+        var categories = await _db.Categories
+            .Where(c => c.Type == "EXPENSE")
+            .Select(c => new { c.CategoryId, c.CategoryName, c.ExpenseClass })
+            .ToListAsync(ct);
+        var catInfo = categories.ToDictionary(c => c.CategoryId, c => c);
+
+        string? BucketOf(Guid categoryId) =>
+            userBuckets.TryGetValue(categoryId, out var b) ? b
+            : catInfo.TryGetValue(categoryId, out var c) ? c.ExpenseClass : null;
+
+        // Actual spend per category (recomputed from transactions; exclude Uncategorized).
+        var actuals = await _db.Transactions
+            .Join(_db.Wallets, t => t.WalletId, w => w.WalletId, (t, w) => new { t, w.CustomerId })
+            .Where(x => x.CustomerId == customerId
+                        && x.t.TransactionType == "EXPENSE"
+                        && x.t.CategoryId != null
+                        && x.t.TransactionDate != null
+                        && x.t.TransactionDate >= DateRange.StartUtc(start)
+                        && x.t.TransactionDate <= DateRange.EndUtc(end))
+            .GroupBy(x => x.t.CategoryId!.Value)
+            .Select(g => new { CategoryId = g.Key, Spent = g.Sum(x => x.t.Amount) })
+            .ToListAsync(ct);
+        var actualByCat = actuals.ToDictionary(a => a.CategoryId, a => a.Spent);
+
+        var totalDays = (end.DayNumber - start.DayNumber) + 1;
+        var elapsedDays = totalDays; // computing over a closed/elapsed window
+        var pacingFraction = totalDays > 0 ? (decimal)elapsedDays / totalDays : 1m;
+
+        // Aggregate per bucket.
+        var bucketLimit = new Dictionary<string, decimal>();
+        var bucketActual = new Dictionary<string, decimal>();
+        foreach (var b in budgets)
+        {
+            var bucket = BucketOf(b.CategoryId!.Value);
+            if (bucket is null || catInfo[b.CategoryId.Value].CategoryName == Uncategorized)
+                continue;
+            bucketLimit[bucket] = bucketLimit.GetValueOrDefault(bucket) + b.AmountLimit;
+            var spent = actualByCat.GetValueOrDefault(b.CategoryId.Value);
+            bucketActual[bucket] = bucketActual.GetValueOrDefault(bucket) + spent;
+        }
+
+        if (bucketLimit.Count == 0)
+            return null;
+
+        // Per-bucket pacing score, Needs weighted higher than Wants.
+        var bucketWeights = new Dictionary<string, decimal> { ["NEEDS"] = 0.6m, ["WANTS"] = 0.4m, ["SAVINGS"] = 0.0m };
+        decimal weightedSum = 0m, weightTotal = 0m;
+        foreach (var (bucket, limit) in bucketLimit)
+        {
+            if (limit <= 0m) continue;
+            var expected = limit * pacingFraction;
+            var actual = bucketActual.GetValueOrDefault(bucket);
+            var score = PacingScore(actual, expected);
+            var w = bucketWeights.GetValueOrDefault(bucket, 0.4m);
+            if (w <= 0m) continue;
+            weightedSum += score * w;
+            weightTotal += w;
+        }
+
+        return weightTotal > 0m ? Math.Round(weightedSum / weightTotal, 2) : (decimal?)null;
+    }
+
+    private static decimal PacingScore(decimal actual, decimal expected)
+    {
+        if (expected <= 0m)
+            return actual <= 0m ? 100m : 0m;
+        if (actual <= expected)
+            return 100m;
+        var deviation = (actual - expected) / expected; // >0 overspend
+        // 20% over → 80, 50% over → 50, 100% over → 0 (linear, clamped).
+        var score = 100m - deviation * 100m;
+        return Math.Clamp(score, 0m, 100m);
+    }
 
     // ── Metric 3: Savings Consistency (CV over 3–6 months) ───────────────────────────
     private async Task<decimal?> ComputeSavingsAsync(Guid customerId, DateOnly asOf, CancellationToken ct)
