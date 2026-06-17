@@ -30,3 +30,15 @@ public class BadRequestException : Exception
 {
     public BadRequestException(string message) : base(message) { }
 }
+
+/// <summary>Request is well-formed but violates a business rule (→ HTTP 422).</summary>
+public class UnprocessableEntityException : Exception
+{
+    /// <summary>Optional stable error code (e.g. "wallet_locked_or_deleted", "over_limit").</summary>
+    public string? Code { get; }
+
+    public UnprocessableEntityException(string message, string? code = null) : base(message)
+    {
+        Code = code;
+    }
+}

@@ -77,6 +77,10 @@ public class ExceptionHandlingMiddleware
                 (StatusCodes.Status400BadRequest, ve2.Message, null),
 
             BadRequestException bre   => (StatusCodes.Status400BadRequest,   bre.Message, null),
+            UnprocessableEntityException uee => (
+                StatusCodes.Status422UnprocessableEntity,
+                uee.Message,
+                uee.Code is null ? null : (object?)new { code = uee.Code }),
             NotFoundException nfe     => (StatusCodes.Status404NotFound,      nfe.Message, null),
             FinViet.Application.Exceptions.NotFoundException nfe2 =>
                                          (StatusCodes.Status404NotFound,      nfe2.Message, null),
