@@ -748,6 +748,11 @@ public partial class FinVietDbContext : DbContext
                 .HasMaxLength(50)
                 .IsRequired()
                 .HasColumnName("wallet_type");
+            entity.Property(e => e.IsDeleted)
+                .HasDefaultValue(false)
+                .HasColumnName("is_deleted");
+            entity.Property(e => e.DeletedAt)
+                .HasColumnName("deleted_at");
 
             entity.HasOne(d => d.Customer).WithMany(p => p.Wallets)
                 .HasForeignKey(d => d.CustomerId)

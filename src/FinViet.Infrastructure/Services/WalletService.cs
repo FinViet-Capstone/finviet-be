@@ -6,6 +6,7 @@ using FinViet.Application.Interfaces;
 using FinViet.Infrastructure.Persistence.Context;
 using FinViet.Infrastructure.Persistence.Entities;
 using Microsoft.EntityFrameworkCore;
+using BusinessRuleException = FinViet.Application.Common.Exceptions.BusinessRuleException;
 
 namespace FinViet.Infrastructure.Services;
 
@@ -30,7 +31,7 @@ public class WalletService : IWalletService
     {
         var wallets = await _dbContext.Wallets
             .AsNoTracking()
-            .Where(w => w.CustomerId == customerId)
+            .Where(w => w.CustomerId == customerId && !w.IsDeleted)
             .OrderBy(w => w.WalletName)
             .Select(w => new WalletResponse
             {
@@ -53,7 +54,7 @@ public class WalletService : IWalletService
     {
         var wallet = await _dbContext.Wallets
             .AsNoTracking()
-            .FirstOrDefaultAsync(w => w.CustomerId == customerId && w.WalletId == walletId, cancellationToken);
+            .FirstOrDefaultAsync(w => w.CustomerId == customerId && w.WalletId == walletId && !w.IsDeleted, cancellationToken);
 
         return wallet is null ? null : ToResponse(wallet);
     }
@@ -64,7 +65,7 @@ public class WalletService : IWalletService
         await EnsureCustomerExistsAsync(customerId, cancellationToken);
 
         var walletCount = await _dbContext.Wallets
-            .CountAsync(w => w.CustomerId == customerId, cancellationToken);
+            .CountAsync(w => w.CustomerId == customerId && !w.IsDeleted, cancellationToken);
 
         if (walletCount >= MaximumWalletsPerCustomer)
             throw new ValidationException("Maximum 10 wallets allowed per account.");
@@ -95,7 +96,7 @@ public class WalletService : IWalletService
         ValidateUpdate(request);
 
         var wallet = await _dbContext.Wallets
-            .FirstOrDefaultAsync(w => w.CustomerId == customerId && w.WalletId == walletId, cancellationToken);
+            .FirstOrDefaultAsync(w => w.CustomerId == customerId && w.WalletId == walletId && !w.IsDeleted, cancellationToken);
 
         if (wallet is null)
             return null;
@@ -129,21 +130,21 @@ public class WalletService : IWalletService
     public async Task<bool> DeleteWalletAsync(Guid customerId, Guid walletId, CancellationToken cancellationToken = default)
     {
         var wallet = await _dbContext.Wallets
-            .FirstOrDefaultAsync(w => w.CustomerId == customerId && w.WalletId == walletId, cancellationToken);
+            .FirstOrDefaultAsync(w => w.CustomerId == customerId && w.WalletId == walletId && !w.IsDeleted, cancellationToken);
 
         if (wallet is null)
             return false;
 
-        if (GetRequiredBalance(wallet) != 0m)
-            throw new ValidationException("Cannot delete wallet with remaining balance or outstanding debt.");
+        // Không cho xóa ví active cuối cùng (APIs-List §3: 422 last_wallet).
+        var activeWalletCount = await _dbContext.Wallets
+            .CountAsync(w => w.CustomerId == customerId && !w.IsDeleted, cancellationToken);
 
-        var hasTransactions = await _dbContext.Transactions
-            .AnyAsync(t => t.WalletId == walletId, cancellationToken);
+        if (activeWalletCount <= 1)
+            throw new BusinessRuleException("Cannot delete the last active wallet.", "last_wallet");
 
-        if (hasTransactions)
-            throw new ValidationException("Cannot delete wallet because it already has transactions.");
-
-        _dbContext.Wallets.Remove(wallet);
+        // Soft delete — giữ lịch sử giao dịch (schema v2.1: wallet.is_deleted).
+        wallet.IsDeleted = true;
+        wallet.DeletedAt = DateTime.UtcNow;
         await _dbContext.SaveChangesAsync(cancellationToken);
         return true;
     }
@@ -161,9 +162,10 @@ public class WalletService : IWalletService
             cancellationToken);
 
         // Lock both wallet rows in a deterministic order to avoid overspending and transfer deadlocks.
+        // Phải SELECT đủ mọi cột của entity Wallet (kể cả is_deleted, deleted_at) cho FromSql.
         var wallets = await _dbContext.Wallets
             .FromSqlInterpolated($"""
-                SELECT wallet_id, customer_id, wallet_name, wallet_type, balance
+                SELECT wallet_id, customer_id, wallet_name, wallet_type, balance, is_deleted, deleted_at
                 FROM wallet
                 WHERE customer_id = {customerId}
                   AND wallet_id IN ({request.FromWalletId}, {request.ToWalletId})
@@ -253,7 +255,7 @@ public class WalletService : IWalletService
             throw new ValidationException("Page size must be between 1 and 100.");
 
         var walletExists = await _dbContext.Wallets
-            .AnyAsync(x => x.CustomerId == customerId && x.WalletId == walletId, cancellationToken);
+            .AnyAsync(x => x.CustomerId == customerId && x.WalletId == walletId && !x.IsDeleted, cancellationToken);
 
         if (!walletExists)
             throw new NotFoundException("Wallet not found.");
@@ -399,6 +401,7 @@ public class WalletService : IWalletService
     {
         return await _dbContext.Wallets.AnyAsync(
             w => w.CustomerId == customerId
+                 && !w.IsDeleted
                  && (!excludedWalletId.HasValue || w.WalletId != excludedWalletId.Value)
                  && EF.Functions.ILike(w.WalletName, walletName),
             cancellationToken);

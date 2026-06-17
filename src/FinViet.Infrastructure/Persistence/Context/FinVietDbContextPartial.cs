@@ -26,6 +26,10 @@ public partial class FinVietDbContext
                 .HasPrecision(15, 2)
                 .HasColumnName("monthly_income_expected");
 
+            entity.Property(e => e.NeedsPct).HasDefaultValue(50).HasColumnName("needs_pct");
+            entity.Property(e => e.WantsPct).HasDefaultValue(30).HasColumnName("wants_pct");
+            entity.Property(e => e.SavingsPct).HasDefaultValue(20).HasColumnName("savings_pct");
+
             entity.Property(e => e.GoogleId)
                 .HasMaxLength(255)
                 .HasColumnName("google_id");

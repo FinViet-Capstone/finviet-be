@@ -24,6 +24,13 @@ public partial class Customer
 
     public decimal? MonthlyIncomeExpected { get; set; }
 
+    // Phân bổ 50-30-20 — NGUỒN SỰ THẬT DUY NHẤT của % hũ (schema v2.1: trên customer, INTEGER, tổng=100).
+    public int NeedsPct { get; set; } = 50;
+
+    public int WantsPct { get; set; } = 30;
+
+    public int SavingsPct { get; set; } = 20;
+
     /// <summary>Firebase UID for Google OAuth users</summary>
     public string? GoogleId { get; set; }
 
