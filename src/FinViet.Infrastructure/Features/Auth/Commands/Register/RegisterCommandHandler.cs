@@ -1,6 +1,7 @@
 using FinViet.Application.Common.Exceptions;
 using FinViet.Application.Features.Auth.Commands.Register;
 using FinViet.Application.Interfaces;
+using FinViet.Infrastructure.Features.Auth;
 using FinViet.Infrastructure.Persistence.Context;
 using FinViet.Infrastructure.Persistence.Entities;
 using MediatR;
@@ -53,15 +54,16 @@ public class RegisterCommandHandler : IRequestHandler<RegisterCommand, string>
 
         _db.Customers.Add(customer);
 
-        var rawToken    = Guid.NewGuid().ToString("N") + Guid.NewGuid().ToString("N");
+        var now  = DateTime.UtcNow;
+        var code = await GenerateUniqueCodeAsync(cancellationToken);
         var verifyToken = new EmailVerificationToken
         {
             TokenId    = Guid.NewGuid(),
             CustomerId = customer.CustomerId,
-            Token      = rawToken,
+            Token      = code,
             TokenType  = "VERIFY_EMAIL",
-            ExpiresAt  = DateTime.UtcNow.AddHours(24),
-            CreatedAt  = DateTime.UtcNow
+            ExpiresAt  = now.AddHours(24),
+            CreatedAt  = now
         };
 
         _db.EmailVerificationTokens.Add(verifyToken);
@@ -75,24 +77,36 @@ public class RegisterCommandHandler : IRequestHandler<RegisterCommand, string>
             throw new ConflictException($"Email '{normalizedEmail}' is already registered.");
         }
 
-        var backendUrl = _config["AppSettings:BackendUrl"] ?? "https://localhost:5001";
-        var verifyUrl  = $"{backendUrl.TrimEnd('/')}/api/auth/verify-email?token={rawToken}";
-
         try
         {
-            await _emailService.SendVerificationEmailAsync(customer.Email, customer.FullName, verifyUrl);
+            await _emailService.SendVerificationEmailAsync(customer.Email, customer.FullName, code);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex,
-                "Account {Email} created but verification email failed to send. Token: {Token}",
-                customer.Email, rawToken);
+                "Account {Email} created but verification email failed to send. Code: {Code}",
+                customer.Email, code);
 
             return "Registration successful, but the verification email could not be sent. " +
                    "Please contact support or use the resend endpoint.";
         }
 
         return "Registration successful. Please check your email to verify your account.";
+    }
+
+    /// <summary>Generate a 6-char code unique among active (unused, non-expired) verify tokens.</summary>
+    private async Task<string> GenerateUniqueCodeAsync(CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+        string code;
+        do
+        {
+            code = VerificationCode.Generate();
+        }
+        while (await _db.EmailVerificationTokens.AnyAsync(t =>
+            t.Token == code && t.TokenType == "VERIFY_EMAIL" &&
+            t.UsedAt == null && t.ExpiresAt > now, ct));
+        return code;
     }
 
     private static bool IsUniqueViolation(DbUpdateException ex)

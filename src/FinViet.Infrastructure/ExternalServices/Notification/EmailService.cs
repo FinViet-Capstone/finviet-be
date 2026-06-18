@@ -33,25 +33,24 @@ public class EmailService : IEmailService
         }
     }
 
-    public async Task SendVerificationEmailAsync(string toEmail, string toName, string verificationUrl)
+    public async Task SendVerificationEmailAsync(string toEmail, string toName, string verificationCode)
     {
         var htmlContent = $@"
 <div style='font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;'>
   <h2 style='color: #4F46E5;'>FinViet – Xác minh Email</h2>
   <p>Xin chào <strong>{toName}</strong>,</p>
-  <p>Cảm ơn bạn đã đăng ký FinViet! Vui lòng nhấn vào nút bên dưới để xác minh địa chỉ email của bạn.</p>
-  <a href='{verificationUrl}'
-     style='display:inline-block;padding:12px 24px;background:#4F46E5;color:#fff;text-decoration:none;border-radius:6px;font-weight:bold;'>
-    Xác minh Email
-  </a>
+  <p>Cảm ơn bạn đã đăng ký FinViet! Nhập mã xác minh dưới đây vào ứng dụng để hoàn tất.</p>
+  <div style='margin:24px 0;padding:16px 24px;background:#F3F4F6;border-radius:8px;text-align:center;'>
+    <span style='font-size:32px;font-weight:bold;letter-spacing:8px;color:#4F46E5;font-family:monospace;'>{verificationCode}</span>
+  </div>
   <p style='color:#666;margin-top:16px;font-size:13px;'>
-    Liên kết này sẽ hết hạn sau <strong>24 giờ</strong>.<br/>
+    Mã này sẽ hết hạn sau <strong>24 giờ</strong>.<br/>
     Nếu bạn không đăng ký FinViet, hãy bỏ qua email này.
   </p>
 </div>";
 
-        await SendAsync(toEmail, toName, "FinViet – Xác minh địa chỉ Email",
-            $"Vui lòng xác minh email tại: {verificationUrl}", htmlContent);
+        await SendAsync(toEmail, toName, "FinViet – Mã xác minh Email",
+            $"Mã xác minh FinViet của bạn là: {verificationCode} (hết hạn sau 24 giờ).", htmlContent);
     }
 
     public async Task SendPasswordResetEmailAsync(string toEmail, string toName, string resetUrl)
