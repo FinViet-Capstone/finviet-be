@@ -1,22 +1,28 @@
-using System.Security.Claims;
+using FinViet.Api.Common;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MediatR;
+using FinViet.Application.Common;
 using FinViet.Application.Features.Transactions.Commands;
 using FinViet.Application.DTOs;
+using FinViet.Application.DTOs.Wallets;
+using FinViet.Application.Interfaces;
 
 namespace FinViet.Api.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
+[Route("v1/transactions")]
 [Authorize(Roles = "Customer")]
 public class TransactionsController : ControllerBase
 {
     private readonly IMediator _mediator;
+    private readonly IWalletService _walletService;
 
-    public TransactionsController(IMediator mediator)
+    public TransactionsController(IMediator mediator, IWalletService walletService)
     {
         _mediator = mediator;
+        _walletService = walletService;
     }
 
     [HttpPost]
@@ -24,9 +30,10 @@ public class TransactionsController : ControllerBase
     {
         var command = new CreateTransactionCommand
         {
+            CustomerId = User.GetCustomerId(),
             WalletId = dto.WalletId,
             CategoryId = dto.CategoryId,
-            TransactionType = dto.TransactionType,
+            TransactionType = dto.EffectiveType,
             Amount = dto.Amount,
             TransactionDate = dto.TransactionDate,
             Description = dto.Description,
@@ -39,13 +46,15 @@ public class TransactionsController : ControllerBase
     }
 
     [HttpPut("{id}")]
+    [HttpPatch("{id}")]
     public async Task<ActionResult<TransactionResponseDto>> UpdateTransaction(Guid id, [FromBody] UpdateTransactionDto dto)
     {
         var command = new UpdateTransactionCommand
         {
+            CustomerId = User.GetCustomerId(),
             TransactionId = id,
             CategoryId = dto.CategoryId,
-            TransactionType = dto.TransactionType,
+            TransactionType = dto.EffectiveType,
             Amount = dto.Amount,
             TransactionDate = dto.TransactionDate,
             Description = dto.Description,
@@ -59,7 +68,11 @@ public class TransactionsController : ControllerBase
     [HttpDelete("{id}")]
     public async Task<ActionResult<bool>> DeleteTransaction(Guid id)
     {
-        var command = new DeleteTransactionCommand { TransactionId = id };
+        var command = new DeleteTransactionCommand
+        {
+            CustomerId = User.GetCustomerId(),
+            TransactionId = id
+        };
         var result = await _mediator.Send(command);
         return Ok(result);
     }
@@ -69,7 +82,7 @@ public class TransactionsController : ControllerBase
     {
         var command = new ClassifyTransactionCommand
         {
-            CustomerId = GetCustomerId(),
+            CustomerId = User.GetCustomerId(),
             TransactionId = id,
             CategoryId = dto.CategoryId
         };
@@ -78,13 +91,18 @@ public class TransactionsController : ControllerBase
         return Ok(result);
     }
 
-    private Guid GetCustomerId()
+    [HttpPost("transfer")]
+    public async Task<ActionResult<ApiResponse<TransferWalletResponse>>> TransferBetweenWallets(
+        [FromBody] TransferWalletRequest request,
+        CancellationToken cancellationToken)
     {
-        var claimValue = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
+        var result = await _walletService.TransferAsync(
+            User.GetCustomerId(),
+            request,
+            cancellationToken);
 
-        if (!Guid.TryParse(claimValue, out var customerId))
-            throw new UnauthorizedAccessException("Authenticated user does not have a valid customer identifier claim.");
-
-        return customerId;
+        return Ok(ApiResponse<TransferWalletResponse>.Ok(
+            result,
+            "Transfer completed successfully"));
     }
 }

@@ -49,6 +49,82 @@ public partial class FinVietDbContext
                 .HasColumnName("deleted_at");
         });
 
+        modelBuilder.Entity<Budget>(entity =>
+        {
+            entity.HasKey(e => e.BudgetId).HasName("budgets_pkey");
+            entity.ToTable("budgets");
+
+            entity.HasIndex(e => new { e.CustomerId, e.CategoryId, e.WalletId }, "idx_budget_customer_category_wallet");
+
+            entity.Property(e => e.BudgetId)
+                .HasDefaultValueSql("gen_random_uuid()")
+                .HasColumnName("id");
+            entity.Property(e => e.CustomerId).HasColumnName("customer_id");
+            entity.Property(e => e.CategoryId).HasMaxLength(40).HasColumnName("category_id");
+            entity.Property(e => e.WalletId).HasColumnName("wallet_id");
+            entity.Property(e => e.MonthlyLimit)
+                .HasPrecision(15, 2)
+                .HasColumnName("monthly_limit");
+            entity.Property(e => e.LastAlertThreshold)
+                .HasDefaultValue(0m)
+                .HasColumnName("last_alert_threshold");
+            entity.Property(e => e.LastAlertMonth).HasMaxLength(7).HasColumnName("last_alert_month");
+            entity.Property(e => e.CreatedAt)
+                .HasDefaultValueSql("CURRENT_TIMESTAMP")
+                .HasColumnName("created_at");
+            entity.Property(e => e.UpdatedAt)
+                .HasDefaultValueSql("CURRENT_TIMESTAMP")
+                .HasColumnName("updated_at");
+
+            entity.HasOne(d => d.Customer)
+                .WithMany(p => p.Budgets)
+                .HasForeignKey(d => d.CustomerId)
+                .OnDelete(DeleteBehavior.Cascade)
+                .HasConstraintName("budgets_customer_id_fkey");
+
+            entity.HasOne(d => d.Category)
+                .WithMany(p => p.Budgets)
+                .HasForeignKey(d => d.CategoryId)
+                .OnDelete(DeleteBehavior.Cascade)
+                .HasConstraintName("budgets_category_id_fkey");
+
+            entity.HasOne(d => d.Wallet)
+                .WithMany(p => p.Budgets)
+                .HasForeignKey(d => d.WalletId)
+                .OnDelete(DeleteBehavior.Cascade)
+                .HasConstraintName("budgets_wallet_id_fkey");
+        });
+
+        modelBuilder.Entity<CustomerCategory>(entity =>
+        {
+            entity.HasKey(e => new { e.CustomerId, e.CategoryId }).HasName("customer_categories_pkey");
+            entity.ToTable("customer_categories");
+
+            entity.HasIndex(e => e.CustomerId, "idx_customer_categories_customer_active")
+                .HasFilter("is_active = true");
+
+            entity.Property(e => e.CustomerId).HasColumnName("customer_id");
+            entity.Property(e => e.CategoryId).HasMaxLength(40).HasColumnName("category_id");
+            entity.Property(e => e.BucketId).HasMaxLength(20).HasColumnName("bucket_id");
+            entity.Property(e => e.Source).HasMaxLength(20).HasDefaultValue("system").HasColumnName("source");
+            entity.Property(e => e.IsActive).HasDefaultValue(true).HasColumnName("is_active");
+            entity.Property(e => e.CreatedAt)
+                .HasDefaultValueSql("CURRENT_TIMESTAMP")
+                .HasColumnName("created_at");
+
+            entity.HasOne(d => d.Customer)
+                .WithMany(p => p.CustomerCategories)
+                .HasForeignKey(d => d.CustomerId)
+                .OnDelete(DeleteBehavior.Cascade)
+                .HasConstraintName("customer_categories_customer_id_fkey");
+
+            entity.HasOne(d => d.Category)
+                .WithMany(p => p.CustomerCategories)
+                .HasForeignKey(d => d.CategoryId)
+                .OnDelete(DeleteBehavior.Cascade)
+                .HasConstraintName("customer_categories_category_id_fkey");
+        });
+
         // ── RefreshToken entity ───────────────────────────────────
         modelBuilder.Entity<RefreshToken>(entity =>
         {

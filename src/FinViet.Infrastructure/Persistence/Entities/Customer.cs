@@ -49,7 +49,11 @@ public partial class Customer
 
     public virtual ICollection<BudgetPlan> BudgetPlans { get; set; } = new List<BudgetPlan>();
 
+    public virtual ICollection<Budget> Budgets { get; set; } = new List<Budget>();
+
     public virtual ICollection<CategoryCorrectionLog> CategoryCorrectionLogs { get; set; } = new List<CategoryCorrectionLog>();
+
+    public virtual ICollection<CustomerCategory> CustomerCategories { get; set; } = new List<CustomerCategory>();
 
     public virtual ICollection<ChatMessage> ChatMessages { get; set; } = new List<ChatMessage>();
 

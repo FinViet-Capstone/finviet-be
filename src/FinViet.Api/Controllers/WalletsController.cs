@@ -10,6 +10,7 @@ namespace FinViet.Api.Controllers;
 [ApiController]
 [Authorize(Roles = "Customer")]
 [Route("api/wallets")]
+[Route("v1/wallets")]
 public class WalletsController : ControllerBase
 {
     private readonly IWalletService _walletService;

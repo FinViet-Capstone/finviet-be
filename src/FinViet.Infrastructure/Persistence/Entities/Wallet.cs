@@ -23,6 +23,8 @@ public partial class Wallet
 
     public virtual ICollection<CategoryBudget> CategoryBudgets { get; set; } = new List<CategoryBudget>();
 
+    public virtual ICollection<Budget> Budgets { get; set; } = new List<Budget>();
+
     public virtual ICollection<ImportBatch> ImportBatches { get; set; } = new List<ImportBatch>();
 
     public virtual ICollection<Transaction> Transactions { get; set; } = new List<Transaction>();

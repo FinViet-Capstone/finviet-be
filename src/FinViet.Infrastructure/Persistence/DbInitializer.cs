@@ -35,7 +35,8 @@ public static class DbInitializer
         }
 
         var files = Directory.GetFiles(MigrationsFolder, "*.sql")
-            .OrderBy(Path.GetFileName)
+            .OrderBy(GetMigrationVersion)
+            .ThenBy(Path.GetFileName)
             .ToArray();
 
         foreach (var file in files)
@@ -58,6 +59,25 @@ public static class DbInitializer
                 throw;
             }
         }
+    }
+
+    private static int GetMigrationVersion(string file)
+    {
+        var fileName = Path.GetFileNameWithoutExtension(file);
+        if (string.IsNullOrWhiteSpace(fileName) ||
+            fileName[0] != 'V')
+        {
+            return int.MaxValue;
+        }
+
+        var separatorIndex = fileName.IndexOf("__", StringComparison.Ordinal);
+        var versionText = separatorIndex > 1
+            ? fileName[1..separatorIndex]
+            : fileName[1..];
+
+        return int.TryParse(versionText, out var version)
+            ? version
+            : int.MaxValue;
     }
 
     private static async Task SeedAsync(

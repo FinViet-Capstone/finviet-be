@@ -36,6 +36,8 @@ public partial class FinVietDbContext : DbContext
 
     public virtual DbSet<BudgetPlan> BudgetPlans { get; set; }
 
+    public virtual DbSet<Budget> Budgets { get; set; }
+
     public virtual DbSet<Category> Categories { get; set; }
 
     public virtual DbSet<CategoryBudget> CategoryBudgets { get; set; }
@@ -45,6 +47,8 @@ public partial class FinVietDbContext : DbContext
     public virtual DbSet<ChatMessage> ChatMessages { get; set; }
 
     public virtual DbSet<Customer> Customers { get; set; }
+
+    public virtual DbSet<CustomerCategory> CustomerCategories { get; set; }
 
     public virtual DbSet<CustomerSubscription> CustomerSubscriptions { get; set; }
 
