@@ -131,7 +131,7 @@ public class AiChatService : IAiChatService
         var spendByCategory = await _db.Transactions
             .Join(_db.Wallets, t => t.WalletId, w => w.WalletId, (t, w) => new { t, w.CustomerId })
             .Where(x => x.CustomerId == customerId
-                        && x.t.TransactionType == "EXPENSE"
+                        && x.t.TransactionType == "expense"
                         && x.t.TransactionDate >= monthStart && x.t.TransactionDate <= monthEnd)
             .Join(_db.Categories, x => x.t.CategoryId, c => c.CategoryId,
                 (x, c) => new { c.CategoryName, c.ExpenseClass, x.t.Amount })

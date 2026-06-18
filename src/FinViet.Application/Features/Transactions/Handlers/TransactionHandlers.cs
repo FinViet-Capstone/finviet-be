@@ -8,7 +8,7 @@ namespace FinViet.Application.Features.Transactions.Handlers;
 
 internal static class TransactionRules
 {
-    public static readonly string[] ValidTypes = { "INCOME", "EXPENSE", "TRANSFER", "DEBT_PAYMENT" };
+    public static readonly string[] ValidTypes = { "expense", "income", "transfer_out", "transfer_in" };
 
     public static void ValidateInput(string transactionType, decimal amount)
     {
@@ -19,45 +19,63 @@ internal static class TransactionRules
         if (amount <= 0)
             throw new BadRequestException("Amount must be greater than zero.");
     }
+
+    /// <summary>income and transfer_in add to the wallet; expense and transfer_out subtract.</summary>
+    public static bool IsCredit(string transactionType)
+        => transactionType is "income" or "transfer_in";
+
+    public static async Task EnsureCategoryExistsAsync(
+        ICategoryService categoryService,
+        string? categoryId,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(categoryId))
+            return;
+
+        var category = await categoryService.GetCategoryByIdAsync(categoryId, cancellationToken);
+        if (category is null)
+            throw new NotFoundException("Category", categoryId);
+    }
 }
 
 public class CreateTransactionHandler : IRequestHandler<CreateTransactionCommand, TransactionResponseDto>
 {
     private readonly ITransactionRepository _transactionRepository;
-    private readonly IWalletRepository _walletRepository;
+    private readonly ICategoryService _categoryService;
+    private readonly IBudgetService _budgetService;
 
-    public CreateTransactionHandler(ITransactionRepository transactionRepository, IWalletRepository walletRepository)
+    public CreateTransactionHandler(
+        ITransactionRepository transactionRepository,
+        ICategoryService categoryService,
+        IBudgetService budgetService)
     {
         _transactionRepository = transactionRepository;
-        _walletRepository = walletRepository;
+        _categoryService = categoryService;
+        _budgetService = budgetService;
     }
 
     public async Task<TransactionResponseDto> Handle(CreateTransactionCommand request, CancellationToken cancellationToken)
     {
         TransactionRules.ValidateInput(request.TransactionType, request.Amount);
-
-        var wallet = await _walletRepository.GetByIdAsync(request.WalletId, cancellationToken);
-        if (wallet == null)
-            throw new NotFoundException("Wallet", request.WalletId);
+        await TransactionRules.EnsureCategoryExistsAsync(_categoryService, request.CategoryId, cancellationToken);
 
         var transaction = await _transactionRepository.CreateAsync(
+            request.CustomerId,
             request.WalletId,
             request.CategoryId,
-            request.SourceId,
             request.TransactionType,
             request.Amount,
             request.TransactionDate,
-            request.Note,
+            request.Description,
+            request.Merchant,
+            request.EntryMethod,
             cancellationToken
         );
 
-        decimal newBalance = wallet.Balance;
-        if (request.TransactionType == "INCOME")
-            newBalance += request.Amount;
-        else if (request.TransactionType == "EXPENSE" || request.TransactionType == "TRANSFER" || request.TransactionType == "DEBT_PAYMENT")
-            newBalance -= request.Amount;
-
-        await _walletRepository.UpdateBalanceAsync(request.WalletId, newBalance, cancellationToken);
+        await _budgetService.SyncBudgetOnTransactionChangeAsync(
+            request.CustomerId,
+            DateOnly.FromDateTime(request.TransactionDate),
+            cancellationToken);
 
         return transaction;
     }
@@ -66,50 +84,52 @@ public class CreateTransactionHandler : IRequestHandler<CreateTransactionCommand
 public class UpdateTransactionHandler : IRequestHandler<UpdateTransactionCommand, TransactionResponseDto>
 {
     private readonly ITransactionRepository _transactionRepository;
-    private readonly IWalletRepository _walletRepository;
+    private readonly ICategoryService _categoryService;
+    private readonly IBudgetService _budgetService;
 
-    public UpdateTransactionHandler(ITransactionRepository transactionRepository, IWalletRepository walletRepository)
+    public UpdateTransactionHandler(
+        ITransactionRepository transactionRepository,
+        ICategoryService categoryService,
+        IBudgetService budgetService)
     {
         _transactionRepository = transactionRepository;
-        _walletRepository = walletRepository;
+        _categoryService = categoryService;
+        _budgetService = budgetService;
     }
 
     public async Task<TransactionResponseDto> Handle(UpdateTransactionCommand request, CancellationToken cancellationToken)
     {
         TransactionRules.ValidateInput(request.TransactionType, request.Amount);
+        await TransactionRules.EnsureCategoryExistsAsync(_categoryService, request.CategoryId, cancellationToken);
 
         var transaction = await _transactionRepository.GetByIdAsync(request.TransactionId, cancellationToken);
         if (transaction == null)
             throw new NotFoundException("Transaction", request.TransactionId);
 
-        var wallet = await _walletRepository.GetByIdAsync(transaction.WalletId, cancellationToken);
-        if (wallet == null)
-            throw new NotFoundException("Wallet", transaction.WalletId);
-
-        decimal newBalance = wallet.Balance;
-        
-        if (transaction.TransactionType == "INCOME")
-            newBalance -= transaction.Amount;
-        else if (transaction.TransactionType == "EXPENSE" || transaction.TransactionType == "TRANSFER" || transaction.TransactionType == "DEBT_PAYMENT")
-            newBalance += transaction.Amount;
-
-        if (request.TransactionType == "INCOME")
-            newBalance += request.Amount;
-        else if (request.TransactionType == "EXPENSE" || request.TransactionType == "TRANSFER" || request.TransactionType == "DEBT_PAYMENT")
-            newBalance -= request.Amount;
-
         var updatedTransaction = await _transactionRepository.UpdateAsync(
+            request.CustomerId,
             request.TransactionId,
             request.CategoryId,
-            request.SourceId,
             request.TransactionType,
             request.Amount,
             request.TransactionDate,
-            request.Note,
+            request.Description,
+            request.Merchant,
             cancellationToken
         );
 
-        await _walletRepository.UpdateBalanceAsync(transaction.WalletId, newBalance, cancellationToken);
+        await _budgetService.SyncBudgetOnTransactionChangeAsync(
+            request.CustomerId,
+            DateOnly.FromDateTime(transaction.TransactionDate),
+            cancellationToken);
+
+        if (DateOnly.FromDateTime(transaction.TransactionDate) != DateOnly.FromDateTime(request.TransactionDate))
+        {
+            await _budgetService.SyncBudgetOnTransactionChangeAsync(
+                request.CustomerId,
+                DateOnly.FromDateTime(request.TransactionDate),
+                cancellationToken);
+        }
 
         return updatedTransaction;
     }
@@ -118,12 +138,14 @@ public class UpdateTransactionHandler : IRequestHandler<UpdateTransactionCommand
 public class DeleteTransactionHandler : IRequestHandler<DeleteTransactionCommand, bool>
 {
     private readonly ITransactionRepository _transactionRepository;
-    private readonly IWalletRepository _walletRepository;
+    private readonly IBudgetService _budgetService;
 
-    public DeleteTransactionHandler(ITransactionRepository transactionRepository, IWalletRepository walletRepository)
+    public DeleteTransactionHandler(
+        ITransactionRepository transactionRepository,
+        IBudgetService budgetService)
     {
         _transactionRepository = transactionRepository;
-        _walletRepository = walletRepository;
+        _budgetService = budgetService;
     }
 
     public async Task<bool> Handle(DeleteTransactionCommand request, CancellationToken cancellationToken)
@@ -132,18 +154,18 @@ public class DeleteTransactionHandler : IRequestHandler<DeleteTransactionCommand
         if (transaction == null)
             throw new NotFoundException("Transaction", request.TransactionId);
 
-        var wallet = await _walletRepository.GetByIdAsync(transaction.WalletId, cancellationToken);
-        if (wallet == null)
-            throw new NotFoundException("Wallet", transaction.WalletId);
+        var deleted = await _transactionRepository.DeleteAsync(
+            request.CustomerId,
+            request.TransactionId,
+            cancellationToken);
 
-        decimal newBalance = wallet.Balance;
-        if (transaction.TransactionType == "INCOME")
-            newBalance -= transaction.Amount;
-        else if (transaction.TransactionType == "EXPENSE" || transaction.TransactionType == "TRANSFER" || transaction.TransactionType == "DEBT_PAYMENT")
-            newBalance += transaction.Amount;
+        if (!deleted)
+            return false;
 
-        await _transactionRepository.DeleteAsync(request.TransactionId, cancellationToken);
-        await _walletRepository.UpdateBalanceAsync(transaction.WalletId, newBalance, cancellationToken);
+        await _budgetService.SyncBudgetOnTransactionChangeAsync(
+            request.CustomerId,
+            DateOnly.FromDateTime(transaction.TransactionDate),
+            cancellationToken);
 
         return true;
     }
@@ -152,57 +174,37 @@ public class DeleteTransactionHandler : IRequestHandler<DeleteTransactionCommand
 public class ClassifyTransactionHandler : IRequestHandler<ClassifyTransactionCommand, TransactionResponseDto>
 {
     private readonly ITransactionRepository _transactionRepository;
-    private readonly IWalletRepository _walletRepository;
     private readonly ICategoryService _categoryService;
-    private readonly IIncomeSourceService _incomeSourceService;
+    private readonly IBudgetService _budgetService;
 
     public ClassifyTransactionHandler(
         ITransactionRepository transactionRepository,
-        IWalletRepository walletRepository,
         ICategoryService categoryService,
-        IIncomeSourceService incomeSourceService)
+        IBudgetService budgetService)
     {
         _transactionRepository = transactionRepository;
-        _walletRepository = walletRepository;
         _categoryService = categoryService;
-        _incomeSourceService = incomeSourceService;
+        _budgetService = budgetService;
     }
 
     public async Task<TransactionResponseDto> Handle(ClassifyTransactionCommand request, CancellationToken cancellationToken)
     {
-        var transaction = await _transactionRepository.GetByIdAsync(request.TransactionId, cancellationToken);
-        if (transaction == null)
-            throw new NotFoundException("Transaction", request.TransactionId);
-
-        // Ownership: the transaction's wallet must belong to the authenticated customer.
-        var wallet = await _walletRepository.GetByIdAsync(transaction.WalletId, cancellationToken);
-        if (wallet == null)
-            throw new NotFoundException("Wallet", transaction.WalletId);
-
-        if (wallet.CustomerId != request.CustomerId)
-            throw new ForbiddenException("You do not have access to this transaction.");
-
-        if (request.CategoryId.HasValue)
-        {
-            var category = await _categoryService.GetCategoryByIdAsync(request.CategoryId.Value, cancellationToken);
-            if (category == null)
-                throw new NotFoundException("Category", request.CategoryId.Value);
-        }
-
-        if (request.SourceId.HasValue)
-        {
-            // GetIncomeSourceByIdAsync is scoped by customerId, so this also enforces ownership of the source.
-            var source = await _incomeSourceService.GetIncomeSourceByIdAsync(request.CustomerId, request.SourceId.Value, cancellationToken);
-            if (source == null)
-                throw new NotFoundException("Income source", request.SourceId.Value);
-        }
+        await TransactionRules.EnsureCategoryExistsAsync(_categoryService, request.CategoryId, cancellationToken);
 
         var classified = await _transactionRepository.ClassifyAsync(
+            request.CustomerId,
             request.TransactionId,
             request.CategoryId,
-            request.SourceId,
             cancellationToken);
 
-        return classified!;
+        if (classified is null)
+            throw new NotFoundException("Transaction", request.TransactionId);
+
+        await _budgetService.SyncBudgetOnTransactionChangeAsync(
+            request.CustomerId,
+            DateOnly.FromDateTime(classified.TransactionDate),
+            cancellationToken);
+
+        return classified;
     }
 }

@@ -27,7 +27,7 @@ namespace FinViet.Application.DTOs.Budgets
 
     public class CreateCategoryBudgetRequest
     {
-        public Guid CategoryId { get; set; }
+        public string CategoryId { get; set; } = string.Empty;
 
         // null = áp dụng cho mọi ví; có giá trị = chỉ cho ví cụ thể.
         public Guid? WalletId { get; set; }

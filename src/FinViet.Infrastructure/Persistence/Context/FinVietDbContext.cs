@@ -36,6 +36,8 @@ public partial class FinVietDbContext : DbContext
 
     public virtual DbSet<BudgetPlan> BudgetPlans { get; set; }
 
+    public virtual DbSet<Budget> Budgets { get; set; }
+
     public virtual DbSet<Category> Categories { get; set; }
 
     public virtual DbSet<CategoryBudget> CategoryBudgets { get; set; }
@@ -45,6 +47,8 @@ public partial class FinVietDbContext : DbContext
     public virtual DbSet<ChatMessage> ChatMessages { get; set; }
 
     public virtual DbSet<Customer> Customers { get; set; }
+
+    public virtual DbSet<CustomerCategory> CustomerCategories { get; set; }
 
     public virtual DbSet<CustomerSubscription> CustomerSubscriptions { get; set; }
 
@@ -197,11 +201,17 @@ public partial class FinVietDbContext : DbContext
             entity.ToTable("category");
 
             entity.Property(e => e.CategoryId)
-                .HasDefaultValueSql("gen_random_uuid()")
+                .HasMaxLength(40)
                 .HasColumnName("category_id");
             entity.Property(e => e.CategoryName)
                 .HasMaxLength(100)
                 .HasColumnName("category_name");
+            entity.Property(e => e.NameVi)
+                .HasMaxLength(80)
+                .HasColumnName("name_vi");
+            entity.Property(e => e.NameEn)
+                .HasMaxLength(80)
+                .HasColumnName("name_en");
             entity.Property(e => e.ExpenseClass)
                 .HasMaxLength(50)
                 .HasColumnName("expense_class");
@@ -211,6 +221,14 @@ public partial class FinVietDbContext : DbContext
             entity.Property(e => e.Type)
                 .HasMaxLength(50)
                 .HasColumnName("type");
+            entity.Property(e => e.Icon)
+                .HasMaxLength(60)
+                .HasColumnName("icon");
+            entity.Property(e => e.Color)
+                .HasMaxLength(7)
+                .HasColumnName("color");
+            entity.Property(e => e.SortOrder)
+                .HasColumnName("sort_order");
         });
 
         modelBuilder.Entity<CategoryBudget>(entity =>
@@ -231,7 +249,9 @@ public partial class FinVietDbContext : DbContext
             entity.Property(e => e.AmountLimit)
                 .HasPrecision(15, 2)
                 .HasColumnName("amount_limit");
-            entity.Property(e => e.CategoryId).HasColumnName("category_id");
+            entity.Property(e => e.CategoryId)
+                .HasMaxLength(40)
+                .HasColumnName("category_id");
             entity.Property(e => e.CurrentSpent)
                 .HasPrecision(15, 2)
                 .HasDefaultValueSql("0.00")
@@ -275,7 +295,9 @@ public partial class FinVietDbContext : DbContext
                 .HasDefaultValueSql("gen_random_uuid()")
                 .HasColumnName("log_id");
             entity.Property(e => e.AdminId).HasColumnName("admin_id");
-            entity.Property(e => e.CorrectedCategoryId).HasColumnName("corrected_category_id");
+            entity.Property(e => e.CorrectedCategoryId)
+                .HasMaxLength(40)
+                .HasColumnName("corrected_category_id");
             entity.Property(e => e.CreatedAt)
                 .HasDefaultValueSql("CURRENT_TIMESTAMP")
                 .HasColumnName("created_at");
@@ -621,31 +643,56 @@ public partial class FinVietDbContext : DbContext
                 .HasPrecision(15, 2)
                 .HasColumnName("amount");
             entity.Property(e => e.BatchId).HasColumnName("batch_id");
-            entity.Property(e => e.CategoryId).HasColumnName("category_id");
+            entity.Property(e => e.CategoryId)
+                .HasMaxLength(40)
+                .HasColumnName("category_id");
+            entity.Property(e => e.CustomerId).HasColumnName("customer_id");
             entity.Property(e => e.Note).HasColumnName("note");
+            entity.Property(e => e.Description).HasColumnName("description");
             entity.Property(e => e.BeneficiaryName).HasColumnName("beneficiary_name");
+            entity.Property(e => e.Merchant)
+                .HasMaxLength(255)
+                .HasColumnName("merchant");
+            entity.Property(e => e.EntryMethod)
+                .HasMaxLength(20)
+                .HasColumnName("entry_method");
+            entity.Property(e => e.TransferPairId).HasColumnName("transfer_pair_id");
+            entity.Property(e => e.ExternalId)
+                .HasMaxLength(120)
+                .HasColumnName("external_id");
             entity.Property(e => e.IsAiClassified)
                 .HasDefaultValue(false)
                 .HasColumnName("is_ai_classified");
             entity.Property(e => e.AiConfidence)
                 .HasPrecision(5, 4)
                 .HasColumnName("ai_confidence");
-            entity.Property(e => e.AiCategoryGuess).HasColumnName("ai_category_guess");
+            entity.Property(e => e.AiCategoryGuess)
+                .HasMaxLength(40)
+                .HasColumnName("ai_category_guess");
             entity.Property(e => e.ReportId).HasColumnName("report_id");
             entity.Property(e => e.SourceId).HasColumnName("source_id");
             entity.Property(e => e.TransactionDate)
                 .HasDefaultValueSql("CURRENT_TIMESTAMP")
                 .HasColumnName("transaction_date");
+            entity.Property(e => e.CreatedAt)
+                .HasDefaultValueSql("now()")
+                .HasColumnName("created_at");
+            entity.Property(e => e.UpdatedAt)
+                .HasDefaultValueSql("now()")
+                .HasColumnName("updated_at");
             entity.Property(e => e.TransactionType)
                 .HasMaxLength(50)
                 .HasColumnName("transaction_type");
             entity.Property(e => e.SourceChannel)
                 .HasMaxLength(20)
-                .IsRequired()
                 .HasColumnName("source_channel");
             entity.Property(e => e.WalletId)
                 .IsRequired()
                 .HasColumnName("wallet_id");
+
+            entity.HasIndex(e => e.ExternalId, "uq_tx_external")
+                .IsUnique()
+                .HasFilter("external_id IS NOT NULL");
 
             entity.HasOne(d => d.Batch).WithMany(p => p.Transactions)
                 .HasForeignKey(d => d.BatchId)
@@ -656,6 +703,11 @@ public partial class FinVietDbContext : DbContext
                 .HasForeignKey(d => d.CategoryId)
                 .OnDelete(DeleteBehavior.SetNull)
                 .HasConstraintName("transaction_category_id_fkey");
+
+            entity.HasOne(d => d.Customer).WithMany()
+                .HasForeignKey(d => d.CustomerId)
+                .OnDelete(DeleteBehavior.Cascade)
+                .HasConstraintName("transaction_customer_id_fkey");
 
             entity.HasOne(d => d.Report).WithMany(p => p.Transactions)
                 .HasForeignKey(d => d.ReportId)
@@ -700,6 +752,11 @@ public partial class FinVietDbContext : DbContext
                 .HasMaxLength(50)
                 .IsRequired()
                 .HasColumnName("wallet_type");
+            entity.Property(e => e.IsDeleted)
+                .HasDefaultValue(false)
+                .HasColumnName("is_deleted");
+            entity.Property(e => e.DeletedAt)
+                .HasColumnName("deleted_at");
 
             entity.HasOne(d => d.Customer).WithMany(p => p.Wallets)
                 .HasForeignKey(d => d.CustomerId)
@@ -866,7 +923,9 @@ public partial class FinVietDbContext : DbContext
                 .HasColumnName("rule_id");
             entity.Property(e => e.CustomerId).HasColumnName("customer_id");
             entity.Property(e => e.MatchText).HasColumnName("match_text");
-            entity.Property(e => e.CategoryId).HasColumnName("category_id");
+            entity.Property(e => e.CategoryId)
+                .HasMaxLength(40)
+                .HasColumnName("category_id");
             entity.Property(e => e.IsRecurring)
                 .HasDefaultValue(false)
                 .HasColumnName("is_recurring");
@@ -893,7 +952,9 @@ public partial class FinVietDbContext : DbContext
             entity.ToTable("user_category_buckets");
 
             entity.Property(e => e.CustomerId).HasColumnName("customer_id");
-            entity.Property(e => e.CategoryId).HasColumnName("category_id");
+            entity.Property(e => e.CategoryId)
+                .HasMaxLength(40)
+                .HasColumnName("category_id");
             entity.Property(e => e.Bucket)
                 .HasMaxLength(10)
                 .HasColumnName("bucket");

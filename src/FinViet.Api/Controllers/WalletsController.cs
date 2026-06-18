@@ -8,8 +8,9 @@ using Microsoft.AspNetCore.Mvc;
 namespace FinViet.Api.Controllers;
 
 [ApiController]
-[Authorize]
+[Authorize(Roles = "Customer")]
 [Route("api/wallets")]
+[Route("v1/wallets")]
 public class WalletsController : ControllerBase
 {
     private readonly IWalletService _walletService;
@@ -91,7 +92,7 @@ public class WalletsController : ControllerBase
     }
 
     [HttpDelete("{id:guid}")]
-    public async Task<ActionResult<ApiResponse<object?>>> DeleteWallet(
+    public async Task<IActionResult> DeleteWallet(
         [FromRoute] Guid id,
         CancellationToken cancellationToken)
     {
@@ -104,9 +105,7 @@ public class WalletsController : ControllerBase
         if (!deleted)
             return NotFound(ApiResponse<object?>.Fail("Wallet not found."));
 
-        return Ok(ApiResponse<object?>.Ok(
-            null,
-            "Wallet deleted successfully"));
+        return NoContent();
     }
 
     [HttpPost("transfer")]

@@ -63,7 +63,7 @@ public class AiCategorizationService : IAiCategorizationService
                 txn.AiCategoryGuess = ruleCategoryId;
                 await _db.SaveChangesAsync(cancellationToken);
 
-                var ruleName = await CategoryNameAsync(ruleCategoryId.Value, cancellationToken);
+                var ruleName = await CategoryNameAsync(ruleCategoryId, cancellationToken);
                 return Outcome(txn, ruleCategoryId, ruleName, isAi: false, queued: false, "RULE");
             }
         }
@@ -141,10 +141,10 @@ public class AiCategorizationService : IAiCategorizationService
     }
 
     private static string BuildInput(Transaction txn)
-        => !string.IsNullOrWhiteSpace(txn.BeneficiaryName) ? txn.BeneficiaryName!.Trim()
-            : (txn.Note ?? string.Empty).Trim();
+        => !string.IsNullOrWhiteSpace(txn.Merchant) ? txn.Merchant!.Trim()
+            : (txn.Description ?? string.Empty).Trim();
 
-    private async Task<Guid?> MatchRuleAsync(Guid customerId, string input, CancellationToken ct)
+    private async Task<string?> MatchRuleAsync(Guid customerId, string input, CancellationToken ct)
     {
         var rules = await _db.BeneficiaryRules
             .Where(r => r.CustomerId == customerId)
@@ -158,26 +158,22 @@ public class AiCategorizationService : IAiCategorizationService
         return match?.CategoryId;
     }
 
-    private async Task<Dictionary<string, Guid>> ExpenseCategoriesAsync(CancellationToken ct)
+    private async Task<Dictionary<string, string>> ExpenseCategoriesAsync(CancellationToken ct)
     {
-        // Closed set: expense categories excluding the catch-all "Chưa phân loại".
+        // Closed set: expense categories excluding the auto-only goal-funding slug.
         return await _db.Categories
-            .Where(c => c.Type == "EXPENSE" && c.CategoryName != UncategorizedName)
+            .Where(c => c.Type == "expense" && c.CategoryId != "cat_savings_goal")
             .ToDictionaryAsync(c => c.CategoryName, c => c.CategoryId, ct);
     }
 
-    private async Task<string?> CategoryNameAsync(Guid categoryId, CancellationToken ct)
+    private async Task<string?> CategoryNameAsync(string categoryId, CancellationToken ct)
         => await _db.Categories.Where(c => c.CategoryId == categoryId)
             .Select(c => c.CategoryName).FirstOrDefaultAsync(ct);
 
     private async Task ApplyUncategorizedAsync(Transaction txn, bool queued, CancellationToken ct)
     {
-        var uncategorizedId = await _db.Categories
-            .Where(c => c.CategoryName == UncategorizedName)
-            .Select(c => (Guid?)c.CategoryId)
-            .FirstOrDefaultAsync(ct);
-
-        txn.CategoryId = uncategorizedId;
+        // Uncategorized transactions carry category_id = NULL (no placeholder slug).
+        txn.CategoryId = null;
         txn.IsAiClassified = false;
         txn.AiConfidence = null;
         txn.AiCategoryGuess = null;
@@ -185,7 +181,7 @@ public class AiCategorizationService : IAiCategorizationService
     }
 
     private static CategorizationOutcome Outcome(
-        Transaction txn, Guid? catId, string? catName, bool isAi, bool queued, string source)
+        Transaction txn, string? catId, string? catName, bool isAi, bool queued, string source)
         => new()
         {
             TransactionId = txn.TransactionId,

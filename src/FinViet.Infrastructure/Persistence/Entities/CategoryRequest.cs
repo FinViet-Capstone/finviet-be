@@ -14,7 +14,7 @@ public class CategoryRequest
 
     public Guid? ReviewedBy { get; set; }
     public string? ReviewNote { get; set; }
-    public Guid? CreatedCategoryId { get; set; }
+    public string? CreatedCategoryId { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime? ReviewedAt { get; set; }
 

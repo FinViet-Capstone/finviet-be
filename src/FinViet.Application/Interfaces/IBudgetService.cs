@@ -13,6 +13,32 @@ namespace FinViet.Application.Interfaces
             Guid customerId,
             CancellationToken cancellationToken = default);
 
+        Task<IReadOnlyList<BudgetResponse>> GetBudgetsAsync(
+            Guid customerId,
+            string? month,
+            CancellationToken cancellationToken = default);
+
+        Task<BucketSummaryListResponse> GetBudgetBucketsAsync(
+            Guid customerId,
+            string? month,
+            CancellationToken cancellationToken = default);
+
+        Task<BudgetResponse> UpsertBudgetAsync(
+            Guid customerId,
+            UpsertBudgetRequest request,
+            CancellationToken cancellationToken = default);
+
+        Task<BudgetResponse> UpdateBudgetAsync(
+            Guid customerId,
+            Guid budgetId,
+            UpdateBudgetRequest request,
+            CancellationToken cancellationToken = default);
+
+        Task<bool> DeleteBudgetAsync(
+            Guid customerId,
+            Guid budgetId,
+            CancellationToken cancellationToken = default);
+
         Task<BudgetPlanResponse> CreateBudgetPlanAsync(
             Guid customerId,
             CreateBudgetPlanRequest request,
@@ -24,6 +50,15 @@ namespace FinViet.Application.Interfaces
             CancellationToken cancellationToken = default);
 
         Task<BudgetTrackingResponse> GetCurrentBudgetTrackingAsync(
+            Guid customerId,
+            CancellationToken cancellationToken = default);
+
+        Task<BucketTrackingResponse> GetBucketTrackingAsync(
+            Guid customerId,
+            Guid planId,
+            CancellationToken cancellationToken = default);
+
+        Task<BucketTrackingResponse> GetCurrentBucketTrackingAsync(
             Guid customerId,
             CancellationToken cancellationToken = default);
 
@@ -46,15 +81,10 @@ namespace FinViet.Application.Interfaces
         Task<BudgetPlanResponse> ResetCurrentMonthBudgetAsync(
             Guid customerId,
             CancellationToken cancellationToken = default);
-        // Theo dõi ngân sách theo mô hình 50-30-20 cho một plan cụ thể.
-        Task<BucketTrackingResponse> GetBucketTrackingAsync(
-            Guid customerId,
-            Guid planId,
-            CancellationToken cancellationToken = default);
 
-        // Theo dõi 50-30-20 cho plan đang hoạt động của tháng hiện tại.
-        Task<BucketTrackingResponse> GetCurrentBucketTrackingAsync(
+        Task SyncBudgetOnTransactionChangeAsync(
             Guid customerId,
+            DateOnly affectedDate,
             CancellationToken cancellationToken = default);
     }
 }
