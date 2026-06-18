@@ -6,7 +6,7 @@ public class CategorizationOutcome
     public Guid TransactionId { get; set; }
 
     /// <summary>Resolved category id written to the transaction.</summary>
-    public string? CategoryId { get; set; }
+    public Guid? CategoryId { get; set; }
 
     public string? CategoryName { get; set; }
 

@@ -1,5 +1,3 @@
-using System.Globalization;
-using System.Text;
 using FinViet.Application.DTOs.Categories;
 using FinViet.Application.Exceptions;
 using FinViet.Application.Interfaces;
@@ -13,7 +11,7 @@ public class CategoryService : ICategoryService
 {
     private static readonly HashSet<string> AllowedTypes = new(StringComparer.OrdinalIgnoreCase)
     {
-        "income", "expense"
+        "INCOME", "EXPENSE"
     };
 
     private static readonly HashSet<string> AllowedExpenseClasses = new(StringComparer.OrdinalIgnoreCase)
@@ -40,18 +38,16 @@ public class CategoryService : ICategoryService
             query = query.Where(c => c.Type == normalizedType);
         }
 
-        // cat_savings_goal is auto-only — never offered in the manual picker.
-        query = query.Where(c => c.CategoryId != "cat_savings_goal");
-
-        return await query
+        var categories = await query
             .OrderBy(c => c.SortOrder)
             .ThenBy(c => c.CategoryName)
-            .Select(c => ToResponse(c))
             .ToListAsync(cancellationToken);
+
+        return categories.Select(ToResponse).ToList();
     }
 
     public async Task<CategoryResponse?> GetCategoryByIdAsync(
-        string categoryId,
+        Guid categoryId,
         CancellationToken cancellationToken = default)
     {
         var category = await _dbContext.Categories
@@ -77,11 +73,9 @@ public class CategoryService : ICategoryService
         if (duplicateName)
             throw new ValidationException("Category name already exists for this type.");
 
-        var slug = await GenerateUniqueSlugAsync(trimmedName, cancellationToken);
-
         var category = new Category
         {
-            CategoryId = slug,
+            CategoryId = Guid.NewGuid(),
             CategoryName = trimmedName,
             NameVi = trimmedName,
             NameEn = request.NameEn,
@@ -100,7 +94,7 @@ public class CategoryService : ICategoryService
     }
 
     public async Task<CategoryResponse?> UpdateCategoryAsync(
-        string categoryId,
+        Guid categoryId,
         UpdateCategoryRequest request,
         CancellationToken cancellationToken = default)
     {
@@ -150,7 +144,7 @@ public class CategoryService : ICategoryService
     }
 
     public async Task<bool> DeleteCategoryAsync(
-        string categoryId,
+        Guid categoryId,
         CancellationToken cancellationToken = default)
     {
         var category = await _dbContext.Categories
@@ -172,9 +166,9 @@ public class CategoryService : ICategoryService
 
     private static string NormalizeType(string type)
     {
-        var normalized = type.Trim().ToLowerInvariant();
+        var normalized = type.Trim().ToUpperInvariant();
         if (!AllowedTypes.Contains(normalized))
-            throw new ValidationException("Category type must be one of: income, expense.");
+            throw new ValidationException("Category type must be one of: INCOME, EXPENSE.");
 
         return normalized;
     }
@@ -194,67 +188,14 @@ public class CategoryService : ICategoryService
     private async Task<bool> CategoryNameExistsAsync(
         string categoryName,
         string type,
-        string? excludedCategoryId,
+        Guid? excludedCategoryId,
         CancellationToken cancellationToken)
     {
         return await _dbContext.Categories.AnyAsync(
             c => c.Type == type
-                 && (excludedCategoryId == null || c.CategoryId != excludedCategoryId)
+                 && (!excludedCategoryId.HasValue || c.CategoryId != excludedCategoryId.Value)
                  && EF.Functions.ILike(c.CategoryName, categoryName),
             cancellationToken);
-    }
-
-    /// <summary>Builds a unique slug id like "cat_an_uong"; appends a numeric suffix on collision.</summary>
-    private async Task<string> GenerateUniqueSlugAsync(string name, CancellationToken cancellationToken)
-    {
-        var baseSlug = "cat_" + Slugify(name);
-        var slug = baseSlug;
-        var suffix = 2;
-
-        while (await _dbContext.Categories.AnyAsync(c => c.CategoryId == slug, cancellationToken))
-        {
-            slug = $"{baseSlug}_{suffix}";
-            suffix++;
-        }
-
-        return slug.Length > 40 ? slug[..40] : slug;
-    }
-
-    private static string Slugify(string input)
-    {
-        // Strip Vietnamese diacritics, lowercase, keep [a-z0-9], collapse to underscores.
-        var normalized = input.Normalize(NormalizationForm.FormD);
-        var sb = new StringBuilder();
-        foreach (var ch in normalized)
-        {
-            var category = CharUnicodeInfo.GetUnicodeCategory(ch);
-            if (category == UnicodeCategory.NonSpacingMark)
-                continue;
-
-            if (ch == 'đ' || ch == 'Đ')
-                sb.Append('d');
-            else
-                sb.Append(ch);
-        }
-
-        var ascii = sb.ToString().Normalize(NormalizationForm.FormC).ToLowerInvariant();
-        var slug = new StringBuilder();
-        var lastUnderscore = false;
-        foreach (var ch in ascii)
-        {
-            if (ch >= 'a' && ch <= 'z' || ch >= '0' && ch <= '9')
-            {
-                slug.Append(ch);
-                lastUnderscore = false;
-            }
-            else if (!lastUnderscore)
-            {
-                slug.Append('_');
-                lastUnderscore = true;
-            }
-        }
-
-        return slug.ToString().Trim('_');
     }
 
     private static CategoryResponse ToResponse(Category category)

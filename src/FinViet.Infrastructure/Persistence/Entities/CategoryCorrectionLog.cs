@@ -13,7 +13,7 @@ public partial class CategoryCorrectionLog
 
     public Guid? AdminId { get; set; }
 
-    public string? CorrectedCategoryId { get; set; }
+    public Guid? CorrectedCategoryId { get; set; }
 
     public string? OriginalAiGuess { get; set; }
 

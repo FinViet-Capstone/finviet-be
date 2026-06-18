@@ -10,7 +10,7 @@ public partial class BeneficiaryRule
 
     public string MatchText { get; set; } = null!;
 
-    public string CategoryId { get; set; } = null!;
+    public Guid CategoryId { get; set; }
 
     public bool IsRecurring { get; set; }
 

@@ -70,16 +70,14 @@ public class TransactionImportRepository : ITransactionImportRepository
             {
                 TransactionId = Guid.NewGuid(),
                 WalletId = wallet.WalletId,
-                CustomerId = walletCustomerId,
                 CategoryId = null,
+                SourceId = null,
                 BatchId = batch.BatchId,
                 TransactionType = row.TransactionType,
-                EntryMethod = sourceChannel,
+                SourceChannel = sourceChannel,
                 Amount = row.Amount,
                 TransactionDate = DateTime.SpecifyKind(row.TransactionDate, DateTimeKind.Utc),
-                Description = row.Note,
-                CreatedAt = DateTime.UtcNow,
-                UpdatedAt = DateTime.UtcNow
+                Note = row.Note
             };
 
             _context.Transactions.Add(transaction);
@@ -90,10 +88,10 @@ public class TransactionImportRepository : ITransactionImportRepository
                 TransactionType = transaction.TransactionType,
                 Amount = transaction.Amount,
                 TransactionDate = transaction.TransactionDate.Value,
-                Note = transaction.Description
+                Note = transaction.Note
             });
 
-            if (transaction.TransactionType == "income")
+            if (transaction.TransactionType == "INCOME")
                 balance += transaction.Amount;
             else
                 balance -= transaction.Amount;

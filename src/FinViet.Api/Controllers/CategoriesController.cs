@@ -30,9 +30,9 @@ public class CategoriesController : ControllerBase
             "Categories retrieved successfully"));
     }
 
-    [HttpGet("{id}")]
+    [HttpGet("{id:guid}")]
     public async Task<ActionResult<ApiResponse<CategoryResponse>>> GetCategoryById(
-        [FromRoute] string id,
+        [FromRoute] Guid id,
         CancellationToken cancellationToken)
     {
         var category = await _categoryService.GetCategoryByIdAsync(id, cancellationToken);
@@ -61,10 +61,10 @@ public class CategoriesController : ControllerBase
                 "Category created successfully"));
     }
 
-    [HttpPatch("{id}")]
+    [HttpPatch("{id:guid}")]
     [Authorize(Roles = "Admin")]
     public async Task<ActionResult<ApiResponse<CategoryResponse>>> UpdateCategory(
-        [FromRoute] string id,
+        [FromRoute] Guid id,
         [FromBody] UpdateCategoryRequest request,
         CancellationToken cancellationToken)
     {
@@ -78,10 +78,10 @@ public class CategoriesController : ControllerBase
             "Category updated successfully"));
     }
 
-    [HttpDelete("{id}")]
+    [HttpDelete("{id:guid}")]
     [Authorize(Roles = "Admin")]
     public async Task<ActionResult<ApiResponse<object?>>> DeleteCategory(
-        [FromRoute] string id,
+        [FromRoute] Guid id,
         CancellationToken cancellationToken)
     {
         var deleted = await _categoryService.DeleteCategoryAsync(id, cancellationToken);

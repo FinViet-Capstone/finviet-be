@@ -62,7 +62,7 @@ public class BankStatementExcelParser : IBankStatementParser
                 continue;
             }
 
-            var transactionType = credit > 0 ? "income" : "expense";
+            var transactionType = credit > 0 ? "INCOME" : "EXPENSE";
             var note = string.IsNullOrWhiteSpace(correspondent)
                 ? description
                 : $"{description} | Doi ung: {correspondent}";

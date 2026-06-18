@@ -409,15 +409,15 @@ public class BudgetService : IBudgetService
         var startUtc = plan.StartDate.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
         var endExclusiveUtc = plan.EndDate.AddDays(1).ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
 
-        // Id của category catch-all để loại khỏi Budget Adherence (uncategorized = NULL ở schema mới).
+        // Id của category catch-all để loại khỏi Budget Adherence.
         var uncategorizedId = await _dbContext.Categories
             .Where(c => c.CategoryName == UncategorizedName)
-            .Select(c => (string?)c.CategoryId)
+            .Select(c => (Guid?)c.CategoryId)
             .FirstOrDefaultAsync(cancellationToken);
 
         var categoryIds = plan.CategoryBudgets
-            .Where(x => x.CategoryId != null)
-            .Select(x => x.CategoryId!)
+            .Where(x => x.CategoryId.HasValue)
+            .Select(x => x.CategoryId!.Value)
             .Distinct()
             .ToList();
 
@@ -428,14 +428,14 @@ public class BudgetService : IBudgetService
                 from transaction in _dbContext.Transactions.AsNoTracking()
                 join wallet in _dbContext.Wallets.AsNoTracking()
                     on transaction.WalletId equals wallet.WalletId
-                where transaction.CategoryId != null
-                      && categoryIds.Contains(transaction.CategoryId)
-                      && (uncategorizedId == null || transaction.CategoryId != uncategorizedId)
-                      && transaction.TransactionType == "expense"
+                where transaction.CategoryId.HasValue
+                      && categoryIds.Contains(transaction.CategoryId.Value)
+                      && (uncategorizedId == null || transaction.CategoryId.Value != uncategorizedId.Value)
+                      && transaction.TransactionType == "EXPENSE"
                       && transaction.TransactionDate >= startUtc
                       && transaction.TransactionDate < endExclusiveUtc
                       && wallet.CustomerId == customerId
-                group transaction by new { CategoryId = transaction.CategoryId!, transaction.WalletId } into grouped
+                group transaction by new { CategoryId = transaction.CategoryId!.Value, transaction.WalletId } into grouped
                 select new ScopedSpent
                 {
                     CategoryId = grouped.Key.CategoryId,
@@ -448,13 +448,13 @@ public class BudgetService : IBudgetService
 
         foreach (var categoryBudget in plan.CategoryBudgets)
         {
-            if (categoryBudget.CategoryId == null)
+            if (!categoryBudget.CategoryId.HasValue)
             {
                 categoryBudget.CurrentSpent = 0m;
                 continue;
             }
 
-            var cbCategoryId = categoryBudget.CategoryId;
+            var cbCategoryId = categoryBudget.CategoryId.Value;
 
             // per-wallet → chỉ lấy đúng ví; per-category (WalletId null) → cộng mọi ví.
             var spent = categoryBudget.WalletId.HasValue
@@ -653,7 +653,7 @@ public class BudgetService : IBudgetService
         decimal spent,
         decimal crossedThreshold)
     {
-        if (categoryBudget.CategoryId == null)
+        if (!categoryBudget.CategoryId.HasValue)
             return null;
 
         var categoryName = categoryBudget.Category?.CategoryName ?? "Budget category";
@@ -734,7 +734,7 @@ public class BudgetService : IBudgetService
 
         var uncategorizedId = await _dbContext.Categories
             .Where(c => c.CategoryName == UncategorizedName)
-            .Select(c => (string?)c.CategoryId)
+            .Select(c => (Guid?)c.CategoryId)
             .FirstOrDefaultAsync(cancellationToken);
 
         // Gom chi tiêu theo bucket trong kỳ, chỉ EXPENSE của customer.
@@ -747,7 +747,7 @@ public class BudgetService : IBudgetService
                 on transaction.CategoryId equals category.CategoryId
             where wallet.CustomerId == customerId
                   && transaction.CategoryId != null
-                  && transaction.TransactionType == "expense"
+                  && transaction.TransactionType == "EXPENSE"
                   && transaction.TransactionDate >= startUtc
                   && transaction.TransactionDate < endExclusiveUtc
             select new
@@ -762,7 +762,7 @@ public class BudgetService : IBudgetService
         var totalAllSpent = spentRows.Sum(x => x.Amount);
         var uncategorizedSpent = uncategorizedId is null
             ? 0m
-            : spentRows.Where(x => x.CategoryId == uncategorizedId).Sum(x => x.Amount);
+            : spentRows.Where(x => x.CategoryId == uncategorizedId.Value).Sum(x => x.Amount);
 
         var uncategorizedRatio = totalAllSpent > 0
             ? Math.Round(uncategorizedSpent / totalAllSpent * 100m, 2)
@@ -783,7 +783,7 @@ public class BudgetService : IBudgetService
 
             var rows = spentRows
                 .Where(x => NormalizeBucket(x.ExpenseClass) == bucket
-                            && (uncategorizedId is null || x.CategoryId != uncategorizedId))
+                            && (uncategorizedId is null || x.CategoryId != uncategorizedId.Value))
                 .ToList();
 
             var spent = rows.Sum(x => x.Amount);
@@ -884,7 +884,7 @@ public class BudgetService : IBudgetService
 
     private sealed class ScopedSpent
     {
-        public string CategoryId { get; set; } = null!;
+        public Guid CategoryId { get; set; }
         public Guid WalletId { get; set; }
         public decimal Total { get; set; }
     }

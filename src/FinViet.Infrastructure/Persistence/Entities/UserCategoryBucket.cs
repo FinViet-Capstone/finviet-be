@@ -6,7 +6,7 @@ public partial class UserCategoryBucket
 {
     public Guid CustomerId { get; set; }
 
-    public string CategoryId { get; set; } = null!;
+    public Guid CategoryId { get; set; }
 
     public string Bucket { get; set; } = null!;
 

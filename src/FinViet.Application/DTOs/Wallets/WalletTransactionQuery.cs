@@ -16,9 +16,9 @@ namespace FinViet.Application.DTOs.Wallets
 
     public DateTimeOffset? ToDate { get; set; }
 
-    public string? CategoryId { get; set; }
+    public Guid? CategoryId { get; set; }
 
-    // expense, income, transfer_out, transfer_in
+    // INCOME, EXPENSE, TRANSFER, DEBT_PAYMENT
     public string? TransactionType { get; set; }
 
         // asc / desc

@@ -47,7 +47,7 @@ public class SmsTransactionParser : ISmsTransactionParser
                 || lowered.Contains("chuyển tiền")
                 || lowered.Contains("-");
 
-            var transactionType = isIncome && !isExpense ? "income" : "expense";
+            var transactionType = isIncome && !isExpense ? "INCOME" : "EXPENSE";
             var transactionDate = ExtractDateTime(message) ?? DateTime.UtcNow;
 
             result.Rows.Add(new ParsedTransactionDto

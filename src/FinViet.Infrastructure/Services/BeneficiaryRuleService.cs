@@ -135,11 +135,11 @@ public class BeneficiaryRuleService : IBeneficiaryRuleService
         transaction.AiConfidence = null;
         await _db.SaveChangesAsync(cancellationToken);
 
-        if (request.CreateRule && !string.IsNullOrWhiteSpace(transaction.Merchant))
+        if (request.CreateRule && !string.IsNullOrWhiteSpace(transaction.BeneficiaryName))
         {
             await UpsertRuleAsync(customerId, new UpsertBeneficiaryRuleRequest
             {
-                MatchText = transaction.Merchant!.Trim(),
+                MatchText = transaction.BeneficiaryName!.Trim(),
                 CategoryId = request.CategoryId,
                 IsRecurring = request.IsRecurring
             }, cancellationToken);
@@ -159,13 +159,13 @@ public class BeneficiaryRuleService : IBeneficiaryRuleService
 
     /// <summary>Apply a rule to every matching transaction the customer owns (scoped via wallet join).</summary>
     private async Task ApplyRuleRetroactivelyAsync(
-        Guid customerId, string matchText, string categoryId, CancellationToken ct)
+        Guid customerId, string matchText, Guid categoryId, CancellationToken ct)
     {
         var matching = await _db.Transactions
             .Join(_db.Wallets, t => t.WalletId, w => w.WalletId, (t, w) => new { Txn = t, w.CustomerId })
             .Where(x => x.CustomerId == customerId
-                        && x.Txn.Merchant != null
-                        && EF.Functions.ILike(x.Txn.Merchant, $"%{matchText}%"))
+                        && x.Txn.BeneficiaryName != null
+                        && EF.Functions.ILike(x.Txn.BeneficiaryName, $"%{matchText}%"))
             .Select(x => x.Txn)
             .ToListAsync(ct);
 

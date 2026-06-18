@@ -10,7 +10,7 @@ namespace FinViet.Application.DTOs.Budgets
     {
         public Guid CategoryBudgetId { get; set; }
 
-        public string? CategoryId { get; set; }
+        public Guid? CategoryId { get; set; }
 
         public string CategoryName { get; set; } = string.Empty;
 

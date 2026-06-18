@@ -10,7 +10,7 @@ public class CategoryRequestResponse
     public string? Note { get; set; }
     public string Status { get; set; } = string.Empty;
     public string? ReviewNote { get; set; }
-    public string? CreatedCategoryId { get; set; }
+    public Guid? CreatedCategoryId { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime? ReviewedAt { get; set; }
 }

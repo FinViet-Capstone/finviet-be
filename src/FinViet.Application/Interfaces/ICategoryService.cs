@@ -9,7 +9,7 @@ public interface ICategoryService
         CancellationToken cancellationToken = default);
 
     Task<CategoryResponse?> GetCategoryByIdAsync(
-        string categoryId,
+        Guid categoryId,
         CancellationToken cancellationToken = default);
 
     Task<CategoryResponse> CreateCategoryAsync(
@@ -17,11 +17,11 @@ public interface ICategoryService
         CancellationToken cancellationToken = default);
 
     Task<CategoryResponse?> UpdateCategoryAsync(
-        string categoryId,
+        Guid categoryId,
         UpdateCategoryRequest request,
         CancellationToken cancellationToken = default);
 
     Task<bool> DeleteCategoryAsync(
-        string categoryId,
+        Guid categoryId,
         CancellationToken cancellationToken = default);
 }

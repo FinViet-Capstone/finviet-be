@@ -1,5 +1,3 @@
-using System.Globalization;
-using System.Text;
 using FinViet.Application.DTOs.CategoryRequests;
 using FinViet.Application.Exceptions;
 using FinViet.Application.Interfaces;
@@ -85,12 +83,13 @@ public class CategoryRequestService : ICategoryRequestService
         Guid customerId,
         CancellationToken cancellationToken = default)
     {
-        return await _dbContext.CategoryRequests
+        var entities = await _dbContext.CategoryRequests
             .AsNoTracking()
             .Where(r => r.CustomerId == customerId)
             .OrderByDescending(r => r.CreatedAt)
-            .Select(r => ToResponse(r))
             .ToListAsync(cancellationToken);
+
+        return entities.Select(ToResponse).ToList();
     }
 
     public async Task<IReadOnlyList<CategoryRequestResponse>> GetRequestsAsync(
@@ -105,10 +104,11 @@ public class CategoryRequestService : ICategoryRequestService
             query = query.Where(r => r.Status == normalizedStatus);
         }
 
-        return await query
+        var entities = await query
             .OrderByDescending(r => r.CreatedAt)
-            .Select(r => ToResponse(r))
             .ToListAsync(cancellationToken);
+
+        return entities.Select(ToResponse).ToList();
     }
 
     public async Task<CategoryRequestResponse?> ApproveAsync(
@@ -140,10 +140,9 @@ public class CategoryRequestService : ICategoryRequestService
         {
             category = new Category
             {
-                CategoryId = await GenerateUniqueSlugAsync(entity.CategoryName, cancellationToken),
+                CategoryId = Guid.NewGuid(),
                 CategoryName = entity.CategoryName,
-                NameVi = entity.CategoryName,
-                Type = entity.Type.ToLowerInvariant(),
+                Type = entity.Type,
                 IsMandatory = false,
                 ExpenseClass = entity.ExpenseClass
             };
@@ -212,53 +211,6 @@ public class CategoryRequestService : ICategoryRequestService
             throw new ValidationException("Status must be one of: PENDING, APPROVED, REJECTED.");
 
         return normalized;
-    }
-
-    /// <summary>Builds a unique slug id like "cat_an_uong"; appends a numeric suffix on collision.</summary>
-    private async Task<string> GenerateUniqueSlugAsync(string name, CancellationToken cancellationToken)
-    {
-        var baseSlug = "cat_" + Slugify(name);
-        var slug = baseSlug;
-        var suffix = 2;
-
-        while (await _dbContext.Categories.AnyAsync(c => c.CategoryId == slug, cancellationToken))
-        {
-            slug = $"{baseSlug}_{suffix}";
-            suffix++;
-        }
-
-        return slug.Length > 40 ? slug[..40] : slug;
-    }
-
-    private static string Slugify(string input)
-    {
-        var normalized = input.Normalize(NormalizationForm.FormD);
-        var sb = new StringBuilder();
-        foreach (var ch in normalized)
-        {
-            if (CharUnicodeInfo.GetUnicodeCategory(ch) == UnicodeCategory.NonSpacingMark)
-                continue;
-            sb.Append(ch == 'đ' || ch == 'Đ' ? 'd' : ch);
-        }
-
-        var ascii = sb.ToString().Normalize(NormalizationForm.FormC).ToLowerInvariant();
-        var slug = new StringBuilder();
-        var lastUnderscore = false;
-        foreach (var ch in ascii)
-        {
-            if (ch >= 'a' && ch <= 'z' || ch >= '0' && ch <= '9')
-            {
-                slug.Append(ch);
-                lastUnderscore = false;
-            }
-            else if (!lastUnderscore)
-            {
-                slug.Append('_');
-                lastUnderscore = true;
-            }
-        }
-
-        return slug.ToString().Trim('_');
     }
 
     private static CategoryRequestResponse ToResponse(CategoryRequest r)

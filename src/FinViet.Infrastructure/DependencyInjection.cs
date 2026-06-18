@@ -39,15 +39,13 @@ public static class DependencyInjection
         services.AddScoped<IAvatarService, AvatarService>();
 
         // Repositories
+        services.AddScoped<ITransactionRepository, TransactionRepository>();
+        services.AddScoped<IWalletRepository, WalletRepository>();
         services.AddScoped<ITransactionImportRepository, TransactionImportRepository>();
 
         // Transaction Import
         services.AddScoped<IBankStatementParser, BankStatementExcelParser>();
         services.AddScoped<ISmsTransactionParser, SmsTransactionParser>();
-
-        // Transaction APIs (service pattern — spec §4)
-        services.AddScoped<ITransactionService, TransactionService>();
-        services.AddScoped<ITransactionExtractService, TransactionExtractService>();
 
         // Wallet Service
         services.AddScoped<IWalletService, WalletService>();

@@ -2,7 +2,7 @@ namespace FinViet.Application.DTOs.Categories;
 
 public class CategoryResponse
 {
-    public string CategoryId { get; set; } = string.Empty;
+    public Guid CategoryId { get; set; }
     public string CategoryName { get; set; } = string.Empty;
     public string? NameVi { get; set; }
     public string? NameEn { get; set; }
