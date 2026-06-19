@@ -1,5 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
+using System;
 
 namespace FinViet.Infrastructure.Persistence.Entities;
 
@@ -13,7 +12,7 @@ public partial class CategoryCorrectionLog
 
     public Guid? AdminId { get; set; }
 
-    public Guid? CorrectedCategoryId { get; set; }
+    public string? CorrectedCategoryId { get; set; }
 
     public string? OriginalAiGuess { get; set; }
 

@@ -8,13 +8,10 @@ public class CategoryRequest
     public string Type { get; set; } = null!;
     public string? ExpenseClass { get; set; }
     public string? Note { get; set; }
-
-    /// <summary>PENDING, APPROVED, or REJECTED.</summary>
-    public string Status { get; set; } = "PENDING";
-
+    public string Status { get; set; } = "pending";
     public Guid? ReviewedBy { get; set; }
     public string? ReviewNote { get; set; }
-    public Guid? CreatedCategoryId { get; set; }
+    public string? CreatedCategoryId { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime? ReviewedAt { get; set; }
 

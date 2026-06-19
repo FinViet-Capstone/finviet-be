@@ -263,10 +263,10 @@ public class WalletService : IWalletService
                 .Where(x => x.TransactionDate <= query.ToDate.Value.UtcDateTime);
         }
 
-        if (query.CategoryId.HasValue)
+        if (!string.IsNullOrWhiteSpace(query.CategoryId))
         {
             transactionsQuery = transactionsQuery
-                .Where(x => x.CategoryId == query.CategoryId.Value);
+                .Where(x => x.CategoryId == query.CategoryId);
         }
 
         if (!string.IsNullOrWhiteSpace(query.TransactionType))

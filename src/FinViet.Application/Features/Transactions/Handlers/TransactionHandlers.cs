@@ -182,11 +182,11 @@ public class ClassifyTransactionHandler : IRequestHandler<ClassifyTransactionCom
         if (wallet.CustomerId != request.CustomerId)
             throw new ForbiddenException("You do not have access to this transaction.");
 
-        if (request.CategoryId.HasValue)
+        if (!string.IsNullOrWhiteSpace(request.CategoryId))
         {
-            var category = await _categoryService.GetCategoryByIdAsync(request.CategoryId.Value, cancellationToken);
+            var category = await _categoryService.GetCategoryByIdAsync(request.CategoryId, cancellationToken);
             if (category == null)
-                throw new NotFoundException("Category", request.CategoryId.Value);
+                throw new NotFoundException("Category", request.CategoryId);
         }
 
         if (request.SourceId.HasValue)

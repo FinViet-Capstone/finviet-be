@@ -1,7 +1,7 @@
-﻿using FinViet.Application.Interfaces;
 using FinViet.Application.Common;
 using FinViet.Application.Common.Exceptions;
 using FinViet.Application.DTOs;
+using FinViet.Application.Interfaces;
 using FinViet.Infrastructure.Persistence.Context;
 using FinViet.Infrastructure.Persistence.Entities;
 using Microsoft.EntityFrameworkCore;
@@ -17,11 +17,7 @@ public class TransactionRepository : ITransactionRepository
         _context = context;
     }
 
-    private static readonly string[] ValidTypes = { "INCOME", "EXPENSE", "TRANSFER", "DEBT_PAYMENT" };
-
-    // ── Read APIs ───────────────────────────────────────────────────────────────
-    // Transactions carry no customer_id; ownership is enforced through the wallet
-    // (only rows whose wallet belongs to the authenticated customer are visible).
+    private static readonly string[] ValidTypes = { "expense", "income", "transfer_out", "transfer_in" };
 
     public async Task<PagedResult<TransactionResponseDto>> GetPagedAsync(
         Guid customerId, TransactionQueryDto filter, CancellationToken cancellationToken = default)
@@ -31,21 +27,21 @@ public class TransactionRepository : ITransactionRepository
 
         var query = _context.Transactions
             .AsNoTracking()
-            .Where(t => t.Wallet != null && t.Wallet.CustomerId == customerId);
+            .Where(t => t.CustomerId == customerId || (t.Wallet != null && t.Wallet.CustomerId == customerId));
 
         if (filter.WalletId.HasValue)
             query = query.Where(t => t.WalletId == filter.WalletId.Value);
 
         if (!string.IsNullOrWhiteSpace(filter.Type))
         {
-            var type = filter.Type.Trim().ToUpperInvariant();
+            var type = filter.Type.Trim().ToLowerInvariant();
             if (!ValidTypes.Contains(type))
                 throw new BadRequestException($"type must be one of: {string.Join(", ", ValidTypes)}.");
             query = query.Where(t => t.TransactionType == type);
         }
 
-        if (filter.CategoryId.HasValue)
-            query = query.Where(t => t.CategoryId == filter.CategoryId.Value);
+        if (!string.IsNullOrWhiteSpace(filter.CategoryId))
+            query = query.Where(t => t.CategoryId == filter.CategoryId);
 
         if (filter.From.HasValue)
             query = query.Where(t => t.TransactionDate >= filter.From.Value);
@@ -53,19 +49,18 @@ public class TransactionRepository : ITransactionRepository
             query = query.Where(t => t.TransactionDate <= filter.To.Value);
 
         if (filter.UncategorizedOnly)
-            query = query.Where(t => t.CategoryId == null);
+            query = query.Where(t => t.CategoryId == null && t.TransactionType != "transfer_out" && t.TransactionType != "transfer_in");
 
         if (!string.IsNullOrWhiteSpace(filter.Q))
         {
             var term = $"%{filter.Q.Trim()}%";
             query = query.Where(t =>
-                (t.Note != null && EF.Functions.ILike(t.Note, term)) ||
-                (t.BeneficiaryName != null && EF.Functions.ILike(t.BeneficiaryName, term)));
+                (t.Description != null && EF.Functions.ILike(t.Description, term)) ||
+                (t.Merchant != null && EF.Functions.ILike(t.Merchant, term)));
         }
 
         var total = await query.CountAsync(cancellationToken);
 
-        // Materialize first, then map in memory — EF cannot translate MapToDto into SQL.
         var entities = await query
             .OrderByDescending(t => t.TransactionDate)
             .ThenByDescending(t => t.TransactionId)
@@ -89,7 +84,7 @@ public class TransactionRepository : ITransactionRepository
         var transaction = await _context.Transactions
             .AsNoTracking()
             .Where(t => t.TransactionId == transactionId
-                        && t.Wallet != null && t.Wallet.CustomerId == customerId)
+                        && (t.CustomerId == customerId || (t.Wallet != null && t.Wallet.CustomerId == customerId)))
             .FirstOrDefaultAsync(cancellationToken);
 
         return transaction is null ? null : MapToDto(transaction);
@@ -101,36 +96,36 @@ public class TransactionRepository : ITransactionRepository
         var start = new DateTime(year, month, 1, 0, 0, 0, DateTimeKind.Utc);
         var end = start.AddMonths(1);
 
-        // Transfers are excluded from income/expense aggregates.
         var rows = await _context.Transactions
             .AsNoTracking()
-            .Where(t => t.Wallet != null && t.Wallet.CustomerId == customerId
-                        && t.TransactionType != "TRANSFER"
+            .Where(t => (t.CustomerId == customerId || (t.Wallet != null && t.Wallet.CustomerId == customerId))
+                        && t.TransactionType != "transfer_out"
+                        && t.TransactionType != "transfer_in"
                         && t.TransactionDate >= start && t.TransactionDate < end)
             .Select(t => new
             {
                 t.TransactionType,
                 t.Amount,
                 t.CategoryId,
-                t.BeneficiaryName,
+                t.Merchant,
                 t.TransactionDate
             })
             .ToListAsync(cancellationToken);
 
-        var income = rows.Where(r => r.TransactionType == "INCOME").Sum(r => r.Amount);
-        var expense = rows.Where(r => r.TransactionType == "EXPENSE").Sum(r => r.Amount);
+        var income = rows.Where(r => r.TransactionType == "income").Sum(r => r.Amount);
+        var expense = rows.Where(r => r.TransactionType == "expense").Sum(r => r.Amount);
 
         var categoryNames = await _context.Categories
             .AsNoTracking()
             .ToDictionaryAsync(c => c.CategoryId, c => c.CategoryName, cancellationToken);
 
         var byCategory = rows
-            .Where(r => r.TransactionType == "EXPENSE")
+            .Where(r => r.TransactionType == "expense")
             .GroupBy(r => r.CategoryId)
             .Select(g => new CategorySummaryItemDto
             {
                 CategoryId = g.Key,
-                CategoryName = g.Key.HasValue && categoryNames.TryGetValue(g.Key.Value, out var name) ? name : null,
+                CategoryName = g.Key != null && categoryNames.TryGetValue(g.Key, out var name) ? name : null,
                 Total = g.Sum(x => x.Amount)
             })
             .OrderByDescending(c => c.Total)
@@ -142,17 +137,17 @@ public class TransactionRepository : ITransactionRepository
             .Select(g => new DaySummaryItemDto
             {
                 Date = g.Key,
-                Income = g.Where(x => x.TransactionType == "INCOME").Sum(x => x.Amount),
-                Expense = g.Where(x => x.TransactionType == "EXPENSE").Sum(x => x.Amount),
-                Net = g.Where(x => x.TransactionType == "INCOME").Sum(x => x.Amount)
-                      - g.Where(x => x.TransactionType == "EXPENSE").Sum(x => x.Amount)
+                Income = g.Where(x => x.TransactionType == "income").Sum(x => x.Amount),
+                Expense = g.Where(x => x.TransactionType == "expense").Sum(x => x.Amount),
+                Net = g.Where(x => x.TransactionType == "income").Sum(x => x.Amount)
+                      - g.Where(x => x.TransactionType == "expense").Sum(x => x.Amount)
             })
             .OrderBy(d => d.Date)
             .ToList();
 
         var topBeneficiaries = rows
-            .Where(r => r.TransactionType == "EXPENSE" && !string.IsNullOrWhiteSpace(r.BeneficiaryName))
-            .GroupBy(r => r.BeneficiaryName!)
+            .Where(r => r.TransactionType == "expense" && !string.IsNullOrWhiteSpace(r.Merchant))
+            .GroupBy(r => r.Merchant!)
             .Select(g => new BeneficiarySummaryItemDto { Beneficiary = g.Key, Total = g.Sum(x => x.Amount) })
             .OrderByDescending(m => m.Total)
             .Take(10)
@@ -169,103 +164,53 @@ public class TransactionRepository : ITransactionRepository
         };
     }
 
-    private static TransactionResponseDto MapToDto(Transaction transaction) => new()
-    {
-        TransactionId = transaction.TransactionId,
-        WalletId = transaction.WalletId,
-        CategoryId = transaction.CategoryId,
-        SourceId = transaction.SourceId,
-        TransactionType = transaction.TransactionType,
-        SourceChannel = transaction.SourceChannel,
-        Amount = transaction.Amount,
-        TransactionDate = transaction.TransactionDate ?? DateTime.Now,
-        Note = transaction.Note,
-        CreatedAt = transaction.TransactionDate ?? DateTime.Now
-    };
-
     public async Task<TransactionResponseDto> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var transaction = await _context.Transactions.FindAsync(new object[] { id }, cancellationToken: cancellationToken);
-        if (transaction == null)
-            return null;
-
-        return new TransactionResponseDto
-        {
-            TransactionId = transaction.TransactionId,
-            WalletId = transaction.WalletId,
-            CategoryId = transaction.CategoryId,
-            SourceId = transaction.SourceId,
-            TransactionType = transaction.TransactionType,
-            SourceChannel = transaction.SourceChannel,
-            Amount = transaction.Amount,
-            TransactionDate = transaction.TransactionDate ?? DateTime.Now,
-            Note = transaction.Note,
-            CreatedAt = transaction.TransactionDate ?? DateTime.Now
-        };
+        return transaction == null ? null! : MapToDto(transaction);
     }
 
-    public async Task<TransactionResponseDto> CreateAsync(Guid walletId, Guid? categoryId, Guid? sourceId, string transactionType, decimal amount, DateTime transactionDate, string note, CancellationToken cancellationToken = default)
+    public async Task<TransactionResponseDto> CreateAsync(Guid walletId, string? categoryId, Guid? sourceId, string transactionType, decimal amount, DateTime transactionDate, string note, CancellationToken cancellationToken = default)
     {
+        var wallet = await _context.Wallets.FindAsync(new object[] { walletId }, cancellationToken: cancellationToken);
         var transaction = new Transaction
         {
             TransactionId = Guid.NewGuid(),
+            CustomerId = wallet?.CustomerId ?? Guid.Empty,
             WalletId = walletId,
             CategoryId = categoryId,
             SourceId = sourceId,
-            TransactionType = transactionType,
-            SourceChannel = "MANUAL",
+            TransactionType = NormalizeType(transactionType),
+            EntryMethod = "manual",
             Amount = amount,
             TransactionDate = transactionDate,
-            Note = note
+            Description = note,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
         };
 
         _context.Transactions.Add(transaction);
         await _context.SaveChangesAsync(cancellationToken);
-
-        return new TransactionResponseDto
-        {
-            TransactionId = transaction.TransactionId,
-            WalletId = transaction.WalletId,
-            CategoryId = transaction.CategoryId,
-            SourceId = transaction.SourceId,
-            TransactionType = transaction.TransactionType,
-            SourceChannel = transaction.SourceChannel,
-            Amount = transaction.Amount,
-            TransactionDate = transaction.TransactionDate ?? DateTime.Now,
-            Note = transaction.Note,
-            CreatedAt = transaction.TransactionDate ?? DateTime.Now
-        };
+        return MapToDto(transaction);
     }
 
-    public async Task<TransactionResponseDto> UpdateAsync(Guid transactionId, Guid? categoryId, Guid? sourceId, string transactionType, decimal amount, DateTime transactionDate, string note, CancellationToken cancellationToken = default)
+    public async Task<TransactionResponseDto> UpdateAsync(Guid transactionId, string? categoryId, Guid? sourceId, string transactionType, decimal amount, DateTime transactionDate, string note, CancellationToken cancellationToken = default)
     {
         var transaction = await _context.Transactions.FindAsync(new object[] { transactionId }, cancellationToken: cancellationToken);
         if (transaction == null)
-            return null;
+            return null!;
 
         transaction.CategoryId = categoryId;
         transaction.SourceId = sourceId;
-        transaction.TransactionType = transactionType;
+        transaction.TransactionType = NormalizeType(transactionType);
         transaction.Amount = amount;
         transaction.TransactionDate = transactionDate;
-        transaction.Note = note;
+        transaction.Description = note;
+        transaction.UpdatedAt = DateTime.UtcNow;
 
         _context.Transactions.Update(transaction);
         await _context.SaveChangesAsync(cancellationToken);
-
-        return new TransactionResponseDto
-        {
-            TransactionId = transaction.TransactionId,
-            WalletId = transaction.WalletId,
-            CategoryId = transaction.CategoryId,
-            SourceId = transaction.SourceId,
-            TransactionType = transaction.TransactionType,
-            SourceChannel = transaction.SourceChannel,
-            Amount = transaction.Amount,
-            TransactionDate = transaction.TransactionDate ?? DateTime.Now,
-            Note = transaction.Note,
-            CreatedAt = transaction.TransactionDate ?? DateTime.Now
-        };
+        return MapToDto(transaction);
     }
 
     public async Task<bool> DeleteAsync(Guid id, CancellationToken cancellationToken = default)
@@ -279,7 +224,7 @@ public class TransactionRepository : ITransactionRepository
         return true;
     }
 
-    public async Task<TransactionResponseDto?> ClassifyAsync(Guid transactionId, Guid? categoryId, Guid? sourceId, CancellationToken cancellationToken = default)
+    public async Task<TransactionResponseDto?> ClassifyAsync(Guid transactionId, string? categoryId, Guid? sourceId, CancellationToken cancellationToken = default)
     {
         var transaction = await _context.Transactions.FindAsync(new object[] { transactionId }, cancellationToken: cancellationToken);
         if (transaction == null)
@@ -287,23 +232,45 @@ public class TransactionRepository : ITransactionRepository
 
         transaction.CategoryId = categoryId;
         transaction.SourceId = sourceId;
+        transaction.UpdatedAt = DateTime.UtcNow;
 
         await _context.SaveChangesAsync(cancellationToken);
-
-        return new TransactionResponseDto
-        {
-            TransactionId = transaction.TransactionId,
-            WalletId = transaction.WalletId,
-            CategoryId = transaction.CategoryId,
-            SourceId = transaction.SourceId,
-            TransactionType = transaction.TransactionType,
-            SourceChannel = transaction.SourceChannel,
-            Amount = transaction.Amount,
-            TransactionDate = transaction.TransactionDate ?? DateTime.Now,
-            Note = transaction.Note,
-            CreatedAt = transaction.TransactionDate ?? DateTime.Now
-        };
+        return MapToDto(transaction);
     }
+
+    private static string NormalizeType(string type)
+        => type.Trim().ToLowerInvariant() switch
+        {
+            "income" or "in" => "income",
+            "expense" or "out" => "expense",
+            "transfer_out" => "transfer_out",
+            "transfer_in" => "transfer_in",
+            "INCOME" => "income",
+            "EXPENSE" => "expense",
+            "TRANSFER" => "transfer_out",
+            _ => type.Trim().ToLowerInvariant()
+        };
+
+    private static TransactionResponseDto MapToDto(Transaction transaction) => new()
+    {
+        TransactionId = transaction.TransactionId,
+        CustomerId = transaction.CustomerId,
+        WalletId = transaction.WalletId,
+        CategoryId = transaction.CategoryId,
+        SourceId = transaction.SourceId,
+        TransactionType = transaction.TransactionType,
+        SourceChannel = transaction.EntryMethod,
+        EntryMethod = transaction.EntryMethod,
+        Amount = transaction.Amount,
+        TransactionDate = transaction.TransactionDate ?? DateTime.UtcNow,
+        Note = transaction.Description,
+        Description = transaction.Description,
+        Merchant = transaction.Merchant,
+        TransferPairId = transaction.TransferPairId,
+        ExternalId = transaction.ExternalId,
+        CreatedAt = transaction.CreatedAt == default ? transaction.TransactionDate ?? DateTime.UtcNow : transaction.CreatedAt,
+        UpdatedAt = transaction.UpdatedAt
+    };
 }
 
 public class WalletRepository : IWalletRepository
@@ -359,4 +326,3 @@ public class WalletRepository : IWalletRepository
         => wallet.Balance
            ?? throw new InvalidOperationException($"Wallet {wallet.WalletId} is missing balance.");
 }
-

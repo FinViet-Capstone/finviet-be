@@ -35,8 +35,16 @@ public static class DbInitializer
         }
 
         var files = Directory.GetFiles(MigrationsFolder, "*.sql")
-            .OrderBy(Path.GetFileName)
+            .OrderBy(GetMigrationNumber)
+            .ThenBy(Path.GetFileName)
             .ToArray();
+
+        if (await IsCategoryTransactionV21AppliedAsync(db, cancellationToken))
+        {
+            files = files
+                .Where(file => GetMigrationNumber(file) >= 10)
+                .ToArray();
+        }
 
         foreach (var file in files)
         {
@@ -57,6 +65,43 @@ public static class DbInitializer
                 logger.LogError(ex, "Migration {Name} failed: {Message}", name, ex.Message);
                 throw;
             }
+        }
+    }
+
+    private static int GetMigrationNumber(string file)
+    {
+        var name = Path.GetFileNameWithoutExtension(file);
+        if (!name.StartsWith('V'))
+            return int.MaxValue;
+
+        var separatorIndex = name.IndexOf("__", StringComparison.Ordinal);
+        var numberPart = separatorIndex > 1 ? name[1..separatorIndex] : name[1..];
+
+        return int.TryParse(numberPart, out var number) ? number : int.MaxValue;
+    }
+
+    private static async Task<bool> IsCategoryTransactionV21AppliedAsync(
+        FinVietDbContext db,
+        CancellationToken cancellationToken)
+    {
+        var connection = db.Database.GetDbConnection();
+        var shouldClose = connection.State == System.Data.ConnectionState.Closed;
+
+        if (shouldClose)
+            await connection.OpenAsync(cancellationToken);
+
+        try
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = "SELECT to_regclass('public.categories') IS NOT NULL AND to_regclass('public.category') IS NULL";
+
+            var result = await command.ExecuteScalarAsync(cancellationToken);
+            return result is bool applied && applied;
+        }
+        finally
+        {
+            if (shouldClose)
+                await connection.CloseAsync();
         }
     }
 

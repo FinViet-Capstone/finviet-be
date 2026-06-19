@@ -6,7 +6,7 @@ namespace FinViet.Application.Features.Transactions.Commands;
 public class CreateTransactionCommand : IRequest<TransactionResponseDto>
 {
     public Guid WalletId { get; set; }
-    public Guid? CategoryId { get; set; }
+    public string? CategoryId { get; set; }
     public Guid? SourceId { get; set; }
     public string TransactionType { get; set; }
     public decimal Amount { get; set; }
@@ -17,7 +17,7 @@ public class CreateTransactionCommand : IRequest<TransactionResponseDto>
 public class UpdateTransactionCommand : IRequest<TransactionResponseDto>
 {
     public Guid TransactionId { get; set; }
-    public Guid? CategoryId { get; set; }
+    public string? CategoryId { get; set; }
     public Guid? SourceId { get; set; }
     public string TransactionType { get; set; }
     public decimal Amount { get; set; }
@@ -34,6 +34,6 @@ public class ClassifyTransactionCommand : IRequest<TransactionResponseDto>
 {
     public Guid CustomerId { get; set; }
     public Guid TransactionId { get; set; }
-    public Guid? CategoryId { get; set; }
+    public string? CategoryId { get; set; }
     public Guid? SourceId { get; set; }
 }

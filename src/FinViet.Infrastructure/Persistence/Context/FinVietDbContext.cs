@@ -118,6 +118,8 @@ public partial class FinVietDbContext : DbContext
                 .HasColumnName("generated_date");
             entity.Property(e => e.SpendingScore).HasColumnName("spending_score");
 
+            entity.Ignore(e => e.Transactions);
+
             entity.HasOne(d => d.Customer).WithMany(p => p.AiReports)
                 .HasForeignKey(d => d.CustomerId)
                 .OnDelete(DeleteBehavior.Cascade)
@@ -192,30 +194,28 @@ public partial class FinVietDbContext : DbContext
 
         modelBuilder.Entity<Category>(entity =>
         {
-            entity.HasKey(e => e.CategoryId).HasName("category_pkey");
+            entity.HasKey(e => e.CategoryId).HasName("categories_pkey");
 
-            entity.ToTable("category");
+            entity.ToTable("categories");
 
             entity.Property(e => e.CategoryId)
-                .HasDefaultValueSql("gen_random_uuid()")
-                .HasColumnName("category_id");
+                .HasMaxLength(40)
+                .HasColumnName("id");
             entity.Property(e => e.CategoryName)
-                .HasMaxLength(100)
-                .HasColumnName("category_name");
-            entity.Property(e => e.NameVi)
                 .HasMaxLength(80)
                 .HasColumnName("name_vi");
+            entity.Ignore(e => e.NameVi);
             entity.Property(e => e.NameEn)
                 .HasMaxLength(80)
                 .HasColumnName("name_en");
             entity.Property(e => e.ExpenseClass)
-                .HasMaxLength(50)
-                .HasColumnName("expense_class");
+                .HasMaxLength(20)
+                .HasColumnName("default_bucket");
             entity.Property(e => e.IsMandatory)
                 .HasDefaultValue(false)
                 .HasColumnName("is_mandatory");
             entity.Property(e => e.Type)
-                .HasMaxLength(50)
+                .HasMaxLength(20)
                 .HasColumnName("type");
             entity.Property(e => e.Icon)
                 .HasMaxLength(60)
@@ -432,6 +432,8 @@ public partial class FinVietDbContext : DbContext
                 .HasColumnName("import_date");
             entity.Property(e => e.WalletId).HasColumnName("wallet_id");
 
+            entity.Ignore(e => e.Transactions);
+
             entity.HasOne(d => d.Customer).WithMany(p => p.ImportBatches)
                 .HasForeignKey(d => d.CustomerId)
                 .OnDelete(DeleteBehavior.Cascade)
@@ -459,6 +461,8 @@ public partial class FinVietDbContext : DbContext
             entity.Property(e => e.Type)
                 .HasMaxLength(50)
                 .HasColumnName("type");
+
+            entity.Ignore(e => e.Transactions);
 
             entity.HasOne(d => d.Customer).WithMany(p => p.IncomeSources)
                 .HasForeignKey(d => d.CustomerId)
@@ -624,72 +628,77 @@ public partial class FinVietDbContext : DbContext
 
         modelBuilder.Entity<Transaction>(entity =>
         {
-            entity.HasKey(e => e.TransactionId).HasName("transaction_pkey");
+            entity.HasKey(e => e.TransactionId).HasName("transactions_pkey");
 
-            entity.ToTable("transaction");
+            entity.ToTable("transactions");
+
+            entity.HasIndex(e => new { e.CustomerId, e.TransactionDate, e.TransactionId }, "idx_tx_customer_date");
+            entity.HasIndex(e => e.WalletId, "idx_tx_wallet");
+            entity.HasIndex(e => e.CategoryId, "idx_tx_category");
+            entity.HasIndex(e => e.TransferPairId, "idx_tx_pair").HasFilter("transfer_pair_id IS NOT NULL");
+            entity.HasIndex(e => e.ExternalId, "uq_tx_external").IsUnique().HasFilter("external_id IS NOT NULL");
 
             entity.Property(e => e.TransactionId)
                 .HasDefaultValueSql("gen_random_uuid()")
-                .HasColumnName("transaction_id");
+                .HasColumnName("id");
+            entity.Property(e => e.CustomerId).HasColumnName("customer_id");
             entity.Property(e => e.Amount)
                 .HasPrecision(15, 2)
                 .HasColumnName("amount");
-            entity.Property(e => e.BatchId).HasColumnName("batch_id");
-            entity.Property(e => e.CategoryId).HasColumnName("category_id");
-            entity.Property(e => e.Note).HasColumnName("note");
-            entity.Property(e => e.BeneficiaryName).HasColumnName("beneficiary_name");
-            entity.Property(e => e.IsAiClassified)
-                .HasDefaultValue(false)
-                .HasColumnName("is_ai_classified");
-            entity.Property(e => e.AiConfidence)
-                .HasPrecision(5, 4)
-                .HasColumnName("ai_confidence");
-            entity.Property(e => e.AiCategoryGuess).HasColumnName("ai_category_guess");
-            entity.Property(e => e.ReportId).HasColumnName("report_id");
-            entity.Property(e => e.SourceId).HasColumnName("source_id");
+            entity.Property(e => e.CategoryId)
+                .HasMaxLength(40)
+                .HasColumnName("category_id");
+            entity.Property(e => e.Description)
+                .HasMaxLength(255)
+                .HasColumnName("description");
+            entity.Property(e => e.Merchant)
+                .HasMaxLength(255)
+                .HasColumnName("merchant");
             entity.Property(e => e.TransactionDate)
                 .HasDefaultValueSql("CURRENT_TIMESTAMP")
                 .HasColumnName("transaction_date");
             entity.Property(e => e.TransactionType)
                 .HasMaxLength(50)
-                .HasColumnName("transaction_type");
-            entity.Property(e => e.SourceChannel)
+                .HasColumnName("type");
+            entity.Property(e => e.EntryMethod)
                 .HasMaxLength(20)
                 .IsRequired()
-                .HasColumnName("source_channel");
+                .HasColumnName("entry_method");
             entity.Property(e => e.WalletId)
                 .IsRequired()
                 .HasColumnName("wallet_id");
+            entity.Property(e => e.TransferPairId).HasColumnName("transfer_pair_id");
+            entity.Property(e => e.ExternalId).HasMaxLength(120).HasColumnName("external_id");
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP").HasColumnName("created_at");
+            entity.Property(e => e.UpdatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP").HasColumnName("updated_at");
 
-            entity.HasOne(d => d.Batch).WithMany(p => p.Transactions)
-                .HasForeignKey(d => d.BatchId)
-                .OnDelete(DeleteBehavior.SetNull)
-                .HasConstraintName("transaction_batch_id_fkey");
+            entity.Ignore(e => e.SourceChannel);
+            entity.Ignore(e => e.Note);
+            entity.Ignore(e => e.BeneficiaryName);
+            entity.Ignore(e => e.SourceId);
+            entity.Ignore(e => e.BatchId);
+            entity.Ignore(e => e.ReportId);
+            entity.Ignore(e => e.IsAiClassified);
+            entity.Ignore(e => e.AiConfidence);
+            entity.Ignore(e => e.AiCategoryGuess);
+            entity.Ignore(e => e.Batch);
+            entity.Ignore(e => e.Report);
+            entity.Ignore(e => e.Source);
 
             entity.HasOne(d => d.Category).WithMany(p => p.Transactions)
                 .HasForeignKey(d => d.CategoryId)
                 .OnDelete(DeleteBehavior.SetNull)
-                .HasConstraintName("transaction_category_id_fkey");
+                .HasConstraintName("transactions_category_id_fkey");
 
-            entity.HasOne(d => d.Report).WithMany(p => p.Transactions)
-                .HasForeignKey(d => d.ReportId)
-                .OnDelete(DeleteBehavior.SetNull)
-                .HasConstraintName("transaction_report_id_fkey");
-
-            entity.HasOne(d => d.Source).WithMany(p => p.Transactions)
-                .HasForeignKey(d => d.SourceId)
-                .OnDelete(DeleteBehavior.SetNull)
-                .HasConstraintName("transaction_source_id_fkey");
+            entity.HasOne(d => d.Customer).WithMany()
+                .HasForeignKey(d => d.CustomerId)
+                .OnDelete(DeleteBehavior.Cascade)
+                .HasConstraintName("transactions_customer_id_fkey");
 
             entity.HasOne(d => d.Wallet).WithMany(p => p.Transactions)
                 .HasForeignKey(d => d.WalletId)
                 .OnDelete(DeleteBehavior.Cascade)
-                .HasConstraintName("transaction_wallet_id_fkey");
-
-            entity.HasOne<Category>().WithMany()
-                .HasForeignKey(d => d.AiCategoryGuess)
-                .OnDelete(DeleteBehavior.SetNull)
-                .HasConstraintName("transaction_ai_category_guess_fkey");
+                .HasConstraintName("transactions_wallet_id_fkey");
         });
 
         modelBuilder.Entity<Wallet>(entity =>

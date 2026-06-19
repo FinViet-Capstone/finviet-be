@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 
 namespace FinViet.Infrastructure.Persistence.Entities;
@@ -9,7 +9,7 @@ public partial class CategoryBudget
 
     public Guid? PlanId { get; set; }
 
-    public Guid? CategoryId { get; set; }
+    public string? CategoryId { get; set; }
 
     public Guid? WalletId { get; set; }
 

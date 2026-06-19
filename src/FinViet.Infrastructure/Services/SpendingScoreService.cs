@@ -121,7 +121,7 @@ public class SpendingScoreService : ISpendingScoreService
         var rows = await _db.Transactions
             .Join(_db.Wallets, t => t.WalletId, w => w.WalletId, (t, w) => new { t, w.CustomerId })
             .Where(x => x.CustomerId == customerId
-                        && x.t.TransactionType == "EXPENSE"
+                        && x.t.TransactionType == "expense"
                         && x.t.TransactionDate != null
                         && x.t.TransactionDate >= DateRange.StartUtc(windowStart)
                         && x.t.TransactionDate <= DateRange.EndUtc(asOf))
@@ -196,12 +196,12 @@ public class SpendingScoreService : ISpendingScoreService
             .ToDictionaryAsync(u => u.CategoryId, u => u.Bucket, ct);
 
         var categories = await _db.Categories
-            .Where(c => c.Type == "EXPENSE")
+            .Where(c => c.Type == "expense")
             .Select(c => new { c.CategoryId, c.CategoryName, c.ExpenseClass })
             .ToListAsync(ct);
         var catInfo = categories.ToDictionary(c => c.CategoryId, c => c);
 
-        string? BucketOf(Guid categoryId) =>
+        string? BucketOf(string categoryId) =>
             userBuckets.TryGetValue(categoryId, out var b) ? b
             : catInfo.TryGetValue(categoryId, out var c) ? c.ExpenseClass : null;
 
@@ -209,12 +209,12 @@ public class SpendingScoreService : ISpendingScoreService
         var actuals = await _db.Transactions
             .Join(_db.Wallets, t => t.WalletId, w => w.WalletId, (t, w) => new { t, w.CustomerId })
             .Where(x => x.CustomerId == customerId
-                        && x.t.TransactionType == "EXPENSE"
+                        && x.t.TransactionType == "expense"
                         && x.t.CategoryId != null
                         && x.t.TransactionDate != null
                         && x.t.TransactionDate >= DateRange.StartUtc(start)
                         && x.t.TransactionDate <= DateRange.EndUtc(end))
-            .GroupBy(x => x.t.CategoryId!.Value)
+            .GroupBy(x => x.t.CategoryId!)
             .Select(g => new { CategoryId = g.Key, Spent = g.Sum(x => x.t.Amount) })
             .ToListAsync(ct);
         var actualByCat = actuals.ToDictionary(a => a.CategoryId, a => a.Spent);
@@ -228,11 +228,11 @@ public class SpendingScoreService : ISpendingScoreService
         var bucketActual = new Dictionary<string, decimal>();
         foreach (var b in budgets)
         {
-            var bucket = BucketOf(b.CategoryId!.Value);
-            if (bucket is null || catInfo[b.CategoryId.Value].CategoryName == Uncategorized)
+            var bucket = b.CategoryId is null ? null : BucketOf(b.CategoryId);
+            if (bucket is null || catInfo[b.CategoryId!].CategoryName == Uncategorized)
                 continue;
             bucketLimit[bucket] = bucketLimit.GetValueOrDefault(bucket) + b.AmountLimit;
-            var spent = actualByCat.GetValueOrDefault(b.CategoryId.Value);
+            var spent = actualByCat.GetValueOrDefault(b.CategoryId!);
             bucketActual[bucket] = bucketActual.GetValueOrDefault(bucket) + spent;
         }
 
@@ -287,16 +287,16 @@ public class SpendingScoreService : ISpendingScoreService
 
         // Savings-bucket transactions (categories with expense_class = SAVINGS).
         var savingsCatIds = await _db.Categories
-            .Where(c => c.ExpenseClass == "SAVINGS")
+            .Where(c => c.ExpenseClass == "savings")
             .Select(c => c.CategoryId)
             .ToListAsync(ct);
 
         var savingsTxns = await _db.Transactions
             .Join(_db.Wallets, t => t.WalletId, w => w.WalletId, (t, w) => new { t, w.CustomerId })
             .Where(x => x.CustomerId == customerId
-                        && x.t.TransactionType == "EXPENSE"
+                        && x.t.TransactionType == "expense"
                         && x.t.CategoryId != null
-                        && savingsCatIds.Contains(x.t.CategoryId!.Value)
+                        && savingsCatIds.Contains(x.t.CategoryId!)
                         && x.t.TransactionDate >= windowStart
                         && x.t.TransactionDate <= windowEnd)
             .Select(x => new { x.t.TransactionDate, x.t.Amount })

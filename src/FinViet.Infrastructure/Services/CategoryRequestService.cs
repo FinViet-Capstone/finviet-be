@@ -140,11 +140,13 @@ public class CategoryRequestService : ICategoryRequestService
         {
             category = new Category
             {
-                CategoryId = Guid.NewGuid(),
+                CategoryId = $"cat_{Guid.NewGuid():N}"[..40],
                 CategoryName = entity.CategoryName,
-                Type = entity.Type,
+                NameVi = entity.CategoryName,
+                NameEn = entity.CategoryName,
+                Type = entity.Type.ToLowerInvariant(),
                 IsMandatory = false,
-                ExpenseClass = entity.ExpenseClass
+                ExpenseClass = entity.ExpenseClass?.ToLowerInvariant()
             };
             _dbContext.Categories.Add(category);
         }

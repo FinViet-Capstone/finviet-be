@@ -1,4 +1,3 @@
-using FinViet.Application.Common.Exceptions;
 using FinViet.Application.DTOs.Ai;
 using FinViet.Application.Exceptions;
 using FinViet.Application.Interfaces;
@@ -39,22 +38,23 @@ public class AiCategorizationService : IAiCategorizationService
             .FirstOrDefaultAsync(t => t.TransactionId == transactionId, cancellationToken)
             ?? throw new NotFoundException("Transaction", transactionId);
 
-        var customerId = await _db.Wallets
-            .Where(w => w.WalletId == txn.WalletId)
-            .Select(w => w.CustomerId)
-            .FirstOrDefaultAsync(cancellationToken);
+        var customerId = txn.CustomerId != Guid.Empty
+            ? txn.CustomerId
+            : await _db.Wallets
+                .Where(w => w.WalletId == txn.WalletId)
+                .Select(w => w.CustomerId)
+                .FirstOrDefaultAsync(cancellationToken) ?? Guid.Empty;
 
         var input = BuildInput(txn);
         if (string.IsNullOrWhiteSpace(input))
         {
-            await ApplyUncategorizedAsync(txn, queued: false, cancellationToken);
+            await ApplyUncategorizedAsync(txn, cancellationToken);
             return Outcome(txn, null, null, isAi: false, queued: false, "FALLBACK");
         }
 
-        // 1. Beneficiary rule (deterministic, retroactive).
-        if (customerId.HasValue)
+        if (customerId != Guid.Empty)
         {
-            var ruleCategoryId = await MatchRuleAsync(customerId.Value, input, cancellationToken);
+            var ruleCategoryId = await MatchRuleAsync(customerId, input, cancellationToken);
             if (ruleCategoryId is not null)
             {
                 txn.CategoryId = ruleCategoryId;
@@ -63,12 +63,11 @@ public class AiCategorizationService : IAiCategorizationService
                 txn.AiCategoryGuess = ruleCategoryId;
                 await _db.SaveChangesAsync(cancellationToken);
 
-                var ruleName = await CategoryNameAsync(ruleCategoryId.Value, cancellationToken);
+                var ruleName = await CategoryNameAsync(ruleCategoryId, cancellationToken);
                 return Outcome(txn, ruleCategoryId, ruleName, isAi: false, queued: false, "RULE");
             }
         }
 
-        // 2. Gemini classification.
         var expenseCategories = await ExpenseCategoriesAsync(cancellationToken);
         try
         {
@@ -87,16 +86,15 @@ public class AiCategorizationService : IAiCategorizationService
                 return Outcome(txn, catId, result.CategoryName, isAi: true, queued: false, "AI");
             }
 
-            // Resolved to nothing usable → treat as uncategorized (not a service outage, no re-queue).
-            await ApplyUncategorizedAsync(txn, queued: false, cancellationToken);
+            await ApplyUncategorizedAsync(txn, cancellationToken);
             return Outcome(txn, txn.CategoryId, UncategorizedName, isAi: false, queued: false, "FALLBACK");
         }
         catch (GeminiUnavailableException ex)
         {
             _logger.LogWarning(ex, "Gemini unavailable; falling back to Uncategorized + queue for txn {Id}.", transactionId);
-            await ApplyUncategorizedAsync(txn, queued: true, cancellationToken);
-            if (customerId.HasValue)
-                await _queue.EnqueueAsync(transactionId, customerId.Value, input, cancellationToken);
+            await ApplyUncategorizedAsync(txn, cancellationToken);
+            if (customerId != Guid.Empty)
+                await _queue.EnqueueAsync(transactionId, customerId, input, cancellationToken);
             return Outcome(txn, txn.CategoryId, UncategorizedName, isAi: false, queued: true, "FALLBACK");
         }
     }
@@ -117,7 +115,7 @@ public class AiCategorizationService : IAiCategorizationService
         var txn = await _db.Transactions
             .FirstOrDefaultAsync(t => t.TransactionId == transactionId, cancellationToken);
         if (txn is null)
-            return true; // transaction gone; nothing to do — let the queue mark it done.
+            return true;
 
         var expenseCategories = await ExpenseCategoriesAsync(cancellationToken);
         try
@@ -131,20 +129,19 @@ public class AiCategorizationService : IAiCategorizationService
                 txn.AiCategoryGuess = catId;
                 await _db.SaveChangesAsync(cancellationToken);
             }
-            // Even an unresolved-but-successful call counts as processed (Gemini is up).
             return true;
         }
         catch (GeminiUnavailableException)
         {
-            return false; // still down — caller will retry later.
+            return false;
         }
     }
 
     private static string BuildInput(Transaction txn)
-        => !string.IsNullOrWhiteSpace(txn.BeneficiaryName) ? txn.BeneficiaryName!.Trim()
-            : (txn.Note ?? string.Empty).Trim();
+        => !string.IsNullOrWhiteSpace(txn.Merchant) ? txn.Merchant!.Trim()
+            : (txn.Description ?? string.Empty).Trim();
 
-    private async Task<Guid?> MatchRuleAsync(Guid customerId, string input, CancellationToken ct)
+    private async Task<string?> MatchRuleAsync(Guid customerId, string input, CancellationToken ct)
     {
         var rules = await _db.BeneficiaryRules
             .Where(r => r.CustomerId == customerId)
@@ -158,26 +155,18 @@ public class AiCategorizationService : IAiCategorizationService
         return match?.CategoryId;
     }
 
-    private async Task<Dictionary<string, Guid>> ExpenseCategoriesAsync(CancellationToken ct)
-    {
-        // Closed set: expense categories excluding the catch-all "Chưa phân loại".
-        return await _db.Categories
-            .Where(c => c.Type == "EXPENSE" && c.CategoryName != UncategorizedName)
+    private async Task<Dictionary<string, string>> ExpenseCategoriesAsync(CancellationToken ct)
+        => await _db.Categories
+            .Where(c => c.Type == "expense" && c.CategoryName != UncategorizedName && c.CategoryId != "cat_savings_goal")
             .ToDictionaryAsync(c => c.CategoryName, c => c.CategoryId, ct);
-    }
 
-    private async Task<string?> CategoryNameAsync(Guid categoryId, CancellationToken ct)
+    private async Task<string?> CategoryNameAsync(string categoryId, CancellationToken ct)
         => await _db.Categories.Where(c => c.CategoryId == categoryId)
             .Select(c => c.CategoryName).FirstOrDefaultAsync(ct);
 
-    private async Task ApplyUncategorizedAsync(Transaction txn, bool queued, CancellationToken ct)
+    private async Task ApplyUncategorizedAsync(Transaction txn, CancellationToken ct)
     {
-        var uncategorizedId = await _db.Categories
-            .Where(c => c.CategoryName == UncategorizedName)
-            .Select(c => (Guid?)c.CategoryId)
-            .FirstOrDefaultAsync(ct);
-
-        txn.CategoryId = uncategorizedId;
+        txn.CategoryId = null;
         txn.IsAiClassified = false;
         txn.AiConfidence = null;
         txn.AiCategoryGuess = null;
@@ -185,7 +174,7 @@ public class AiCategorizationService : IAiCategorizationService
     }
 
     private static CategorizationOutcome Outcome(
-        Transaction txn, Guid? catId, string? catName, bool isAi, bool queued, string source)
+        Transaction txn, string? catId, string? catName, bool isAi, bool queued, string source)
         => new()
         {
             TransactionId = txn.TransactionId,

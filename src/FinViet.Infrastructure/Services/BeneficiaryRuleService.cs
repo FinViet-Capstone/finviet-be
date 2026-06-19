@@ -112,8 +112,6 @@ public class BeneficiaryRuleService : IBeneficiaryRuleService
             ?? throw new NotFoundException("Category", request.CategoryId);
 
         var transaction = txn.Txn;
-
-        // Audit the correction (capture the prior AI guess as human-readable text).
         var originalGuessName = transaction.AiCategoryGuess is null
             ? null
             : await _db.Categories.Where(c => c.CategoryId == transaction.AiCategoryGuess)
@@ -130,16 +128,15 @@ public class BeneficiaryRuleService : IBeneficiaryRuleService
         });
 
         transaction.CategoryId = request.CategoryId;
-        // User-confirmed category is no longer an AI guess.
         transaction.IsAiClassified = false;
         transaction.AiConfidence = null;
         await _db.SaveChangesAsync(cancellationToken);
 
-        if (request.CreateRule && !string.IsNullOrWhiteSpace(transaction.BeneficiaryName))
+        if (request.CreateRule && !string.IsNullOrWhiteSpace(transaction.Merchant))
         {
             await UpsertRuleAsync(customerId, new UpsertBeneficiaryRuleRequest
             {
-                MatchText = transaction.BeneficiaryName!.Trim(),
+                MatchText = transaction.Merchant!.Trim(),
                 CategoryId = request.CategoryId,
                 IsRecurring = request.IsRecurring
             }, cancellationToken);
@@ -157,15 +154,14 @@ public class BeneficiaryRuleService : IBeneficiaryRuleService
         };
     }
 
-    /// <summary>Apply a rule to every matching transaction the customer owns (scoped via wallet join).</summary>
     private async Task ApplyRuleRetroactivelyAsync(
-        Guid customerId, string matchText, Guid categoryId, CancellationToken ct)
+        Guid customerId, string matchText, string categoryId, CancellationToken ct)
     {
         var matching = await _db.Transactions
             .Join(_db.Wallets, t => t.WalletId, w => w.WalletId, (t, w) => new { Txn = t, w.CustomerId })
             .Where(x => x.CustomerId == customerId
-                        && x.Txn.BeneficiaryName != null
-                        && EF.Functions.ILike(x.Txn.BeneficiaryName, $"%{matchText}%"))
+                        && x.Txn.Merchant != null
+                        && EF.Functions.ILike(x.Txn.Merchant, $"%{matchText}%"))
             .Select(x => x.Txn)
             .ToListAsync(ct);
 

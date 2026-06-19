@@ -4,7 +4,7 @@ public class BeneficiaryRuleResponse
 {
     public Guid RuleId { get; set; }
     public string MatchText { get; set; } = null!;
-    public Guid CategoryId { get; set; }
+    public string CategoryId { get; set; } = string.Empty;
     public string? CategoryName { get; set; }
     public bool IsRecurring { get; set; }
 }
@@ -12,14 +12,14 @@ public class BeneficiaryRuleResponse
 public class UpsertBeneficiaryRuleRequest
 {
     public string MatchText { get; set; } = null!;
-    public Guid CategoryId { get; set; }
+    public string CategoryId { get; set; } = string.Empty;
     public bool IsRecurring { get; set; }
 }
 
 /// <summary>Override a transaction's category, optionally creating a retroactive beneficiary rule.</summary>
 public class OverrideCategoryRequest
 {
-    public Guid CategoryId { get; set; }
+    public string CategoryId { get; set; } = string.Empty;
 
     /// <summary>If true, create/update a beneficiary rule from this transaction's beneficiary and
     /// apply it retroactively to all matching transactions.</summary>

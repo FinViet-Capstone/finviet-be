@@ -12,7 +12,7 @@ public class TransactionQueryDto
     /// <summary>INCOME, EXPENSE, TRANSFER or DEBT_PAYMENT (case-insensitive).</summary>
     public string? Type { get; set; }
 
-    public Guid? CategoryId { get; set; }
+    public string? CategoryId { get; set; }
 
     public DateTime? From { get; set; }
     public DateTime? To { get; set; }
@@ -37,7 +37,7 @@ public class TransactionSummaryResponseDto
 
 public class CategorySummaryItemDto
 {
-    public Guid? CategoryId { get; set; }
+    public string? CategoryId { get; set; }
     public string? CategoryName { get; set; }
     public decimal Total { get; set; }
 }

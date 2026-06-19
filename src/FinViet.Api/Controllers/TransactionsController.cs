@@ -10,8 +10,8 @@ using FinViet.Application.DTOs;
 namespace FinViet.Api.Controllers;
 
 [ApiController]
-[Route("api/[controller]")]
 [Authorize(Roles = "Customer")]
+[Route("api/[controller]")]
 public class TransactionsController : ControllerBase
 {
     private readonly IMediator _mediator;
@@ -124,7 +124,7 @@ public class TransactionsController : ControllerBase
         var claimValue = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
 
         if (!Guid.TryParse(claimValue, out var customerId))
-            throw new UnauthorizedAccessException("Authenticated user does not have a valid customer identifier claim.");
+            return Guid.Empty;
 
         return customerId;
     }

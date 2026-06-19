@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -16,7 +16,7 @@ namespace FinViet.Application.DTOs.Wallets
 
     public DateTimeOffset? ToDate { get; set; }
 
-    public Guid? CategoryId { get; set; }
+    public string? CategoryId { get; set; }
 
     // INCOME, EXPENSE, TRANSFER, DEBT_PAYMENT
     public string? TransactionType { get; set; }
