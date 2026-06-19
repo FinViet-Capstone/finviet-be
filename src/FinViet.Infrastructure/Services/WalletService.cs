@@ -6,17 +6,19 @@ using FinViet.Application.Interfaces;
 using FinViet.Infrastructure.Persistence.Context;
 using FinViet.Infrastructure.Persistence.Entities;
 using Microsoft.EntityFrameworkCore;
+using BusinessRuleException = FinViet.Application.Common.Exceptions.BusinessRuleException;
 
 namespace FinViet.Infrastructure.Services;
 
 public class WalletService : IWalletService
 {
-    private const string CreditCardWalletType = "CREDIT_CARD";
+    private const string BasicWalletType = "basic";
+    private const string SepayLinkedWalletType = "sepay_linked";
     private const int MaximumWalletsPerCustomer = 10;
 
     private static readonly HashSet<string> AllowedWalletTypes = new(StringComparer.OrdinalIgnoreCase)
     {
-        "CASH", "BANK_ACCOUNT", CreditCardWalletType, "E_WALLET", "INVESTMENT"
+        BasicWalletType, SepayLinkedWalletType, "CASH", "BANK_ACCOUNT", "CREDIT_CARD", "E_WALLET", "INVESTMENT"
     };
 
     private readonly FinVietDbContext _dbContext;
@@ -30,14 +32,14 @@ public class WalletService : IWalletService
     {
         var wallets = await _dbContext.Wallets
             .AsNoTracking()
-            .Where(w => w.CustomerId == customerId)
+            .Where(w => w.CustomerId == customerId && !w.IsDeleted)
             .OrderBy(w => w.WalletName)
             .Select(w => new WalletResponse
             {
                 WalletId = w.WalletId,
                 CustomerId = customerId,
                 WalletName = w.WalletName,
-                WalletType = w.WalletType,
+                WalletType = NormalizeStoredWalletType(w.WalletType),
                 Balance = w.Balance ?? 0m
             })
             .ToListAsync(cancellationToken);
@@ -53,7 +55,7 @@ public class WalletService : IWalletService
     {
         var wallet = await _dbContext.Wallets
             .AsNoTracking()
-            .FirstOrDefaultAsync(w => w.CustomerId == customerId && w.WalletId == walletId, cancellationToken);
+            .FirstOrDefaultAsync(w => w.CustomerId == customerId && w.WalletId == walletId && !w.IsDeleted, cancellationToken);
 
         return wallet is null ? null : ToResponse(wallet);
     }
@@ -64,12 +66,12 @@ public class WalletService : IWalletService
         await EnsureCustomerExistsAsync(customerId, cancellationToken);
 
         var walletCount = await _dbContext.Wallets
-            .CountAsync(w => w.CustomerId == customerId, cancellationToken);
+            .CountAsync(w => w.CustomerId == customerId && !w.IsDeleted, cancellationToken);
 
         if (walletCount >= MaximumWalletsPerCustomer)
             throw new ValidationException("Maximum 10 wallets allowed per account.");
 
-        var trimmedName = request.WalletName.Trim();
+        var trimmedName = request.EffectiveName.Trim();
         var isDuplicateName = await WalletNameExistsAsync(customerId, trimmedName, null, cancellationToken);
 
         if (isDuplicateName)
@@ -80,7 +82,7 @@ public class WalletService : IWalletService
             WalletId = Guid.NewGuid(),
             CustomerId = customerId,
             WalletName = trimmedName,
-            WalletType = NormalizeWalletType(request.WalletType),
+            WalletType = NormalizeWalletType(request.EffectiveType),
             Balance = request.InitialBalance
         };
 
@@ -95,14 +97,14 @@ public class WalletService : IWalletService
         ValidateUpdate(request);
 
         var wallet = await _dbContext.Wallets
-            .FirstOrDefaultAsync(w => w.CustomerId == customerId && w.WalletId == walletId, cancellationToken);
+            .FirstOrDefaultAsync(w => w.CustomerId == customerId && w.WalletId == walletId && !w.IsDeleted, cancellationToken);
 
         if (wallet is null)
             return null;
 
-        if (!string.IsNullOrWhiteSpace(request.WalletName))
+        if (!string.IsNullOrWhiteSpace(request.EffectiveName))
         {
-            var newName = request.WalletName.Trim();
+            var newName = request.EffectiveName.Trim();
             var duplicateName = await WalletNameExistsAsync(customerId, newName, walletId, cancellationToken);
 
             if (duplicateName)
@@ -111,16 +113,8 @@ public class WalletService : IWalletService
             wallet.WalletName = newName;
         }
 
-        if (!string.IsNullOrWhiteSpace(request.WalletType))
-        {
-            var normalizedWalletType = NormalizeWalletType(request.WalletType);
-            var walletBalance = GetRequiredBalance(wallet);
-
-            if (walletBalance < 0 && !normalizedWalletType.Equals(CreditCardWalletType, StringComparison.OrdinalIgnoreCase))
-                throw new ValidationException("Cannot change wallet type while the wallet has outstanding negative balance.");
-
-            wallet.WalletType = normalizedWalletType;
-        }
+        if (!string.IsNullOrWhiteSpace(request.EffectiveType))
+            throw new ValidationException("Wallet type cannot be changed after creation.");
 
         await _dbContext.SaveChangesAsync(cancellationToken);
         return ToResponse(wallet);
@@ -129,21 +123,21 @@ public class WalletService : IWalletService
     public async Task<bool> DeleteWalletAsync(Guid customerId, Guid walletId, CancellationToken cancellationToken = default)
     {
         var wallet = await _dbContext.Wallets
-            .FirstOrDefaultAsync(w => w.CustomerId == customerId && w.WalletId == walletId, cancellationToken);
+            .FirstOrDefaultAsync(w => w.CustomerId == customerId && w.WalletId == walletId && !w.IsDeleted, cancellationToken);
 
         if (wallet is null)
             return false;
 
-        if (GetRequiredBalance(wallet) != 0m)
-            throw new ValidationException("Cannot delete wallet with remaining balance or outstanding debt.");
+        // Không cho xóa ví active cuối cùng (APIs-List §3: 422 last_wallet).
+        var activeWalletCount = await _dbContext.Wallets
+            .CountAsync(w => w.CustomerId == customerId && !w.IsDeleted, cancellationToken);
 
-        var hasTransactions = await _dbContext.Transactions
-            .AnyAsync(t => t.WalletId == walletId, cancellationToken);
+        if (activeWalletCount <= 1)
+            throw new BusinessRuleException("Cannot delete the last active wallet.", "last_wallet");
 
-        if (hasTransactions)
-            throw new ValidationException("Cannot delete wallet because it already has transactions.");
-
-        _dbContext.Wallets.Remove(wallet);
+        // Soft delete — giữ lịch sử giao dịch (schema v2.1: wallet.is_deleted).
+        wallet.IsDeleted = true;
+        wallet.DeletedAt = DateTime.UtcNow;
         await _dbContext.SaveChangesAsync(cancellationToken);
         return true;
     }
@@ -161,12 +155,14 @@ public class WalletService : IWalletService
             cancellationToken);
 
         // Lock both wallet rows in a deterministic order to avoid overspending and transfer deadlocks.
+        // Phải SELECT đủ mọi cột của entity Wallet (kể cả is_deleted, deleted_at) cho FromSql.
         var wallets = await _dbContext.Wallets
             .FromSqlInterpolated($"""
-                SELECT wallet_id, customer_id, wallet_name, wallet_type, balance
+                SELECT wallet_id, customer_id, wallet_name, wallet_type, balance, is_deleted, deleted_at
                 FROM wallet
                 WHERE customer_id = {customerId}
                   AND wallet_id IN ({request.FromWalletId}, {request.ToWalletId})
+                  AND is_deleted = false
                 ORDER BY wallet_id
                 FOR UPDATE
                 """)
@@ -184,7 +180,7 @@ public class WalletService : IWalletService
         var fromWalletBalance = GetRequiredBalance(fromWallet);
         var toWalletBalance = GetRequiredBalance(toWallet);
 
-        if (fromWalletBalance < request.Amount && !fromWallet.WalletType.Equals(CreditCardWalletType, StringComparison.OrdinalIgnoreCase))
+        if (fromWalletBalance < request.Amount)
             throw new ValidationException("Source wallet does not have enough balance.");
 
         fromWallet.Balance = fromWalletBalance - request.Amount;
@@ -242,7 +238,7 @@ public class WalletService : IWalletService
             throw new ValidationException("Page size must be between 1 and 100.");
 
         var walletExists = await _dbContext.Wallets
-            .AnyAsync(x => x.CustomerId == customerId && x.WalletId == walletId, cancellationToken);
+            .AnyAsync(x => x.CustomerId == customerId && x.WalletId == walletId && !x.IsDeleted, cancellationToken);
 
         if (!walletExists)
             throw new NotFoundException("Wallet not found.");
@@ -332,32 +328,36 @@ public class WalletService : IWalletService
 
     private static void ValidateCreate(CreateWalletRequest request)
     {
-        if (string.IsNullOrWhiteSpace(request.WalletName))
+        if (string.IsNullOrWhiteSpace(request.EffectiveName))
             throw new ValidationException("Wallet name is required.");
 
-        if (string.IsNullOrWhiteSpace(request.WalletType))
+        if (string.IsNullOrWhiteSpace(request.EffectiveType))
             throw new ValidationException("Wallet type is required.");
 
-        if (request.InitialBalance < 0 && !request.WalletType.Trim().Equals(CreditCardWalletType, StringComparison.OrdinalIgnoreCase))
-            throw new ValidationException("Initial balance cannot be negative except for CREDIT_CARD wallets.");
+        if (request.InitialBalance < 0)
+            throw new ValidationException("Initial balance cannot be negative.");
     }
 
     private static void ValidateUpdate(UpdateWalletRequest request)
     {
-        if (request.WalletName is not null && string.IsNullOrWhiteSpace(request.WalletName))
+        if ((request.Name is not null || request.WalletName is not null) && string.IsNullOrWhiteSpace(request.EffectiveName))
             throw new ValidationException("Wallet name cannot be empty.");
 
-        if (request.WalletType is not null && string.IsNullOrWhiteSpace(request.WalletType))
-            throw new ValidationException("Wallet type cannot be empty.");
+        if (request.Type is not null || request.WalletType is not null)
+            throw new ValidationException("Wallet type cannot be changed after creation.");
     }
 
     private static string NormalizeWalletType(string walletType)
     {
-        var normalized = walletType.Trim().ToUpperInvariant();
+        var normalized = walletType.Trim();
         if (!AllowedWalletTypes.Contains(normalized))
-            throw new ValidationException("Wallet type must be one of: CASH, BANK_ACCOUNT, CREDIT_CARD, E_WALLET, INVESTMENT.");
+            throw new ValidationException("Wallet type must be one of: basic, sepay_linked.");
 
-        return normalized;
+        return normalized.ToUpperInvariant() switch
+        {
+            "CASH" or "BANK_ACCOUNT" or "CREDIT_CARD" or "E_WALLET" or "INVESTMENT" => BasicWalletType,
+            _ => normalized.ToLowerInvariant()
+        };
     }
 
     private static WalletResponse ToResponse(Wallet wallet)
@@ -366,7 +366,7 @@ public class WalletService : IWalletService
             WalletId = wallet.WalletId,
             CustomerId = GetRequiredCustomerId(wallet),
             WalletName = wallet.WalletName,
-            WalletType = wallet.WalletType,
+            WalletType = NormalizeStoredWalletType(wallet.WalletType),
             Balance = GetRequiredBalance(wallet)
         };
 
@@ -386,8 +386,16 @@ public class WalletService : IWalletService
     {
         return await _dbContext.Wallets.AnyAsync(
             w => w.CustomerId == customerId
+                 && !w.IsDeleted
                  && (!excludedWalletId.HasValue || w.WalletId != excludedWalletId.Value)
                  && EF.Functions.ILike(w.WalletName, walletName),
             cancellationToken);
     }
+
+    private static string NormalizeStoredWalletType(string walletType)
+        => walletType.ToUpperInvariant() switch
+        {
+            "CASH" or "BANK_ACCOUNT" or "CREDIT_CARD" or "E_WALLET" or "INVESTMENT" => BasicWalletType,
+            _ => walletType.ToLowerInvariant()
+        };
 }

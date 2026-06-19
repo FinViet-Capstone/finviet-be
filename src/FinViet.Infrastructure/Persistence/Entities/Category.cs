@@ -26,7 +26,11 @@ public partial class Category
 
     public virtual ICollection<CategoryBudget> CategoryBudgets { get; set; } = new List<CategoryBudget>();
 
+    public virtual ICollection<Budget> Budgets { get; set; } = new List<Budget>();
+
     public virtual ICollection<CategoryCorrectionLog> CategoryCorrectionLogs { get; set; } = new List<CategoryCorrectionLog>();
+
+    public virtual ICollection<CustomerCategory> CustomerCategories { get; set; } = new List<CustomerCategory>();
 
     public virtual ICollection<Transaction> Transactions { get; set; } = new List<Transaction>();
 }

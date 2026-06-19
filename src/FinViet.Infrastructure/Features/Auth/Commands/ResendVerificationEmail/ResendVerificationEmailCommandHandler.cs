@@ -1,6 +1,7 @@
 using FinViet.Application.Common.Exceptions;
 using FinViet.Application.Features.Auth.Commands.ResendVerificationEmail;
 using FinViet.Application.Interfaces;
+using FinViet.Infrastructure.Features.Auth;
 using FinViet.Infrastructure.Persistence.Context;
 using FinViet.Infrastructure.Persistence.Entities;
 using MediatR;
@@ -13,7 +14,7 @@ namespace FinViet.Infrastructure.Features.Auth.Commands.ResendVerificationEmail;
 public class ResendVerificationEmailCommandHandler : IRequestHandler<ResendVerificationEmailCommand, string>
 {
     private const string GenericResponse =
-        "If this email is registered and not yet verified, a new verification link has been sent.";
+        "If this email is registered and not yet verified, a new verification code has been sent.";
 
     private readonly FinVietDbContext _db;
     private readonly IEmailService _emailService;
@@ -51,38 +52,51 @@ public class ResendVerificationEmailCommandHandler : IRequestHandler<ResendVerif
                      && t.UsedAt     == null)
             .ToListAsync(cancellationToken);
 
-        foreach (var t in oldTokens) t.UsedAt = DateTime.UtcNow;
+        var now = DateTime.UtcNow;
+        foreach (var t in oldTokens) t.UsedAt = now;
 
-        var rawToken = Guid.NewGuid().ToString("N") + Guid.NewGuid().ToString("N");
+        var code = await GenerateUniqueCodeAsync(cancellationToken);
 
         _db.EmailVerificationTokens.Add(new EmailVerificationToken
         {
             TokenId    = Guid.NewGuid(),
             CustomerId = customer.CustomerId,
-            Token      = rawToken,
+            Token      = code,
             TokenType  = "VERIFY_EMAIL",
-            ExpiresAt  = DateTime.UtcNow.AddHours(24),
-            CreatedAt  = DateTime.UtcNow
+            ExpiresAt  = now.AddHours(24),
+            CreatedAt  = now
         });
 
         await _db.SaveChangesAsync(cancellationToken);
 
-        var backendUrl = _config["AppSettings:BackendUrl"] ?? "https://localhost:5001";
-        var verifyUrl  = $"{backendUrl.TrimEnd('/')}/api/auth/verify-email?token={rawToken}";
-
         try
         {
-            await _emailService.SendVerificationEmailAsync(customer.Email, customer.FullName, verifyUrl);
+            await _emailService.SendVerificationEmailAsync(customer.Email, customer.FullName, code);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex,
-                "Failed to resend verification email for {Email}. Token: {Token}",
-                customer.Email, rawToken);
+                "Failed to resend verification email for {Email}. Code: {Code}",
+                customer.Email, code);
             throw new BadRequestException(
                 "Could not send verification email at this time. Please try again later.");
         }
 
         return GenericResponse;
+    }
+
+    /// <summary>Generate a 6-char code unique among active (unused, non-expired) verify tokens.</summary>
+    private async Task<string> GenerateUniqueCodeAsync(CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+        string code;
+        do
+        {
+            code = VerificationCode.Generate();
+        }
+        while (await _db.EmailVerificationTokens.AnyAsync(t =>
+            t.Token == code && t.TokenType == "VERIFY_EMAIL" &&
+            t.UsedAt == null && t.ExpiresAt > now, ct));
+        return code;
     }
 }
