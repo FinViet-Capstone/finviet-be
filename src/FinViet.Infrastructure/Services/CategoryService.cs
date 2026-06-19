@@ -209,10 +209,12 @@ public class CategoryService : ICategoryService
         string? excludedCategoryId,
         CancellationToken cancellationToken)
     {
+        // CategoryName is mapped to the name_vi column; NameVi is unmapped (Ignored),
+        // so the duplicate check must run against CategoryName only.
         return await _dbContext.Categories.AnyAsync(
             c => c.Type == type
                  && (excludedCategoryId == null || c.CategoryId != excludedCategoryId)
-                 && (EF.Functions.ILike(c.CategoryName, categoryName) || EF.Functions.ILike(c.NameVi ?? "", categoryName)),
+                 && EF.Functions.ILike(c.CategoryName, categoryName),
             cancellationToken);
     }
 
@@ -256,7 +258,8 @@ public class CategoryService : ICategoryService
         {
             CategoryId = category.CategoryId,
             CategoryName = category.CategoryName,
-            NameVi = category.NameVi,
+            // CategoryName is mapped to the name_vi column; NameVi itself is unmapped.
+            NameVi = category.CategoryName,
             NameEn = category.NameEn,
             Type = category.Type,
             IsMandatory = category.IsMandatory ?? false,

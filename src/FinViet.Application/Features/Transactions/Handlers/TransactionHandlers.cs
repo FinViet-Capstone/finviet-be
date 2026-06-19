@@ -8,17 +8,38 @@ namespace FinViet.Application.Features.Transactions.Handlers;
 
 internal static class TransactionRules
 {
-    public static readonly string[] ValidTypes = { "INCOME", "EXPENSE", "TRANSFER", "DEBT_PAYMENT" };
+    public static readonly string[] ValidTypes = { "income", "expense", "transfer_out", "transfer_in" };
 
-    public static void ValidateInput(string transactionType, decimal amount)
+    /// <summary>
+    /// Accepts both the v2.1 lowercase vocabulary and the legacy uppercase aliases,
+    /// returning the canonical lowercase value used by the persistence layer.
+    /// </summary>
+    public static string Normalize(string transactionType)
+        => (transactionType ?? string.Empty).Trim().ToLowerInvariant() switch
+        {
+            "income" or "in" => "income",
+            "expense" or "out" => "expense",
+            "transfer_out" or "transfer" => "transfer_out",
+            "transfer_in" => "transfer_in",
+            var other => other
+        };
+
+    public static string ValidateInput(string transactionType, decimal amount)
     {
-        if (string.IsNullOrWhiteSpace(transactionType) || !ValidTypes.Contains(transactionType))
+        var normalized = Normalize(transactionType);
+        if (!ValidTypes.Contains(normalized))
             throw new BadRequestException(
                 $"Invalid transaction type '{transactionType}'. Allowed values: {string.Join(", ", ValidTypes)}.");
 
         if (amount <= 0)
             throw new BadRequestException("Amount must be greater than zero.");
+
+        return normalized;
     }
+
+    /// <summary>Income increases the wallet balance; everything else decreases it.</summary>
+    public static decimal SignedDelta(string normalizedType, decimal amount)
+        => normalizedType == "income" ? amount : -amount;
 }
 
 public class CreateTransactionHandler : IRequestHandler<CreateTransactionCommand, TransactionResponseDto>
@@ -34,7 +55,7 @@ public class CreateTransactionHandler : IRequestHandler<CreateTransactionCommand
 
     public async Task<TransactionResponseDto> Handle(CreateTransactionCommand request, CancellationToken cancellationToken)
     {
-        TransactionRules.ValidateInput(request.TransactionType, request.Amount);
+        var normalizedType = TransactionRules.ValidateInput(request.TransactionType, request.Amount);
 
         var wallet = await _walletRepository.GetByIdAsync(request.WalletId, cancellationToken);
         if (wallet == null)
@@ -44,18 +65,14 @@ public class CreateTransactionHandler : IRequestHandler<CreateTransactionCommand
             request.WalletId,
             request.CategoryId,
             request.SourceId,
-            request.TransactionType,
+            normalizedType,
             request.Amount,
             request.TransactionDate,
             request.Note,
             cancellationToken
         );
 
-        decimal newBalance = wallet.Balance;
-        if (request.TransactionType == "INCOME")
-            newBalance += request.Amount;
-        else if (request.TransactionType == "EXPENSE" || request.TransactionType == "TRANSFER" || request.TransactionType == "DEBT_PAYMENT")
-            newBalance -= request.Amount;
+        var newBalance = wallet.Balance + TransactionRules.SignedDelta(normalizedType, request.Amount);
 
         await _walletRepository.UpdateBalanceAsync(request.WalletId, newBalance, cancellationToken);
 
@@ -76,7 +93,7 @@ public class UpdateTransactionHandler : IRequestHandler<UpdateTransactionCommand
 
     public async Task<TransactionResponseDto> Handle(UpdateTransactionCommand request, CancellationToken cancellationToken)
     {
-        TransactionRules.ValidateInput(request.TransactionType, request.Amount);
+        var normalizedType = TransactionRules.ValidateInput(request.TransactionType, request.Amount);
 
         var transaction = await _transactionRepository.GetByIdAsync(request.TransactionId, cancellationToken);
         if (transaction == null)
@@ -86,23 +103,16 @@ public class UpdateTransactionHandler : IRequestHandler<UpdateTransactionCommand
         if (wallet == null)
             throw new NotFoundException("Wallet", transaction.WalletId);
 
-        decimal newBalance = wallet.Balance;
-        
-        if (transaction.TransactionType == "INCOME")
-            newBalance -= transaction.Amount;
-        else if (transaction.TransactionType == "EXPENSE" || transaction.TransactionType == "TRANSFER" || transaction.TransactionType == "DEBT_PAYMENT")
-            newBalance += transaction.Amount;
-
-        if (request.TransactionType == "INCOME")
-            newBalance += request.Amount;
-        else if (request.TransactionType == "EXPENSE" || request.TransactionType == "TRANSFER" || request.TransactionType == "DEBT_PAYMENT")
-            newBalance -= request.Amount;
+        // Reverse the existing entry, then apply the new one.
+        var newBalance = wallet.Balance
+            - TransactionRules.SignedDelta(TransactionRules.Normalize(transaction.TransactionType), transaction.Amount)
+            + TransactionRules.SignedDelta(normalizedType, request.Amount);
 
         var updatedTransaction = await _transactionRepository.UpdateAsync(
             request.TransactionId,
             request.CategoryId,
             request.SourceId,
-            request.TransactionType,
+            normalizedType,
             request.Amount,
             request.TransactionDate,
             request.Note,
@@ -136,11 +146,9 @@ public class DeleteTransactionHandler : IRequestHandler<DeleteTransactionCommand
         if (wallet == null)
             throw new NotFoundException("Wallet", transaction.WalletId);
 
-        decimal newBalance = wallet.Balance;
-        if (transaction.TransactionType == "INCOME")
-            newBalance -= transaction.Amount;
-        else if (transaction.TransactionType == "EXPENSE" || transaction.TransactionType == "TRANSFER" || transaction.TransactionType == "DEBT_PAYMENT")
-            newBalance += transaction.Amount;
+        // Reverse the transaction's effect on the wallet balance.
+        var newBalance = wallet.Balance
+            - TransactionRules.SignedDelta(TransactionRules.Normalize(transaction.TransactionType), transaction.Amount);
 
         await _transactionRepository.DeleteAsync(request.TransactionId, cancellationToken);
         await _walletRepository.UpdateBalanceAsync(transaction.WalletId, newBalance, cancellationToken);
