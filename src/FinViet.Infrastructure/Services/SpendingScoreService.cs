@@ -228,13 +228,11 @@ public class SpendingScoreService : ISpendingScoreService
         var bucketActual = new Dictionary<string, decimal>();
         foreach (var b in budgets)
         {
-            if (b.CategoryId is null)
-                continue;
-            var bucket = BucketOf(b.CategoryId);
-            if (bucket is null || catInfo[b.CategoryId].CategoryName == Uncategorized)
+            var bucket = b.CategoryId is null ? null : BucketOf(b.CategoryId);
+            if (bucket is null || catInfo[b.CategoryId!].CategoryName == Uncategorized)
                 continue;
             bucketLimit[bucket] = bucketLimit.GetValueOrDefault(bucket) + b.AmountLimit;
-            var spent = actualByCat.GetValueOrDefault(b.CategoryId);
+            var spent = actualByCat.GetValueOrDefault(b.CategoryId!);
             bucketActual[bucket] = bucketActual.GetValueOrDefault(bucket) + spent;
         }
 
@@ -289,7 +287,7 @@ public class SpendingScoreService : ISpendingScoreService
 
         // Savings-bucket transactions (categories with expense_class = SAVINGS).
         var savingsCatIds = await _db.Categories
-            .Where(c => c.ExpenseClass == "SAVINGS")
+            .Where(c => c.ExpenseClass == "savings")
             .Select(c => c.CategoryId)
             .ToListAsync(ct);
 

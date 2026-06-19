@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using System.Text.RegularExpressions;
 using FinViet.Application.DTOs.Categories;
 using FinViet.Application.Exceptions;
 using FinViet.Application.Interfaces;
@@ -18,7 +19,7 @@ public class CategoryService : ICategoryService
 
     private static readonly HashSet<string> AllowedExpenseClasses = new(StringComparer.OrdinalIgnoreCase)
     {
-        "NEEDS", "WANTS", "SAVINGS"
+        "needs", "wants", "savings"
     };
 
     private readonly FinVietDbContext _dbContext;
@@ -40,14 +41,14 @@ public class CategoryService : ICategoryService
             query = query.Where(c => c.Type == normalizedType);
         }
 
-        // cat_savings_goal is auto-only — never offered in the manual picker.
         query = query.Where(c => c.CategoryId != "cat_savings_goal");
 
-        return await query
+        var categories = await query
             .OrderBy(c => c.SortOrder)
             .ThenBy(c => c.CategoryName)
-            .Select(c => ToResponse(c))
             .ToListAsync(cancellationToken);
+
+        return categories.Select(ToResponse).ToList();
     }
 
     public async Task<CategoryResponse?> GetCategoryByIdAsync(
@@ -65,26 +66,32 @@ public class CategoryService : ICategoryService
         CreateCategoryRequest request,
         CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(request.CategoryName))
+        var nameVi = FirstNonEmpty(request.NameVi, request.CategoryName);
+        if (string.IsNullOrWhiteSpace(nameVi))
             throw new ValidationException("Category name is required.");
 
         var normalizedType = NormalizeType(request.Type);
-        var normalizedExpenseClass = NormalizeExpenseClass(request.ExpenseClass);
+        var normalizedExpenseClass = NormalizeExpenseClass(request.ExpenseClass, normalizedType);
+        var trimmedNameVi = nameVi.Trim();
+        var trimmedNameEn = string.IsNullOrWhiteSpace(request.NameEn) ? trimmedNameVi : request.NameEn.Trim();
+        var categoryId = string.IsNullOrWhiteSpace(request.CategoryId)
+            ? await GenerateUniqueSlugAsync(trimmedNameEn, cancellationToken)
+            : request.CategoryId.Trim();
 
-        var trimmedName = request.CategoryName.Trim();
-        var duplicateName = await CategoryNameExistsAsync(trimmedName, normalizedType, null, cancellationToken);
+        var duplicateId = await _dbContext.Categories.AnyAsync(c => c.CategoryId == categoryId, cancellationToken);
+        if (duplicateId)
+            throw new ValidationException("Category id already exists.");
 
+        var duplicateName = await CategoryNameExistsAsync(trimmedNameVi, normalizedType, null, cancellationToken);
         if (duplicateName)
             throw new ValidationException("Category name already exists for this type.");
 
-        var slug = await GenerateUniqueSlugAsync(trimmedName, cancellationToken);
-
         var category = new Category
         {
-            CategoryId = slug,
-            CategoryName = trimmedName,
-            NameVi = trimmedName,
-            NameEn = request.NameEn,
+            CategoryId = categoryId,
+            CategoryName = trimmedNameVi,
+            NameVi = trimmedNameVi,
+            NameEn = trimmedNameEn,
             Type = normalizedType,
             IsMandatory = request.IsMandatory,
             ExpenseClass = normalizedExpenseClass,
@@ -113,25 +120,27 @@ public class CategoryService : ICategoryService
         if (request.Type is not null)
             category.Type = NormalizeType(request.Type);
 
-        if (request.CategoryName is not null)
+        if (request.CategoryName is not null || request.NameVi is not null)
         {
-            if (string.IsNullOrWhiteSpace(request.CategoryName))
+            var newName = FirstNonEmpty(request.NameVi, request.CategoryName);
+            if (string.IsNullOrWhiteSpace(newName))
                 throw new ValidationException("Category name cannot be empty.");
 
-            var newName = request.CategoryName.Trim();
-            var duplicateName = await CategoryNameExistsAsync(newName, category.Type, categoryId, cancellationToken);
+            var trimmed = newName.Trim();
+            var duplicateName = await CategoryNameExistsAsync(trimmed, category.Type, categoryId, cancellationToken);
 
             if (duplicateName)
                 throw new ValidationException("Category name already exists for this type.");
 
-            category.CategoryName = newName;
+            category.CategoryName = trimmed;
+            category.NameVi = trimmed;
         }
 
         if (request.IsMandatory.HasValue)
             category.IsMandatory = request.IsMandatory.Value;
 
         if (request.ExpenseClass is not null)
-            category.ExpenseClass = NormalizeExpenseClass(request.ExpenseClass);
+            category.ExpenseClass = NormalizeExpenseClass(request.ExpenseClass, category.Type);
 
         if (request.NameEn is not null)
             category.NameEn = request.NameEn;
@@ -179,14 +188,17 @@ public class CategoryService : ICategoryService
         return normalized;
     }
 
-    private static string? NormalizeExpenseClass(string? expenseClass)
+    private static string? NormalizeExpenseClass(string? expenseClass, string type)
     {
-        if (string.IsNullOrWhiteSpace(expenseClass))
+        if (type == "income")
             return null;
 
-        var normalized = expenseClass.Trim().ToUpperInvariant();
+        if (string.IsNullOrWhiteSpace(expenseClass))
+            throw new ValidationException("Expense class is required for expense categories.");
+
+        var normalized = expenseClass.Trim().ToLowerInvariant();
         if (!AllowedExpenseClasses.Contains(normalized))
-            throw new ValidationException("Expense class must be one of: NEEDS, WANTS, SAVINGS.");
+            throw new ValidationException("Expense class must be one of: needs, wants, savings.");
 
         return normalized;
     }
@@ -197,6 +209,8 @@ public class CategoryService : ICategoryService
         string? excludedCategoryId,
         CancellationToken cancellationToken)
     {
+        // CategoryName is mapped to the name_vi column; NameVi is unmapped (Ignored),
+        // so the duplicate check must run against CategoryName only.
         return await _dbContext.Categories.AnyAsync(
             c => c.Type == type
                  && (excludedCategoryId == null || c.CategoryId != excludedCategoryId)
@@ -204,65 +218,48 @@ public class CategoryService : ICategoryService
             cancellationToken);
     }
 
-    /// <summary>Builds a unique slug id like "cat_an_uong"; appends a numeric suffix on collision.</summary>
     private async Task<string> GenerateUniqueSlugAsync(string name, CancellationToken cancellationToken)
     {
         var baseSlug = "cat_" + Slugify(name);
         var slug = baseSlug;
-        var suffix = 2;
+        var i = 2;
 
         while (await _dbContext.Categories.AnyAsync(c => c.CategoryId == slug, cancellationToken))
         {
-            slug = $"{baseSlug}_{suffix}";
-            suffix++;
+            slug = $"{baseSlug}_{i}";
+            i++;
         }
 
-        return slug.Length > 40 ? slug[..40] : slug;
+        return slug;
     }
 
-    private static string Slugify(string input)
+    private static string Slugify(string value)
     {
-        // Strip Vietnamese diacritics, lowercase, keep [a-z0-9], collapse to underscores.
-        var normalized = input.Normalize(NormalizationForm.FormD);
-        var sb = new StringBuilder();
-        foreach (var ch in normalized)
-        {
-            var category = CharUnicodeInfo.GetUnicodeCategory(ch);
-            if (category == UnicodeCategory.NonSpacingMark)
-                continue;
+        var normalized = value.Normalize(NormalizationForm.FormD);
+        var builder = new StringBuilder();
 
-            if (ch == 'đ' || ch == 'Đ')
-                sb.Append('d');
-            else
-                sb.Append(ch);
+        foreach (var c in normalized)
+        {
+            var category = CharUnicodeInfo.GetUnicodeCategory(c);
+            if (category != UnicodeCategory.NonSpacingMark)
+                builder.Append(c);
         }
 
-        var ascii = sb.ToString().Normalize(NormalizationForm.FormC).ToLowerInvariant();
-        var slug = new StringBuilder();
-        var lastUnderscore = false;
-        foreach (var ch in ascii)
-        {
-            if (ch >= 'a' && ch <= 'z' || ch >= '0' && ch <= '9')
-            {
-                slug.Append(ch);
-                lastUnderscore = false;
-            }
-            else if (!lastUnderscore)
-            {
-                slug.Append('_');
-                lastUnderscore = true;
-            }
-        }
-
-        return slug.ToString().Trim('_');
+        var ascii = builder.ToString().Normalize(NormalizationForm.FormC).ToLowerInvariant();
+        ascii = Regex.Replace(ascii, "[^a-z0-9]+", "_").Trim('_');
+        return string.IsNullOrWhiteSpace(ascii) ? Guid.NewGuid().ToString("N")[..8] : ascii;
     }
+
+    private static string? FirstNonEmpty(params string?[] values)
+        => values.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v));
 
     private static CategoryResponse ToResponse(Category category)
         => new()
         {
             CategoryId = category.CategoryId,
             CategoryName = category.CategoryName,
-            NameVi = category.NameVi,
+            // CategoryName is mapped to the name_vi column; NameVi itself is unmapped.
+            NameVi = category.CategoryName,
             NameEn = category.NameEn,
             Type = category.Type,
             IsMandatory = category.IsMandatory ?? false,

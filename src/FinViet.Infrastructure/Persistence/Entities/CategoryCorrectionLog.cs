@@ -1,5 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
+using System;
 
 namespace FinViet.Infrastructure.Persistence.Entities;
 

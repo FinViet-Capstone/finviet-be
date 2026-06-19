@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -18,7 +18,7 @@ namespace FinViet.Application.DTOs.Wallets
 
     public string? CategoryId { get; set; }
 
-    // expense, income, transfer_out, transfer_in
+    // INCOME, EXPENSE, TRANSFER, DEBT_PAYMENT
     public string? TransactionType { get; set; }
 
         // asc / desc

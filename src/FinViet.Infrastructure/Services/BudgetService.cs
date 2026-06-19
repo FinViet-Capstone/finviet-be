@@ -1021,10 +1021,10 @@ public class BudgetService : IBudgetService
         var startUtc = plan.StartDate.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
         var endExclusiveUtc = plan.EndDate.AddDays(1).ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
 
-        // Id của category catch-all để loại khỏi Budget Adherence (uncategorized = NULL ở schema mới).
+        // Id của category catch-all để loại khỏi Budget Adherence.
         var uncategorizedId = await _dbContext.Categories
             .Where(c => c.CategoryName == UncategorizedName)
-            .Select(c => (string?)c.CategoryId)
+            .Select(c => c.CategoryId)
             .FirstOrDefaultAsync(cancellationToken);
 
         var categoryIds = plan.CategoryBudgets
@@ -1060,7 +1060,7 @@ public class BudgetService : IBudgetService
 
         foreach (var categoryBudget in plan.CategoryBudgets)
         {
-            if (categoryBudget.CategoryId == null)
+            if (categoryBudget.CategoryId is null)
             {
                 categoryBudget.CurrentSpent = 0m;
                 continue;
@@ -1265,7 +1265,7 @@ public class BudgetService : IBudgetService
         decimal spent,
         decimal crossedThreshold)
     {
-        if (categoryBudget.CategoryId == null)
+        if (categoryBudget.CategoryId is null)
             return null;
 
         var categoryName = categoryBudget.Category?.CategoryName ?? "Budget category";
@@ -1346,7 +1346,7 @@ public class BudgetService : IBudgetService
 
         var uncategorizedId = await _dbContext.Categories
             .Where(c => c.CategoryName == UncategorizedName)
-            .Select(c => (string?)c.CategoryId)
+            .Select(c => c.CategoryId)
             .FirstOrDefaultAsync(cancellationToken);
 
         // Gom chi tiêu theo bucket trong kỳ, chỉ EXPENSE của customer.
@@ -1382,9 +1382,9 @@ public class BudgetService : IBudgetService
 
         var allocations = new (string Bucket, decimal Pct)[]
         {
-        ("NEEDS", plan.NeedsPct),
-        ("WANTS", plan.WantsPct),
-        ("SAVINGS", plan.SavingsPct)
+        ("needs", plan.NeedsPct),
+        ("wants", plan.WantsPct),
+        ("savings", plan.SavingsPct)
         };
 
         var buckets = new List<BucketBudgetResponse>();
@@ -1443,8 +1443,8 @@ public class BudgetService : IBudgetService
 
     private decimal CalculateBudgetAdherenceScore(List<BucketBudgetResponse> buckets, decimal needsPct, decimal wantsPct)
     {
-        var needs = buckets.FirstOrDefault(b => b.Bucket == "NEEDS");
-        var wants = buckets.FirstOrDefault(b => b.Bucket == "WANTS");
+        var needs = buckets.FirstOrDefault(b => b.Bucket == "needs");
+        var wants = buckets.FirstOrDefault(b => b.Bucket == "wants");
 
         decimal weightSum = 0m;
         decimal weighted = 0m;
@@ -1496,7 +1496,7 @@ public class BudgetService : IBudgetService
 
     private sealed class ScopedSpent
     {
-        public string CategoryId { get; set; } = null!;
+        public string CategoryId { get; set; } = string.Empty;
         public Guid WalletId { get; set; }
         public decimal Total { get; set; }
     }

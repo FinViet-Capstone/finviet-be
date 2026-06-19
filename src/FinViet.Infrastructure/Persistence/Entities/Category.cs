@@ -1,4 +1,3 @@
-using System;
 using System.Collections.Generic;
 
 namespace FinViet.Infrastructure.Persistence.Entities;
@@ -17,7 +16,6 @@ public partial class Category
 
     public bool? IsMandatory { get; set; }
 
-    /// <summary>Bucket indicator for expense categories: NEEDS / WANTS / SAVINGS. Null for income.</summary>
     public string? ExpenseClass { get; set; }
 
     public string? Icon { get; set; }

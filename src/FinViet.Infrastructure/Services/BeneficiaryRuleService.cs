@@ -112,8 +112,6 @@ public class BeneficiaryRuleService : IBeneficiaryRuleService
             ?? throw new NotFoundException("Category", request.CategoryId);
 
         var transaction = txn.Txn;
-
-        // Audit the correction (capture the prior AI guess as human-readable text).
         var originalGuessName = transaction.AiCategoryGuess is null
             ? null
             : await _db.Categories.Where(c => c.CategoryId == transaction.AiCategoryGuess)
@@ -130,7 +128,6 @@ public class BeneficiaryRuleService : IBeneficiaryRuleService
         });
 
         transaction.CategoryId = request.CategoryId;
-        // User-confirmed category is no longer an AI guess.
         transaction.IsAiClassified = false;
         transaction.AiConfidence = null;
         await _db.SaveChangesAsync(cancellationToken);
@@ -157,7 +154,6 @@ public class BeneficiaryRuleService : IBeneficiaryRuleService
         };
     }
 
-    /// <summary>Apply a rule to every matching transaction the customer owns (scoped via wallet join).</summary>
     private async Task ApplyRuleRetroactivelyAsync(
         Guid customerId, string matchText, string categoryId, CancellationToken ct)
     {

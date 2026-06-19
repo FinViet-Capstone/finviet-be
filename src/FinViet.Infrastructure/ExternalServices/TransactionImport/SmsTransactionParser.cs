@@ -27,7 +27,9 @@ public class SmsTransactionParser : ISmsTransactionParser
             if (amount <= 0)
             {
                 result.SkippedDuringParse++;
-                result.ParseErrors.Add($"Message {i + 1}: could not detect an amount.");
+                result.ParseErrors.Add(
+                    $"Tin nhắn {i + 1}: không tìm thấy số tiền. Cần có số tiền kèm đơn vị VND/VNĐ/đ " +
+                    $"(ví dụ: 350,000 VND hoặc -350.000đ).");
                 continue;
             }
 
@@ -47,7 +49,7 @@ public class SmsTransactionParser : ISmsTransactionParser
                 || lowered.Contains("chuyển tiền")
                 || lowered.Contains("-");
 
-            var transactionType = isIncome && !isExpense ? "income" : "expense";
+            var transactionType = isIncome && !isExpense ? "INCOME" : "EXPENSE";
             var transactionDate = ExtractDateTime(message) ?? DateTime.UtcNow;
 
             result.Rows.Add(new ParsedTransactionDto

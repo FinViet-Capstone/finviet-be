@@ -41,9 +41,11 @@ public static class DependencyInjection
         // Repositories
         services.AddScoped<ITransactionRepository, TransactionRepository>();
         services.AddScoped<IWalletRepository, WalletRepository>();
-        services.AddScoped<ITransactionImportRepository, TransactionImportRepository>();
 
-        // Transaction Import
+        // Transaction extract (SMS/CSV → candidate rows + AI suggestions; no persistence)
+        services.AddScoped<ITransactionExtractService, TransactionExtractService>();
+
+        // Transaction Import parsers (shared by the extract flow)
         services.AddScoped<IBankStatementParser, BankStatementExcelParser>();
         services.AddScoped<ISmsTransactionParser, SmsTransactionParser>();
 

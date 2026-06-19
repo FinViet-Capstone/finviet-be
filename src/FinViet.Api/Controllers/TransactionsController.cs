@@ -1,28 +1,63 @@
-using FinViet.Api.Common;
+using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MediatR;
 using FinViet.Application.Common;
 using FinViet.Application.Features.Transactions.Commands;
+using FinViet.Application.Features.Transactions.Queries;
 using FinViet.Application.DTOs;
-using FinViet.Application.DTOs.Wallets;
-using FinViet.Application.Interfaces;
 
 namespace FinViet.Api.Controllers;
 
 [ApiController]
-[Route("api/[controller]")]
-[Route("v1/transactions")]
 [Authorize(Roles = "Customer")]
+[Route("api/[controller]")]
 public class TransactionsController : ControllerBase
 {
     private readonly IMediator _mediator;
-    private readonly IWalletService _walletService;
 
-    public TransactionsController(IMediator mediator, IWalletService walletService)
+    public TransactionsController(IMediator mediator)
     {
         _mediator = mediator;
-        _walletService = walletService;
+    }
+
+    [HttpGet]
+    public async Task<ActionResult<PagedResult<TransactionResponseDto>>> GetTransactions(
+        [FromQuery] TransactionQueryDto query)
+    {
+        var result = await _mediator.Send(new GetTransactionsQuery
+        {
+            CustomerId = GetCustomerId(),
+            Filter = query
+        });
+
+        return Ok(result);
+    }
+
+    [HttpGet("summary")]
+    public async Task<ActionResult<TransactionSummaryResponseDto>> GetSummary(
+        [FromQuery] int year, [FromQuery] int month)
+    {
+        var result = await _mediator.Send(new GetTransactionSummaryQuery
+        {
+            CustomerId = GetCustomerId(),
+            Year = year,
+            Month = month
+        });
+
+        return Ok(result);
+    }
+
+    [HttpGet("{id:guid}")]
+    public async Task<ActionResult<TransactionResponseDto>> GetTransactionById(Guid id)
+    {
+        var result = await _mediator.Send(new GetTransactionByIdQuery
+        {
+            CustomerId = GetCustomerId(),
+            TransactionId = id
+        });
+
+        return Ok(result);
     }
 
     [HttpPost]
@@ -30,15 +65,13 @@ public class TransactionsController : ControllerBase
     {
         var command = new CreateTransactionCommand
         {
-            CustomerId = User.GetCustomerId(),
             WalletId = dto.WalletId,
             CategoryId = dto.CategoryId,
-            TransactionType = dto.EffectiveType,
+            SourceId = dto.SourceId,
+            TransactionType = dto.TransactionType,
             Amount = dto.Amount,
             TransactionDate = dto.TransactionDate,
-            Description = dto.Description,
-            Merchant = dto.Merchant,
-            EntryMethod = dto.EntryMethod
+            Note = dto.Note
         };
 
         var result = await _mediator.Send(command);
@@ -46,19 +79,17 @@ public class TransactionsController : ControllerBase
     }
 
     [HttpPut("{id}")]
-    [HttpPatch("{id}")]
     public async Task<ActionResult<TransactionResponseDto>> UpdateTransaction(Guid id, [FromBody] UpdateTransactionDto dto)
     {
         var command = new UpdateTransactionCommand
         {
-            CustomerId = User.GetCustomerId(),
             TransactionId = id,
             CategoryId = dto.CategoryId,
-            TransactionType = dto.EffectiveType,
+            SourceId = dto.SourceId,
+            TransactionType = dto.TransactionType,
             Amount = dto.Amount,
             TransactionDate = dto.TransactionDate,
-            Description = dto.Description,
-            Merchant = dto.Merchant
+            Note = dto.Note
         };
 
         var result = await _mediator.Send(command);
@@ -68,11 +99,7 @@ public class TransactionsController : ControllerBase
     [HttpDelete("{id}")]
     public async Task<ActionResult<bool>> DeleteTransaction(Guid id)
     {
-        var command = new DeleteTransactionCommand
-        {
-            CustomerId = User.GetCustomerId(),
-            TransactionId = id
-        };
+        var command = new DeleteTransactionCommand { TransactionId = id };
         var result = await _mediator.Send(command);
         return Ok(result);
     }
@@ -82,27 +109,23 @@ public class TransactionsController : ControllerBase
     {
         var command = new ClassifyTransactionCommand
         {
-            CustomerId = User.GetCustomerId(),
+            CustomerId = GetCustomerId(),
             TransactionId = id,
-            CategoryId = dto.CategoryId
+            CategoryId = dto.CategoryId,
+            SourceId = dto.SourceId
         };
 
         var result = await _mediator.Send(command);
         return Ok(result);
     }
 
-    [HttpPost("transfer")]
-    public async Task<ActionResult<ApiResponse<TransferWalletResponse>>> TransferBetweenWallets(
-        [FromBody] TransferWalletRequest request,
-        CancellationToken cancellationToken)
+    private Guid GetCustomerId()
     {
-        var result = await _walletService.TransferAsync(
-            User.GetCustomerId(),
-            request,
-            cancellationToken);
+        var claimValue = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
 
-        return Ok(ApiResponse<TransferWalletResponse>.Ok(
-            result,
-            "Transfer completed successfully"));
+        if (!Guid.TryParse(claimValue, out var customerId))
+            return Guid.Empty;
+
+        return customerId;
     }
 }
