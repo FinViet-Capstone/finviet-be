@@ -40,17 +40,58 @@ internal static class TransactionRules
     /// <summary>Income increases the wallet balance; everything else decreases it.</summary>
     public static decimal SignedDelta(string normalizedType, decimal amount)
         => normalizedType == "income" ? amount : -amount;
+
+    /// <summary>Category that may only be attached by automated goal contributions.</summary>
+    public const string GoalCategoryId = "cat_savings_goal";
+
+    /// <summary>
+    /// Enforces the v2.1 category rules for a manually created/edited transaction:
+    /// the goal category is auto-only, and category.type must match the transaction type
+    /// for income/expense rows.
+    /// </summary>
+    public static async Task ValidateCategoryAsync(
+        ICategoryService categoryService,
+        string? categoryId,
+        string normalizedType,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(categoryId))
+            return;
+
+        if (string.Equals(categoryId, GoalCategoryId, StringComparison.OrdinalIgnoreCase))
+            throw new BusinessRuleException(
+                "cat_savings_goal is reserved for savings-goal contributions and cannot be set manually.",
+                "goal_transaction_locked");
+
+        var category = await categoryService.GetCategoryByIdAsync(categoryId, cancellationToken);
+        if (category is null)
+            throw new NotFoundException("Category", categoryId);
+
+        // Only income/expense rows carry a category that must match; transfers have none.
+        if ((normalizedType == "income" || normalizedType == "expense")
+            && !string.Equals(category.Type, normalizedType, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new BusinessRuleException(
+                $"Category '{categoryId}' is of type '{category.Type}', which does not match transaction type '{normalizedType}'.",
+                "category_type_mismatch");
+        }
+    }
 }
 
 public class CreateTransactionHandler : IRequestHandler<CreateTransactionCommand, TransactionResponseDto>
 {
     private readonly ITransactionRepository _transactionRepository;
     private readonly IWalletRepository _walletRepository;
+    private readonly ICategoryService _categoryService;
 
-    public CreateTransactionHandler(ITransactionRepository transactionRepository, IWalletRepository walletRepository)
+    public CreateTransactionHandler(
+        ITransactionRepository transactionRepository,
+        IWalletRepository walletRepository,
+        ICategoryService categoryService)
     {
         _transactionRepository = transactionRepository;
         _walletRepository = walletRepository;
+        _categoryService = categoryService;
     }
 
     public async Task<TransactionResponseDto> Handle(CreateTransactionCommand request, CancellationToken cancellationToken)
@@ -60,6 +101,8 @@ public class CreateTransactionHandler : IRequestHandler<CreateTransactionCommand
         var wallet = await _walletRepository.GetByIdAsync(request.WalletId, cancellationToken);
         if (wallet == null)
             throw new NotFoundException("Wallet", request.WalletId);
+
+        await TransactionRules.ValidateCategoryAsync(_categoryService, request.CategoryId, normalizedType, cancellationToken);
 
         var transaction = await _transactionRepository.CreateAsync(
             request.WalletId,
@@ -84,11 +127,16 @@ public class UpdateTransactionHandler : IRequestHandler<UpdateTransactionCommand
 {
     private readonly ITransactionRepository _transactionRepository;
     private readonly IWalletRepository _walletRepository;
+    private readonly ICategoryService _categoryService;
 
-    public UpdateTransactionHandler(ITransactionRepository transactionRepository, IWalletRepository walletRepository)
+    public UpdateTransactionHandler(
+        ITransactionRepository transactionRepository,
+        IWalletRepository walletRepository,
+        ICategoryService categoryService)
     {
         _transactionRepository = transactionRepository;
         _walletRepository = walletRepository;
+        _categoryService = categoryService;
     }
 
     public async Task<TransactionResponseDto> Handle(UpdateTransactionCommand request, CancellationToken cancellationToken)
@@ -98,6 +146,8 @@ public class UpdateTransactionHandler : IRequestHandler<UpdateTransactionCommand
         var transaction = await _transactionRepository.GetByIdAsync(request.TransactionId, cancellationToken);
         if (transaction == null)
             throw new NotFoundException("Transaction", request.TransactionId);
+
+        await TransactionRules.ValidateCategoryAsync(_categoryService, request.CategoryId, normalizedType, cancellationToken);
 
         var wallet = await _walletRepository.GetByIdAsync(transaction.WalletId, cancellationToken);
         if (wallet == null)

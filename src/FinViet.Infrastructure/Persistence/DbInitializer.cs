@@ -39,6 +39,16 @@ public static class DbInitializer
             .ThenBy(Path.GetFileName)
             .ToArray();
 
+        // Once the v2.1 rename (V11) has run, the singular `category`/`transaction`
+        // tables no longer exist, so migrations V2–V10 (which ALTER them) would fail
+        // on every subsequent startup. Skip everything below the rename in that case.
+        if (await IsCategoryTransactionV21AppliedAsync(db, cancellationToken))
+        {
+            files = files
+                .Where(file => GetMigrationVersion(file) >= 11)
+                .ToArray();
+        }
+
         foreach (var file in files)
         {
             var name = Path.GetFileName(file);
@@ -78,6 +88,36 @@ public static class DbInitializer
         return int.TryParse(versionText, out var version)
             ? version
             : int.MaxValue;
+    }
+
+    /// <summary>
+    /// True once the schema has been migrated to v2.1, i.e. the plural `categories`
+    /// table exists and the legacy singular `category` table has been renamed away.
+    /// </summary>
+    private static async Task<bool> IsCategoryTransactionV21AppliedAsync(
+        FinVietDbContext db,
+        CancellationToken cancellationToken)
+    {
+        var connection = db.Database.GetDbConnection();
+        var shouldClose = connection.State == System.Data.ConnectionState.Closed;
+
+        if (shouldClose)
+            await connection.OpenAsync(cancellationToken);
+
+        try
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText =
+                "SELECT to_regclass('public.categories') IS NOT NULL AND to_regclass('public.category') IS NULL";
+
+            var result = await command.ExecuteScalarAsync(cancellationToken);
+            return result is bool applied && applied;
+        }
+        finally
+        {
+            if (shouldClose)
+                await connection.CloseAsync();
+        }
     }
 
     private static async Task SeedAsync(
