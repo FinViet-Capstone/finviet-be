@@ -33,12 +33,6 @@ public partial class Transaction
 
     public DateTime UpdatedAt { get; set; }
 
-    public Guid? SourceId { get; set; }
-
-    public Guid? BatchId { get; set; }
-
-    public Guid? ReportId { get; set; }
-
     public string SourceChannel
     {
         get => EntryMethod;
@@ -63,17 +57,11 @@ public partial class Transaction
 
     public string? AiCategoryGuess { get; set; }
 
-    public virtual ImportBatch? Batch { get; set; }
-
     public virtual Category? Category { get; set; }
 
     public virtual ICollection<CategoryCorrectionLog> CategoryCorrectionLogs { get; set; } = new List<CategoryCorrectionLog>();
 
     public virtual Customer? Customer { get; set; }
-
-    public virtual AiReport? Report { get; set; }
-
-    public virtual IncomeSource? Source { get; set; }
 
     public virtual Wallet? Wallet { get; set; }
 }

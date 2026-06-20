@@ -1,4 +1,5 @@
 using FinViet.Application.Interfaces;
+using FinViet.Domain.Enums;
 using FinViet.Infrastructure.ExternalServices;
 using FinViet.Infrastructure.ExternalServices.Gemini;
 using FinViet.Infrastructure.ExternalServices.Notification;
@@ -12,6 +13,7 @@ using FinViet.Infrastructure.Services.Background;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Npgsql;
 
 namespace FinViet.Infrastructure;
 
@@ -21,9 +23,23 @@ public static class DependencyInjection
         this IServiceCollection services,
         IConfiguration configuration)
     {
-        // Database
+        // Database — build an Npgsql data source so Postgres enums can be mapped to CLR enums.
+        // Default snake_case name translator maps e.g. VerifyEmail -> verify_email.
+        var dataSourceBuilder = new NpgsqlDataSourceBuilder(
+            configuration.GetConnectionString("DefaultConnection"));
+        dataSourceBuilder.MapEnum<EmailTokenType>("email_token_type");
+        dataSourceBuilder.MapEnum<Gender>("gender");
+        dataSourceBuilder.MapEnum<AppLanguage>("app_language");
+        dataSourceBuilder.MapEnum<AppTheme>("app_theme");
+        dataSourceBuilder.MapEnum<SepaySyncStatus>("sepay_sync_status");
+        // Remaining Postgres enums (transaction_type, category_type, wallet_type, notification_type,
+        // chat_role, score_view, score_color, subscription_status, category_source, entry_method...)
+        // are handled as plain text via EnableUnmappedTypes + HasColumnType on each column.
+        dataSourceBuilder.EnableUnmappedTypes();
+        var dataSource = dataSourceBuilder.Build();
+
         services.AddDbContext<FinVietDbContext>(options =>
-            options.UseNpgsql(configuration.GetConnectionString("DefaultConnection")));
+            options.UseNpgsql(dataSource));
 
         // JWT
         services.AddScoped<IJwtTokenService, JwtTokenService>();
@@ -53,9 +69,8 @@ public static class DependencyInjection
         services.AddScoped<IWalletService, WalletService>();
         services.AddScoped<IBudgetService, BudgetService>();
 
-        // Category & Income Source Services
+        // Category & Category Request Services
         services.AddScoped<ICategoryService, CategoryService>();
-        services.AddScoped<IIncomeSourceService, IncomeSourceService>();
         services.AddScoped<ICategoryRequestService, CategoryRequestService>();
 
         // Saving Goals & Notifications
@@ -76,8 +91,6 @@ public static class DependencyInjection
             http.Timeout = TimeSpan.FromSeconds(timeout);
         });
 
-        services.AddScoped<IAiRateLimiter, AiRateLimiter>();
-        services.AddScoped<IAiClassificationQueue, AiClassificationQueue>();
         services.AddScoped<IAiCategorizationService, AiCategorizationService>();
         services.AddScoped<IBeneficiaryRuleService, BeneficiaryRuleService>();
         services.AddScoped<ISpendingScoreService, SpendingScoreService>();
@@ -85,9 +98,6 @@ public static class DependencyInjection
         services.AddScoped<IAiChatService, AiChatService>();
         services.AddScoped<IAiReportNotifier, FirebaseAiReportNotifier>();
 
-        // Shared in-process signal for the classification queue (singleton bridge to the processor).
-        services.AddSingleton<ClassificationQueueSignal>();
-        services.AddHostedService<ClassificationQueueProcessor>();
         services.AddHostedService<WeeklyReportScheduler>();
 
         return services;

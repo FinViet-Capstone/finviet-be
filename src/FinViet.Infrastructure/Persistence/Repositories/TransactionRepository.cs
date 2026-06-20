@@ -170,7 +170,7 @@ public class TransactionRepository : ITransactionRepository
         return transaction == null ? null! : MapToDto(transaction);
     }
 
-    public async Task<TransactionResponseDto> CreateAsync(Guid walletId, string? categoryId, Guid? sourceId, string transactionType, decimal amount, DateTime transactionDate, string note, CancellationToken cancellationToken = default)
+    public async Task<TransactionResponseDto> CreateAsync(Guid walletId, string? categoryId, string transactionType, decimal amount, DateTime transactionDate, string note, CancellationToken cancellationToken = default)
     {
         var wallet = await _context.Wallets.FindAsync(new object[] { walletId }, cancellationToken: cancellationToken);
         var transaction = new Transaction
@@ -179,7 +179,6 @@ public class TransactionRepository : ITransactionRepository
             CustomerId = wallet?.CustomerId ?? Guid.Empty,
             WalletId = walletId,
             CategoryId = categoryId,
-            SourceId = sourceId,
             TransactionType = NormalizeType(transactionType),
             EntryMethod = "manual",
             Amount = amount,
@@ -194,14 +193,13 @@ public class TransactionRepository : ITransactionRepository
         return MapToDto(transaction);
     }
 
-    public async Task<TransactionResponseDto> UpdateAsync(Guid transactionId, string? categoryId, Guid? sourceId, string transactionType, decimal amount, DateTime transactionDate, string note, CancellationToken cancellationToken = default)
+    public async Task<TransactionResponseDto> UpdateAsync(Guid transactionId, string? categoryId, string transactionType, decimal amount, DateTime transactionDate, string note, CancellationToken cancellationToken = default)
     {
         var transaction = await _context.Transactions.FindAsync(new object[] { transactionId }, cancellationToken: cancellationToken);
         if (transaction == null)
             return null!;
 
         transaction.CategoryId = categoryId;
-        transaction.SourceId = sourceId;
         transaction.TransactionType = NormalizeType(transactionType);
         transaction.Amount = amount;
         transaction.TransactionDate = transactionDate;
@@ -224,14 +222,13 @@ public class TransactionRepository : ITransactionRepository
         return true;
     }
 
-    public async Task<TransactionResponseDto?> ClassifyAsync(Guid transactionId, string? categoryId, Guid? sourceId, CancellationToken cancellationToken = default)
+    public async Task<TransactionResponseDto?> ClassifyAsync(Guid transactionId, string? categoryId, CancellationToken cancellationToken = default)
     {
         var transaction = await _context.Transactions.FindAsync(new object[] { transactionId }, cancellationToken: cancellationToken);
         if (transaction == null)
             return null;
 
         transaction.CategoryId = categoryId;
-        transaction.SourceId = sourceId;
         transaction.UpdatedAt = DateTime.UtcNow;
 
         await _context.SaveChangesAsync(cancellationToken);
@@ -257,7 +254,6 @@ public class TransactionRepository : ITransactionRepository
         CustomerId = transaction.CustomerId,
         WalletId = transaction.WalletId,
         CategoryId = transaction.CategoryId,
-        SourceId = transaction.SourceId,
         TransactionType = transaction.TransactionType,
         SourceChannel = transaction.EntryMethod,
         EntryMethod = transaction.EntryMethod,

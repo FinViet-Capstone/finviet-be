@@ -54,7 +54,6 @@ public class GoogleLoginCommandHandler : IRequestHandler<GoogleLoginCommand, Aut
                 IsEmailVerified = firebaseUser.EmailVerified,
                 EmailVerifiedAt = firebaseUser.EmailVerified ? DateTime.UtcNow : null,
                 IsActive        = true,
-                Status          = "ACTIVE",
                 CreatedAt       = DateTime.UtcNow
             };
             _db.Customers.Add(customer);

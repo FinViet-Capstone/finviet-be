@@ -25,9 +25,12 @@ public class GetProfileQueryHandler : IRequestHandler<GetProfileQuery, ProfileDt
             FullName              = c.FullName,
             Email                 = c.Email,
             AvatarUrl             = c.AvatarUrl,
+            Gender                = c.Gender,
+            DateOfBirth           = c.DateOfBirth,
             MonthlyIncomeExpected = c.MonthlyIncomeExpected,
             IsEmailVerified       = c.IsEmailVerified,
             IsActive              = c.IsActive,
+            OnboardingDone        = c.OnboardingDone,
             CreatedAt             = c.CreatedAt
         };
     }

@@ -3,6 +3,7 @@ using FinViet.Application.Common;
 using FinViet.Application.Features.Profile.Commands.UpdateProfile;
 using FinViet.Application.Features.Profile.Commands.UploadAvatar;
 using FinViet.Application.Features.Profile.Queries.GetProfile;
+using FinViet.Domain.Enums;
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -36,7 +37,8 @@ public class ProfileController : ControllerBase
     {
         var customerId = User.GetCustomerId();
         var result     = await _mediator.Send(
-            new UpdateProfileCommand(customerId, request.FullName, request.MonthlyIncomeExpected), ct);
+            new UpdateProfileCommand(customerId, request.FullName, request.MonthlyIncomeExpected,
+                request.Gender, request.DateOfBirth), ct);
 
         return Ok(ApiResponse<object>.Ok(result));
     }
@@ -62,4 +64,8 @@ public class ProfileController : ControllerBase
     }
 }
 
-public record UpdateProfileRequest(string FullName, decimal? MonthlyIncomeExpected);
+public record UpdateProfileRequest(
+    string FullName,
+    decimal? MonthlyIncomeExpected,
+    Gender? Gender = null,
+    DateOnly? DateOfBirth = null);

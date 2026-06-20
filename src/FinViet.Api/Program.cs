@@ -1,5 +1,4 @@
 using FinViet.Api.Middlewares;
-using FinViet.Api.OpenApi;
 using Microsoft.OpenApi.Models;
 
 using System.Text;
@@ -92,8 +91,6 @@ builder.Services.AddSwaggerGen(options =>
             Array.Empty<string>()
         }
     });
-
-    options.OperationFilter<CreateBudgetPlanRequestExampleFilter>();
 });
 
 // CORS (allow frontend)

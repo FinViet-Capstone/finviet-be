@@ -21,6 +21,8 @@ public class UpdateProfileCommandHandler : IRequestHandler<UpdateProfileCommand,
 
         c.FullName              = request.FullName.Trim();
         c.MonthlyIncomeExpected = request.MonthlyIncomeExpected;
+        if (request.Gender.HasValue)      c.Gender      = request.Gender;
+        if (request.DateOfBirth.HasValue) c.DateOfBirth = request.DateOfBirth;
 
         await _db.SaveChangesAsync(cancellationToken);
 
@@ -30,9 +32,12 @@ public class UpdateProfileCommandHandler : IRequestHandler<UpdateProfileCommand,
             FullName              = c.FullName,
             Email                 = c.Email,
             AvatarUrl             = c.AvatarUrl,
+            Gender                = c.Gender,
+            DateOfBirth           = c.DateOfBirth,
             MonthlyIncomeExpected = c.MonthlyIncomeExpected,
             IsEmailVerified       = c.IsEmailVerified,
             IsActive              = c.IsActive,
+            OnboardingDone        = c.OnboardingDone,
             CreatedAt             = c.CreatedAt
         };
     }

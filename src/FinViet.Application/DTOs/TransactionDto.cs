@@ -4,7 +4,6 @@ public class CreateTransactionDto
 {
     public Guid WalletId { get; set; }
     public string? CategoryId { get; set; }
-    public Guid? SourceId { get; set; }
     public string TransactionType { get; set; } = string.Empty;
     public decimal Amount { get; set; }
     public DateTime TransactionDate { get; set; }
@@ -17,7 +16,6 @@ public class CreateTransactionDto
 public class UpdateTransactionDto
 {
     public string? CategoryId { get; set; }
-    public Guid? SourceId { get; set; }
     public string TransactionType { get; set; } = string.Empty;
     public decimal Amount { get; set; }
     public DateTime TransactionDate { get; set; }
@@ -29,7 +27,6 @@ public class UpdateTransactionDto
 public class ClassifyTransactionDto
 {
     public string? CategoryId { get; set; }
-    public Guid? SourceId { get; set; }
 }
 
 public class TransactionResponseDto
@@ -38,7 +35,6 @@ public class TransactionResponseDto
     public Guid CustomerId { get; set; }
     public Guid WalletId { get; set; }
     public string? CategoryId { get; set; }
-    public Guid? SourceId { get; set; }
     public string TransactionType { get; set; } = string.Empty;
     public string SourceChannel { get; set; } = string.Empty;
     public string EntryMethod { get; set; } = string.Empty;

@@ -69,9 +69,12 @@ public class LoginCommandHandler : IRequestHandler<LoginCommand, AuthResponseDto
                 FullName              = customer.FullName,
                 Email                 = customer.Email,
                 AvatarUrl             = customer.AvatarUrl,
+                Gender                = customer.Gender,
+                DateOfBirth           = customer.DateOfBirth,
                 MonthlyIncomeExpected = customer.MonthlyIncomeExpected,
                 IsEmailVerified       = customer.IsEmailVerified,
                 IsActive              = customer.IsActive,
+                OnboardingDone        = customer.OnboardingDone,
                 CreatedAt             = customer.CreatedAt
             }
         };

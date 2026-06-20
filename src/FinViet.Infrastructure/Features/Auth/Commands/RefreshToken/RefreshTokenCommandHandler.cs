@@ -66,9 +66,12 @@ public class RefreshTokenCommandHandler : IRequestHandler<RefreshTokenCommand, A
                 FullName              = customer.FullName,
                 Email                 = customer.Email,
                 AvatarUrl             = customer.AvatarUrl,
+                Gender                = customer.Gender,
+                DateOfBirth           = customer.DateOfBirth,
                 MonthlyIncomeExpected = customer.MonthlyIncomeExpected,
                 IsEmailVerified       = customer.IsEmailVerified,
                 IsActive              = customer.IsActive,
+                OnboardingDone        = customer.OnboardingDone,
                 CreatedAt             = customer.CreatedAt
             }
         };

@@ -1,5 +1,6 @@
 using FinViet.Application.Features.Auth.Commands.ForgotPassword;
 using FinViet.Application.Interfaces;
+using FinViet.Domain.Enums;
 using FinViet.Infrastructure.Persistence.Context;
 using FinViet.Infrastructure.Persistence.Entities;
 using MediatR;
@@ -28,7 +29,7 @@ public class ForgotPasswordCommandHandler : IRequestHandler<ForgotPasswordComman
         // Invalidate old unused reset tokens
         var oldTokens = await _db.EmailVerificationTokens
             .Where(t => t.CustomerId == customer.CustomerId &&
-                        t.TokenType  == "RESET_PASSWORD" &&
+                        t.TokenType  == EmailTokenType.ResetPassword &&
                         t.UsedAt     == null)
             .ToListAsync(cancellationToken);
 
@@ -41,7 +42,7 @@ public class ForgotPasswordCommandHandler : IRequestHandler<ForgotPasswordComman
             TokenId    = Guid.NewGuid(),
             CustomerId = customer.CustomerId,
             Token      = rawToken,
-            TokenType  = "RESET_PASSWORD",
+            TokenType  = EmailTokenType.ResetPassword,
             ExpiresAt  = DateTime.UtcNow.AddHours(1),
             CreatedAt  = DateTime.UtcNow
         });

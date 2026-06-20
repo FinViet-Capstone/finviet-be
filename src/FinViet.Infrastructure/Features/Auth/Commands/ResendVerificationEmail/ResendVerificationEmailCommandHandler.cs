@@ -1,6 +1,7 @@
 using FinViet.Application.Common.Exceptions;
 using FinViet.Application.Features.Auth.Commands.ResendVerificationEmail;
 using FinViet.Application.Interfaces;
+using FinViet.Domain.Enums;
 using FinViet.Infrastructure.Features.Auth;
 using FinViet.Infrastructure.Persistence.Context;
 using FinViet.Infrastructure.Persistence.Entities;
@@ -48,7 +49,7 @@ public class ResendVerificationEmailCommandHandler : IRequestHandler<ResendVerif
 
         var oldTokens = await _db.EmailVerificationTokens
             .Where(t => t.CustomerId == customer.CustomerId
-                     && t.TokenType  == "VERIFY_EMAIL"
+                     && t.TokenType  == EmailTokenType.VerifyEmail
                      && t.UsedAt     == null)
             .ToListAsync(cancellationToken);
 
@@ -62,7 +63,7 @@ public class ResendVerificationEmailCommandHandler : IRequestHandler<ResendVerif
             TokenId    = Guid.NewGuid(),
             CustomerId = customer.CustomerId,
             Token      = code,
-            TokenType  = "VERIFY_EMAIL",
+            TokenType  = EmailTokenType.VerifyEmail,
             ExpiresAt  = now.AddHours(24),
             CreatedAt  = now
         });
@@ -95,7 +96,7 @@ public class ResendVerificationEmailCommandHandler : IRequestHandler<ResendVerif
             code = VerificationCode.Generate();
         }
         while (await _db.EmailVerificationTokens.AnyAsync(t =>
-            t.Token == code && t.TokenType == "VERIFY_EMAIL" &&
+            t.Token == code && t.TokenType == EmailTokenType.VerifyEmail &&
             t.UsedAt == null && t.ExpiresAt > now, ct));
         return code;
     }

@@ -34,6 +34,18 @@ public static class DbInitializer
             return;
         }
 
+        // The v3 schema (Finviet_update) is provisioned externally with plural tables
+        // (customers, wallets, ...) and Postgres enum columns. None of the V2–V13 SQL
+        // migrations apply — they transform the legacy singular schema toward v2.1 and
+        // would fail against v3 (enum vs text casts, customer(customer_id) FKs, ...).
+        // Detect v3 by the plural `customers` table and skip all SQL migrations; seeding
+        // below is idempotent and still runs.
+        if (await IsV3SchemaAppliedAsync(db, cancellationToken))
+        {
+            logger.LogInformation("v3 schema detected (public.customers exists). Skipping SQL migrations.");
+            return;
+        }
+
         var files = Directory.GetFiles(MigrationsFolder, "*.sql")
             .OrderBy(GetMigrationVersion)
             .ThenBy(Path.GetFileName)
@@ -120,6 +132,36 @@ public static class DbInitializer
         }
     }
 
+    /// <summary>
+    /// True when the database is on the v3 schema, identified by the plural
+    /// <c>public.customers</c> table. The v2.1 schema still used singular <c>customer</c>,
+    /// so this only matches the externally-provisioned v3 database.
+    /// </summary>
+    private static async Task<bool> IsV3SchemaAppliedAsync(
+        FinVietDbContext db,
+        CancellationToken cancellationToken)
+    {
+        var connection = db.Database.GetDbConnection();
+        var shouldClose = connection.State == System.Data.ConnectionState.Closed;
+
+        if (shouldClose)
+            await connection.OpenAsync(cancellationToken);
+
+        try
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = "SELECT to_regclass('public.customers') IS NOT NULL";
+
+            var result = await command.ExecuteScalarAsync(cancellationToken);
+            return result is bool applied && applied;
+        }
+        finally
+        {
+            if (shouldClose)
+                await connection.CloseAsync();
+        }
+    }
+
     private static async Task SeedAsync(
         FinVietDbContext db,
         ILogger logger,
@@ -187,7 +229,6 @@ public static class DbInitializer
                 FullName              = s.FullName,
                 Email                 = email,
                 PasswordHash          = BCrypt.Net.BCrypt.HashPassword(s.Password),
-                Status                = "ACTIVE",
                 IsEmailVerified       = true,
                 EmailVerifiedAt       = DateTime.UtcNow,
                 IsActive              = true,

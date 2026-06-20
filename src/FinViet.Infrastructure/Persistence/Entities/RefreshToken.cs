@@ -2,6 +2,7 @@ namespace FinViet.Infrastructure.Persistence.Entities;
 
 public class RefreshToken
 {
+    /// <summary>Maps to column <c>id</c> in the v3 schema.</summary>
     public Guid TokenId { get; set; }
     public Guid CustomerId { get; set; }
     public string Token { get; set; } = null!;

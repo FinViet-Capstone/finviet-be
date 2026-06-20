@@ -19,7 +19,6 @@ public class DeleteAccountCommandHandler : IRequestHandler<DeleteAccountCommand,
         if (c is null) throw new NotFoundException("Customer", request.CustomerId);
 
         c.IsActive  = false;
-        c.Status    = "DELETED";
         c.DeletedAt = DateTime.UtcNow;
 
         var tokens = await _db.RefreshTokens

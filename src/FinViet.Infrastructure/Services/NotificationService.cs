@@ -31,9 +31,11 @@ public class NotificationService : INotificationService
         {
             NotificationId = Guid.NewGuid(),
             CustomerId = customerId,
-            GoalId = goalId,
+            Type = "announcement",
             Title = title,
             Message = message,
+            EntityType = goalId.HasValue ? "goal" : null,
+            EntityId = goalId,
             IsRead = false,
             CreatedAt = DateTime.UtcNow
         };

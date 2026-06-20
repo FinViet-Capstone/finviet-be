@@ -19,7 +19,6 @@ public class DeactivateAccountCommandHandler : IRequestHandler<DeactivateAccount
         if (c is null) throw new NotFoundException("Customer", request.TargetCustomerId);
 
         c.IsActive = false;
-        c.Status   = "INACTIVE";
 
         var tokens = await _db.RefreshTokens
             .Where(t => t.CustomerId == request.TargetCustomerId && !t.IsRevoked)

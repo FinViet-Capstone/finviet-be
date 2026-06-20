@@ -67,7 +67,6 @@ public class TransactionsController : ControllerBase
         {
             WalletId = dto.WalletId,
             CategoryId = dto.CategoryId,
-            SourceId = dto.SourceId,
             TransactionType = dto.TransactionType,
             Amount = dto.Amount,
             TransactionDate = dto.TransactionDate,
@@ -85,7 +84,6 @@ public class TransactionsController : ControllerBase
         {
             TransactionId = id,
             CategoryId = dto.CategoryId,
-            SourceId = dto.SourceId,
             TransactionType = dto.TransactionType,
             Amount = dto.Amount,
             TransactionDate = dto.TransactionDate,
@@ -111,8 +109,7 @@ public class TransactionsController : ControllerBase
         {
             CustomerId = GetCustomerId(),
             TransactionId = id,
-            CategoryId = dto.CategoryId,
-            SourceId = dto.SourceId
+            CategoryId = dto.CategoryId
         };
 
         var result = await _mediator.Send(command);

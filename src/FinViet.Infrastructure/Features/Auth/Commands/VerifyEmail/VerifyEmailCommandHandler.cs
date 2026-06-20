@@ -1,5 +1,6 @@
 using FinViet.Application.Common.Exceptions;
 using FinViet.Application.Features.Auth.Commands.VerifyEmail;
+using FinViet.Domain.Enums;
 using FinViet.Infrastructure.Persistence.Context;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
@@ -18,7 +19,7 @@ public class VerifyEmailCommandHandler : IRequestHandler<VerifyEmailCommand, str
             .Include(t => t.Customer)
             .FirstOrDefaultAsync(t =>
                 t.Token     == request.Token &&
-                t.TokenType == "VERIFY_EMAIL",
+                t.TokenType == EmailTokenType.VerifyEmail,
                 cancellationToken);
 
         if (token is null)

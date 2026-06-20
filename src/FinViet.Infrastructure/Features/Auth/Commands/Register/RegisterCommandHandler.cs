@@ -1,6 +1,7 @@
 using FinViet.Application.Common.Exceptions;
 using FinViet.Application.Features.Auth.Commands.Register;
 using FinViet.Application.Interfaces;
+using FinViet.Domain.Enums;
 using FinViet.Infrastructure.Features.Auth;
 using FinViet.Infrastructure.Persistence.Context;
 using FinViet.Infrastructure.Persistence.Entities;
@@ -46,7 +47,6 @@ public class RegisterCommandHandler : IRequestHandler<RegisterCommand, string>
             FullName        = request.FullName.Trim(),
             Email           = normalizedEmail,
             PasswordHash    = BCrypt.Net.BCrypt.HashPassword(request.Password),
-            Status          = "ACTIVE",
             IsEmailVerified = false,
             IsActive        = true,
             CreatedAt       = DateTime.UtcNow
@@ -61,7 +61,7 @@ public class RegisterCommandHandler : IRequestHandler<RegisterCommand, string>
             TokenId    = Guid.NewGuid(),
             CustomerId = customer.CustomerId,
             Token      = code,
-            TokenType  = "VERIFY_EMAIL",
+            TokenType  = EmailTokenType.VerifyEmail,
             ExpiresAt  = now.AddHours(24),
             CreatedAt  = now
         };
@@ -104,7 +104,7 @@ public class RegisterCommandHandler : IRequestHandler<RegisterCommand, string>
             code = VerificationCode.Generate();
         }
         while (await _db.EmailVerificationTokens.AnyAsync(t =>
-            t.Token == code && t.TokenType == "VERIFY_EMAIL" &&
+            t.Token == code && t.TokenType == EmailTokenType.VerifyEmail &&
             t.UsedAt == null && t.ExpiresAt > now, ct));
         return code;
     }

@@ -112,12 +112,6 @@ public class SpendingScoreService : ISpendingScoreService
     {
         var windowStart = asOf.AddDays(-30);
 
-        // Recurring beneficiary names are excluded as "fixed bills".
-        var recurringNames = await _db.BeneficiaryRules
-            .Where(r => r.CustomerId == customerId && r.IsRecurring)
-            .Select(r => r.MatchText)
-            .ToListAsync(ct);
-
         var rows = await _db.Transactions
             .Join(_db.Wallets, t => t.WalletId, w => w.WalletId, (t, w) => new { t, w.CustomerId })
             .Where(x => x.CustomerId == customerId
@@ -125,7 +119,7 @@ public class SpendingScoreService : ISpendingScoreService
                         && x.t.TransactionDate != null
                         && x.t.TransactionDate >= DateRange.StartUtc(windowStart)
                         && x.t.TransactionDate <= DateRange.EndUtc(asOf))
-            .Select(x => new { x.t.TransactionDate, x.t.Amount, x.t.BeneficiaryName })
+            .Select(x => new { x.t.TransactionDate, x.t.Amount })
             .ToListAsync(ct);
 
         // Cold start: need at least 7 distinct days of data.
@@ -133,11 +127,7 @@ public class SpendingScoreService : ISpendingScoreService
         if (distinctDays < 7)
             return null;
 
-        bool IsRecurring(string? name) =>
-            name is not null && recurringNames.Any(rn => name.Contains(rn, StringComparison.OrdinalIgnoreCase));
-
         var dailyTotals = rows
-            .Where(r => !IsRecurring(r.BeneficiaryName))
             .GroupBy(r => DateOnly.FromDateTime(r.TransactionDate!.Value))
             .ToDictionary(g => g.Key, g => g.Sum(x => x.Amount));
 
@@ -176,24 +166,18 @@ public class SpendingScoreService : ISpendingScoreService
     // ── Metric 2: Budget Adherence (pacing) ──────────────────────────────────────────
     private async Task<decimal?> ComputeBudgetAsync(Guid customerId, DateOnly start, DateOnly end, CancellationToken ct)
     {
-        var plan = await _db.BudgetPlans
-            .Where(p => p.CustomerId == customerId && p.StartDate <= end && p.EndDate >= start)
-            .OrderByDescending(p => p.StartDate)
-            .FirstOrDefaultAsync(ct);
-        if (plan is null)
-            return null;
-
-        var budgets = await _db.CategoryBudgets
-            .Where(cb => cb.PlanId == plan.PlanId && cb.CategoryId != null)
-            .Select(cb => new { cb.CategoryId, cb.AmountLimit })
+        // Flat recurring budgets: one row per (category[, wallet]) with a monthly limit.
+        var budgets = await _db.Budgets
+            .Where(b => b.CustomerId == customerId)
+            .Select(b => new { b.CategoryId, b.MonthlyLimit })
             .ToListAsync(ct);
         if (budgets.Count == 0)
             return null;
 
-        // User bucket overrides (Needs/Wants) layered over category.expense_class.
-        var userBuckets = await _db.UserCategoryBuckets
-            .Where(u => u.CustomerId == customerId)
-            .ToDictionaryAsync(u => u.CategoryId, u => u.Bucket, ct);
+        // Effective bucket per category: customer override (customer_categories) over category.default_bucket.
+        var userBuckets = await _db.CustomerCategories
+            .Where(u => u.CustomerId == customerId && u.IsActive)
+            .ToDictionaryAsync(u => u.CategoryId, u => u.BucketId, ct);
 
         var categories = await _db.Categories
             .Where(c => c.Type == "expense")
@@ -229,11 +213,14 @@ public class SpendingScoreService : ISpendingScoreService
         foreach (var b in budgets)
         {
             var bucket = b.CategoryId is null ? null : BucketOf(b.CategoryId);
-            if (bucket is null || catInfo[b.CategoryId!].CategoryName == Uncategorized)
+            if (bucket is null ||
+                (catInfo.TryGetValue(b.CategoryId!, out var info) && info.CategoryName == Uncategorized))
                 continue;
-            bucketLimit[bucket] = bucketLimit.GetValueOrDefault(bucket) + b.AmountLimit;
+
+            var key = NormalizeBucket(bucket);
+            bucketLimit[key] = bucketLimit.GetValueOrDefault(key) + b.MonthlyLimit;
             var spent = actualByCat.GetValueOrDefault(b.CategoryId!);
-            bucketActual[bucket] = bucketActual.GetValueOrDefault(bucket) + spent;
+            bucketActual[key] = bucketActual.GetValueOrDefault(key) + spent;
         }
 
         if (bucketLimit.Count == 0)
@@ -255,6 +242,21 @@ public class SpendingScoreService : ISpendingScoreService
         }
 
         return weightTotal > 0m ? Math.Round(weightedSum / weightTotal, 2) : (decimal?)null;
+    }
+
+    // Normalize a bucket id / expense_class to the canonical NEEDS/WANTS/SAVINGS key.
+    private static string NormalizeBucket(string? bucket)
+    {
+        if (string.IsNullOrWhiteSpace(bucket))
+            return "UNASSIGNED";
+
+        return bucket.Trim().ToUpperInvariant() switch
+        {
+            "NEED" or "NEEDS" => "NEEDS",
+            "WANT" or "WANTS" => "WANTS",
+            "SAVING" or "SAVINGS" => "SAVINGS",
+            _ => "UNASSIGNED"
+        };
     }
 
     private static decimal PacingScore(decimal actual, decimal expected)

@@ -107,7 +107,6 @@ public class CreateTransactionHandler : IRequestHandler<CreateTransactionCommand
         var transaction = await _transactionRepository.CreateAsync(
             request.WalletId,
             request.CategoryId,
-            request.SourceId,
             normalizedType,
             request.Amount,
             request.TransactionDate,
@@ -161,7 +160,6 @@ public class UpdateTransactionHandler : IRequestHandler<UpdateTransactionCommand
         var updatedTransaction = await _transactionRepository.UpdateAsync(
             request.TransactionId,
             request.CategoryId,
-            request.SourceId,
             normalizedType,
             request.Amount,
             request.TransactionDate,
@@ -212,18 +210,15 @@ public class ClassifyTransactionHandler : IRequestHandler<ClassifyTransactionCom
     private readonly ITransactionRepository _transactionRepository;
     private readonly IWalletRepository _walletRepository;
     private readonly ICategoryService _categoryService;
-    private readonly IIncomeSourceService _incomeSourceService;
 
     public ClassifyTransactionHandler(
         ITransactionRepository transactionRepository,
         IWalletRepository walletRepository,
-        ICategoryService categoryService,
-        IIncomeSourceService incomeSourceService)
+        ICategoryService categoryService)
     {
         _transactionRepository = transactionRepository;
         _walletRepository = walletRepository;
         _categoryService = categoryService;
-        _incomeSourceService = incomeSourceService;
     }
 
     public async Task<TransactionResponseDto> Handle(ClassifyTransactionCommand request, CancellationToken cancellationToken)
@@ -247,18 +242,9 @@ public class ClassifyTransactionHandler : IRequestHandler<ClassifyTransactionCom
                 throw new NotFoundException("Category", request.CategoryId);
         }
 
-        if (request.SourceId.HasValue)
-        {
-            // GetIncomeSourceByIdAsync is scoped by customerId, so this also enforces ownership of the source.
-            var source = await _incomeSourceService.GetIncomeSourceByIdAsync(request.CustomerId, request.SourceId.Value, cancellationToken);
-            if (source == null)
-                throw new NotFoundException("Income source", request.SourceId.Value);
-        }
-
         var classified = await _transactionRepository.ClassifyAsync(
             request.TransactionId,
             request.CategoryId,
-            request.SourceId,
             cancellationToken);
 
         return classified!;

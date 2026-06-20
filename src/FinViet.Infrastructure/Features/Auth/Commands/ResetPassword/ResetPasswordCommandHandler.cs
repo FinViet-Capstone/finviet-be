@@ -1,5 +1,6 @@
 using FinViet.Application.Common.Exceptions;
 using FinViet.Application.Features.Auth.Commands.ResetPassword;
+using FinViet.Domain.Enums;
 using FinViet.Infrastructure.Persistence.Context;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
@@ -20,7 +21,7 @@ public class ResetPasswordCommandHandler : IRequestHandler<ResetPasswordCommand,
             .Include(t => t.Customer)
             .FirstOrDefaultAsync(t =>
                 t.Token     == request.Token &&
-                t.TokenType == "RESET_PASSWORD",
+                t.TokenType == EmailTokenType.ResetPassword,
                 cancellationToken);
 
         if (token is null)                     throw new NotFoundException("Reset token not found.");

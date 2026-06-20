@@ -17,22 +17,19 @@ public class AiController : ControllerBase
     private readonly ISpendingScoreService _score;
     private readonly IWeeklyReportService _reports;
     private readonly IAiChatService _chat;
-    private readonly IAiRateLimiter _rateLimiter;
 
     public AiController(
         IAiCategorizationService categorization,
         IBeneficiaryRuleService rules,
         ISpendingScoreService score,
         IWeeklyReportService reports,
-        IAiChatService chat,
-        IAiRateLimiter rateLimiter)
+        IAiChatService chat)
     {
         _categorization = categorization;
         _rules = rules;
         _score = score;
         _reports = reports;
         _chat = chat;
-        _rateLimiter = rateLimiter;
     }
 
     // ── Categorization ───────────────────────────────────────────────────────────────
@@ -40,8 +37,6 @@ public class AiController : ControllerBase
     public async Task<ActionResult<ApiResponse<AiClassificationResult>>> Preview(
         [FromBody] CategorizePreviewRequest request, CancellationToken cancellationToken)
     {
-        var customerId = User.GetCustomerId();
-        await _rateLimiter.CheckAndRecordAsync(customerId, "CATEGORIZE", cancellationToken);
         var result = await _categorization.PreviewAsync(request.Input, cancellationToken);
         return Ok(ApiResponse<AiClassificationResult>.Ok(result, "Phân loại gợi ý thành công."));
     }
@@ -50,8 +45,6 @@ public class AiController : ControllerBase
     public async Task<ActionResult<ApiResponse<CategorizationOutcome>>> Categorize(
         [FromRoute] Guid transactionId, CancellationToken cancellationToken)
     {
-        var customerId = User.GetCustomerId();
-        await _rateLimiter.CheckAndRecordAsync(customerId, "CATEGORIZE", cancellationToken);
         var outcome = await _categorization.CategorizeTransactionAsync(transactionId, cancellationToken);
         return Ok(ApiResponse<CategorizationOutcome>.Ok(outcome, "Phân loại giao dịch hoàn tất."));
     }
@@ -65,34 +58,6 @@ public class AiController : ControllerBase
         var customerId = User.GetCustomerId();
         var outcome = await _rules.OverrideCategoryAsync(customerId, transactionId, request, cancellationToken);
         return Ok(ApiResponse<CategorizationOutcome>.Ok(outcome, "Cập nhật danh mục thành công."));
-    }
-
-    // ── Beneficiary rules ────────────────────────────────────────────────────────────
-    [HttpGet("rules")]
-    public async Task<ActionResult<ApiResponse<IReadOnlyList<BeneficiaryRuleResponse>>>> GetRules(
-        CancellationToken cancellationToken)
-    {
-        var customerId = User.GetCustomerId();
-        var rules = await _rules.GetRulesAsync(customerId, cancellationToken);
-        return Ok(ApiResponse<IReadOnlyList<BeneficiaryRuleResponse>>.Ok(rules, "Danh sách quy tắc."));
-    }
-
-    [HttpPut("rules")]
-    public async Task<ActionResult<ApiResponse<BeneficiaryRuleResponse>>> UpsertRule(
-        [FromBody] UpsertBeneficiaryRuleRequest request, CancellationToken cancellationToken)
-    {
-        var customerId = User.GetCustomerId();
-        var rule = await _rules.UpsertRuleAsync(customerId, request, cancellationToken);
-        return Ok(ApiResponse<BeneficiaryRuleResponse>.Ok(rule, "Lưu quy tắc thành công."));
-    }
-
-    [HttpDelete("rules/{ruleId:guid}")]
-    public async Task<ActionResult<ApiResponse<object?>>> DeleteRule(
-        [FromRoute] Guid ruleId, CancellationToken cancellationToken)
-    {
-        var customerId = User.GetCustomerId();
-        await _rules.DeleteRuleAsync(customerId, ruleId, cancellationToken);
-        return Ok(ApiResponse<object?>.Ok(null, "Đã xóa quy tắc."));
     }
 
     // ── Spending score ───────────────────────────────────────────────────────────────
@@ -134,7 +99,6 @@ public class AiController : ControllerBase
         CancellationToken cancellationToken)
     {
         var customerId = User.GetCustomerId();
-        await _rateLimiter.CheckAndRecordAsync(customerId, "REPORT", cancellationToken);
 
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
         int diff = ((int)today.DayOfWeek + 6) % 7;
@@ -152,7 +116,6 @@ public class AiController : ControllerBase
         [FromBody] ChatAskRequest request, CancellationToken cancellationToken)
     {
         var customerId = User.GetCustomerId();
-        await _rateLimiter.CheckAndRecordAsync(customerId, "CHAT", cancellationToken);
         var reply = await _chat.AskAsync(customerId, request.Question, cancellationToken);
         return Ok(ApiResponse<ChatMessageResponse>.Ok(reply, "Phản hồi từ trợ lý."));
     }
