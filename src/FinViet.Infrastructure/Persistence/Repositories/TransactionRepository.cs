@@ -313,7 +313,7 @@ public class WalletRepository : IWalletRepository
             WalletId = wallet.WalletId,
             CustomerId = GetRequiredCustomerId(wallet),
             WalletName = wallet.WalletName,
-            WalletType = wallet.WalletType,
+            WalletType = wallet.WalletType == FinViet.Domain.Enums.WalletType.SepayLinked ? "sepay_linked" : "basic",
             Balance = GetRequiredBalance(wallet)
         };
     }
@@ -335,7 +335,7 @@ public class WalletRepository : IWalletRepository
             WalletId = wallet.WalletId,
             CustomerId = GetRequiredCustomerId(wallet),
             WalletName = wallet.WalletName,
-            WalletType = wallet.WalletType,
+            WalletType = wallet.WalletType == FinViet.Domain.Enums.WalletType.SepayLinked ? "sepay_linked" : "basic",
             Balance = GetRequiredBalance(wallet)
         };
     }

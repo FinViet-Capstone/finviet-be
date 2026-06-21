@@ -581,7 +581,6 @@ public partial class FinVietDbContext : DbContext
                 .HasColumnName("name");
             entity.Property(e => e.WalletType)
                 .IsRequired()
-                .HasColumnType("wallet_type")
                 .HasColumnName("type");
             entity.Property(e => e.IsDeleted)
                 .HasDefaultValue(false)
