@@ -1,6 +1,7 @@
 using FinViet.Application.Common.Exceptions;
 using FinViet.Application.DTOs.Budgets;
 using FinViet.Application.Interfaces;
+using FinViet.Domain.Enums;
 using FinViet.Infrastructure.Persistence.Context;
 using FinViet.Infrastructure.Persistence.Entities;
 using Microsoft.EntityFrameworkCore;
@@ -299,7 +300,7 @@ public class BudgetService : IBudgetService
                 on transaction.WalletId equals wallet.WalletId
             where transaction.CategoryId != null
                   && ids.Contains(transaction.CategoryId)
-                  && transaction.TransactionType == "expense"
+                  && transaction.TransactionType == TransactionType.Expense
                   && transaction.TransactionDate >= window.StartUtc
                   && transaction.TransactionDate < window.EndExclusiveUtc
                   && wallet.CustomerId == customerId
@@ -328,7 +329,7 @@ public class BudgetService : IBudgetService
                   && transaction.CategoryId != null
                   && transaction.CategoryId != SavingsGoalCategoryId
                   && category.CategoryName != UncategorizedName
-                  && transaction.TransactionType == "expense"
+                  && transaction.TransactionType == TransactionType.Expense
                   && transaction.TransactionDate >= window.StartUtc
                   && transaction.TransactionDate < window.EndExclusiveUtc
             select new
@@ -385,7 +386,7 @@ public class BudgetService : IBudgetService
             join wallet in _dbContext.Wallets.AsNoTracking()
                 on transaction.WalletId equals wallet.WalletId
             where wallet.CustomerId == customerId
-                  && transaction.TransactionType == "expense"
+                  && transaction.TransactionType == TransactionType.Expense
                   && (transaction.CategoryId == null ||
                       (uncategorizedId != null && transaction.CategoryId == uncategorizedId))
                   && transaction.TransactionDate >= window.StartUtc
@@ -435,7 +436,7 @@ public class BudgetService : IBudgetService
         if (category is null)
             throw new NotFoundException("Category", categoryId);
 
-        if (!category.Type.Equals("expense", StringComparison.OrdinalIgnoreCase))
+        if (category.Type != CategoryType.Expense)
             throw new ValidationException("Budgets can only be created for expense categories.");
 
         if (category.CategoryId == SavingsGoalCategoryId ||
@@ -474,7 +475,7 @@ public class BudgetService : IBudgetService
         var categories = await _dbContext.Categories
             .AsNoTracking()
             .Where(c =>
-                c.Type == "expense" &&
+                c.Type == CategoryType.Expense &&
                 c.CategoryId != SavingsGoalCategoryId &&
                 c.CategoryName != UncategorizedName)
             .Select(c => new

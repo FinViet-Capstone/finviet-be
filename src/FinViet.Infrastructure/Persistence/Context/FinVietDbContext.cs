@@ -111,7 +111,6 @@ public partial class FinVietDbContext : DbContext
                 .HasColumnName("default_bucket");
             entity.Ignore(e => e.IsMandatory);
             entity.Property(e => e.Type)
-                .HasColumnType("category_type")
                 .HasColumnName("type");
             entity.Property(e => e.Icon)
                 .HasMaxLength(60)
@@ -527,11 +526,9 @@ public partial class FinVietDbContext : DbContext
                 .HasDefaultValueSql("CURRENT_TIMESTAMP")
                 .HasColumnName("transaction_date");
             entity.Property(e => e.TransactionType)
-                .HasColumnType("transaction_type")
                 .HasColumnName("type");
             entity.Property(e => e.EntryMethod)
                 .IsRequired()
-                .HasColumnType("entry_method")
                 .HasColumnName("entry_method");
             entity.Property(e => e.WalletId)
                 .IsRequired()
@@ -541,9 +538,9 @@ public partial class FinVietDbContext : DbContext
             entity.Property(e => e.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP").HasColumnName("created_at");
             entity.Property(e => e.UpdatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP").HasColumnName("updated_at");
 
-            entity.Ignore(e => e.SourceChannel);
             entity.Ignore(e => e.Note);
             entity.Ignore(e => e.BeneficiaryName);
+            entity.Ignore(e => e.SourceChannel);
             entity.Ignore(e => e.IsAiClassified);
             entity.Ignore(e => e.AiConfidence);
             entity.Ignore(e => e.AiCategoryGuess);

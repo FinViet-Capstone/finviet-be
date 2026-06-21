@@ -2,6 +2,7 @@ using System.Text.Json;
 using FinViet.Application.DTOs.Ai;
 using FinViet.Application.Exceptions;
 using FinViet.Application.Interfaces;
+using FinViet.Domain.Enums;
 using FinViet.Infrastructure.Persistence.Context;
 using FinViet.Infrastructure.Persistence.Entities;
 using Microsoft.EntityFrameworkCore;
@@ -115,7 +116,7 @@ public class SpendingScoreService : ISpendingScoreService
         var rows = await _db.Transactions
             .Join(_db.Wallets, t => t.WalletId, w => w.WalletId, (t, w) => new { t, w.CustomerId })
             .Where(x => x.CustomerId == customerId
-                        && x.t.TransactionType == "expense"
+                        && x.t.TransactionType == TransactionType.Expense
                         && x.t.TransactionDate != null
                         && x.t.TransactionDate >= DateRange.StartUtc(windowStart)
                         && x.t.TransactionDate <= DateRange.EndUtc(asOf))
@@ -180,7 +181,7 @@ public class SpendingScoreService : ISpendingScoreService
             .ToDictionaryAsync(u => u.CategoryId, u => u.BucketId, ct);
 
         var categories = await _db.Categories
-            .Where(c => c.Type == "expense")
+            .Where(c => c.Type == CategoryType.Expense)
             .Select(c => new { c.CategoryId, c.CategoryName, c.ExpenseClass })
             .ToListAsync(ct);
         var catInfo = categories.ToDictionary(c => c.CategoryId, c => c);
@@ -193,7 +194,7 @@ public class SpendingScoreService : ISpendingScoreService
         var actuals = await _db.Transactions
             .Join(_db.Wallets, t => t.WalletId, w => w.WalletId, (t, w) => new { t, w.CustomerId })
             .Where(x => x.CustomerId == customerId
-                        && x.t.TransactionType == "expense"
+                        && x.t.TransactionType == TransactionType.Expense
                         && x.t.CategoryId != null
                         && x.t.TransactionDate != null
                         && x.t.TransactionDate >= DateRange.StartUtc(start)
@@ -296,7 +297,7 @@ public class SpendingScoreService : ISpendingScoreService
         var savingsTxns = await _db.Transactions
             .Join(_db.Wallets, t => t.WalletId, w => w.WalletId, (t, w) => new { t, w.CustomerId })
             .Where(x => x.CustomerId == customerId
-                        && x.t.TransactionType == "expense"
+                        && x.t.TransactionType == TransactionType.Expense
                         && x.t.CategoryId != null
                         && savingsCatIds.Contains(x.t.CategoryId!)
                         && x.t.TransactionDate >= windowStart

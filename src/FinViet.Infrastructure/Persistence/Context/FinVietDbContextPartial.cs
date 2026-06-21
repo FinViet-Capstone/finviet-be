@@ -23,6 +23,9 @@ public partial class FinVietDbContext
         modelBuilder.HasPostgresEnum<AppLanguage>("public", "app_language");
         modelBuilder.HasPostgresEnum<AppTheme>("public", "app_theme");
         modelBuilder.HasPostgresEnum<SepaySyncStatus>("public", "sepay_sync_status");
+        modelBuilder.HasPostgresEnum<CategoryType>("public", "category_type");
+        modelBuilder.HasPostgresEnum<TransactionType>("public", "transaction_type");
+        modelBuilder.HasPostgresEnum<EntryMethod>("public", "entry_method");
 
         modelBuilder.Entity<Bucket>(entity =>
         {
@@ -53,7 +56,7 @@ public partial class FinVietDbContext
             entity.Property(e => e.CreatedAt).HasDefaultValueSql("now()").HasColumnName("created_at");
             entity.Property(e => e.UpdatedAt).HasDefaultValueSql("now()").HasColumnName("updated_at");
 
-            entity.HasOne(d => d.Wallet).WithOne()
+            entity.HasOne(d => d.Wallet).WithOne(w => w.Link)
                 .HasForeignKey<WalletLink>(d => d.WalletId)
                 .OnDelete(DeleteBehavior.Cascade)
                 .HasConstraintName("wallet_links_wallet_id_fkey");

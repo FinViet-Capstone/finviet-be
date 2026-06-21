@@ -1,6 +1,7 @@
 using FinViet.Application.DTOs.CategoryRequests;
 using FinViet.Application.Exceptions;
 using FinViet.Application.Interfaces;
+using FinViet.Domain.Enums;
 using FinViet.Infrastructure.Persistence.Context;
 using FinViet.Infrastructure.Persistence.Entities;
 using Microsoft.EntityFrameworkCore;
@@ -39,12 +40,13 @@ public class CategoryRequestService : ICategoryRequestService
             throw new NotFoundException("Customer not found.");
 
         var normalizedType = NormalizeType(request.Type);
+        var categoryType = ToCategoryType(normalizedType);
         var normalizedExpenseClass = NormalizeExpenseClass(request.ExpenseClass);
         var trimmedName = request.CategoryName.Trim();
 
         // If the category already exists, there's no point requesting it.
         var alreadyExists = await _dbContext.Categories.AnyAsync(
-            c => c.Type == normalizedType && EF.Functions.ILike(c.CategoryName, trimmedName),
+            c => c.Type == categoryType && EF.Functions.ILike(c.CategoryName, trimmedName),
             cancellationToken);
 
         if (alreadyExists)
@@ -127,8 +129,9 @@ public class CategoryRequestService : ICategoryRequestService
             throw new ValidationException($"Request has already been {entity.Status.ToLowerInvariant()}.");
 
         // Create the real category from the request (unless an identical one appeared meanwhile).
+        var entityType = ToCategoryType(entity.Type);
         var existing = await _dbContext.Categories.FirstOrDefaultAsync(
-            c => c.Type == entity.Type && EF.Functions.ILike(c.CategoryName, entity.CategoryName),
+            c => c.Type == entityType && EF.Functions.ILike(c.CategoryName, entity.CategoryName),
             cancellationToken);
 
         Category category;
@@ -144,7 +147,7 @@ public class CategoryRequestService : ICategoryRequestService
                 CategoryName = entity.CategoryName,
                 NameVi = entity.CategoryName,
                 NameEn = entity.CategoryName,
-                Type = entity.Type.ToLowerInvariant(),
+                Type = entityType,
                 IsMandatory = false,
                 ExpenseClass = entity.ExpenseClass?.ToLowerInvariant()
             };
@@ -193,6 +196,10 @@ public class CategoryRequestService : ICategoryRequestService
 
         return normalized;
     }
+
+    /// <summary>Maps the request's string type ("INCOME"/"EXPENSE") to the categories enum.</summary>
+    private static CategoryType ToCategoryType(string type)
+        => type.Trim().ToUpperInvariant() == "INCOME" ? CategoryType.Income : CategoryType.Expense;
 
     private static string? NormalizeExpenseClass(string? expenseClass)
     {
