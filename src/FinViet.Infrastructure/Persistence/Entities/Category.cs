@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using FinViet.Domain.Enums;
 
 namespace FinViet.Infrastructure.Persistence.Entities;
 
@@ -12,7 +13,7 @@ public partial class Category
 
     public string? NameEn { get; set; }
 
-    public string Type { get; set; } = null!;
+    public CategoryType Type { get; set; }
 
     public bool? IsMandatory { get; set; }
 

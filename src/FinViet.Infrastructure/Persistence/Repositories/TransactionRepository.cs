@@ -2,6 +2,7 @@ using FinViet.Application.Common;
 using FinViet.Application.Common.Exceptions;
 using FinViet.Application.DTOs;
 using FinViet.Application.Interfaces;
+using FinViet.Domain.Enums;
 using FinViet.Infrastructure.Persistence.Context;
 using FinViet.Infrastructure.Persistence.Entities;
 using Microsoft.EntityFrameworkCore;
@@ -16,8 +17,6 @@ public class TransactionRepository : ITransactionRepository
     {
         _context = context;
     }
-
-    private static readonly string[] ValidTypes = { "expense", "income", "transfer_out", "transfer_in" };
 
     public async Task<PagedResult<TransactionResponseDto>> GetPagedAsync(
         Guid customerId, TransactionQueryDto filter, CancellationToken cancellationToken = default)
@@ -34,10 +33,9 @@ public class TransactionRepository : ITransactionRepository
 
         if (!string.IsNullOrWhiteSpace(filter.Type))
         {
-            var type = filter.Type.Trim().ToLowerInvariant();
-            if (!ValidTypes.Contains(type))
-                throw new BadRequestException($"type must be one of: {string.Join(", ", ValidTypes)}.");
-            query = query.Where(t => t.TransactionType == type);
+            if (!TryParseType(filter.Type, out var typeFilter))
+                throw new BadRequestException("type must be one of: expense, income, transfer_out, transfer_in.");
+            query = query.Where(t => t.TransactionType == typeFilter);
         }
 
         if (!string.IsNullOrWhiteSpace(filter.CategoryId))
@@ -49,7 +47,9 @@ public class TransactionRepository : ITransactionRepository
             query = query.Where(t => t.TransactionDate <= filter.To.Value);
 
         if (filter.UncategorizedOnly)
-            query = query.Where(t => t.CategoryId == null && t.TransactionType != "transfer_out" && t.TransactionType != "transfer_in");
+            query = query.Where(t => t.CategoryId == null
+                && t.TransactionType != TransactionType.TransferOut
+                && t.TransactionType != TransactionType.TransferIn);
 
         if (!string.IsNullOrWhiteSpace(filter.Q))
         {
@@ -99,8 +99,8 @@ public class TransactionRepository : ITransactionRepository
         var rows = await _context.Transactions
             .AsNoTracking()
             .Where(t => (t.CustomerId == customerId || (t.Wallet != null && t.Wallet.CustomerId == customerId))
-                        && t.TransactionType != "transfer_out"
-                        && t.TransactionType != "transfer_in"
+                        && t.TransactionType != TransactionType.TransferOut
+                        && t.TransactionType != TransactionType.TransferIn
                         && t.TransactionDate >= start && t.TransactionDate < end)
             .Select(t => new
             {
@@ -112,15 +112,15 @@ public class TransactionRepository : ITransactionRepository
             })
             .ToListAsync(cancellationToken);
 
-        var income = rows.Where(r => r.TransactionType == "income").Sum(r => r.Amount);
-        var expense = rows.Where(r => r.TransactionType == "expense").Sum(r => r.Amount);
+        var income = rows.Where(r => r.TransactionType == TransactionType.Income).Sum(r => r.Amount);
+        var expense = rows.Where(r => r.TransactionType == TransactionType.Expense).Sum(r => r.Amount);
 
         var categoryNames = await _context.Categories
             .AsNoTracking()
             .ToDictionaryAsync(c => c.CategoryId, c => c.CategoryName, cancellationToken);
 
         var byCategory = rows
-            .Where(r => r.TransactionType == "expense")
+            .Where(r => r.TransactionType == TransactionType.Expense)
             .GroupBy(r => r.CategoryId)
             .Select(g => new CategorySummaryItemDto
             {
@@ -137,16 +137,16 @@ public class TransactionRepository : ITransactionRepository
             .Select(g => new DaySummaryItemDto
             {
                 Date = g.Key,
-                Income = g.Where(x => x.TransactionType == "income").Sum(x => x.Amount),
-                Expense = g.Where(x => x.TransactionType == "expense").Sum(x => x.Amount),
-                Net = g.Where(x => x.TransactionType == "income").Sum(x => x.Amount)
-                      - g.Where(x => x.TransactionType == "expense").Sum(x => x.Amount)
+                Income = g.Where(x => x.TransactionType == TransactionType.Income).Sum(x => x.Amount),
+                Expense = g.Where(x => x.TransactionType == TransactionType.Expense).Sum(x => x.Amount),
+                Net = g.Where(x => x.TransactionType == TransactionType.Income).Sum(x => x.Amount)
+                      - g.Where(x => x.TransactionType == TransactionType.Expense).Sum(x => x.Amount)
             })
             .OrderBy(d => d.Date)
             .ToList();
 
         var topBeneficiaries = rows
-            .Where(r => r.TransactionType == "expense" && !string.IsNullOrWhiteSpace(r.Merchant))
+            .Where(r => r.TransactionType == TransactionType.Expense && !string.IsNullOrWhiteSpace(r.Merchant))
             .GroupBy(r => r.Merchant!)
             .Select(g => new BeneficiarySummaryItemDto { Beneficiary = g.Key, Total = g.Sum(x => x.Amount) })
             .OrderByDescending(m => m.Total)
@@ -180,7 +180,7 @@ public class TransactionRepository : ITransactionRepository
             WalletId = walletId,
             CategoryId = categoryId,
             TransactionType = NormalizeType(transactionType),
-            EntryMethod = "manual",
+            EntryMethod = EntryMethod.Manual,
             Amount = amount,
             TransactionDate = transactionDate,
             Description = note,
@@ -235,18 +235,42 @@ public class TransactionRepository : ITransactionRepository
         return MapToDto(transaction);
     }
 
-    private static string NormalizeType(string type)
-        => type.Trim().ToLowerInvariant() switch
+    /// <summary>Parses an API string into the transaction_type enum. Accepts legacy aliases.</summary>
+    private static bool TryParseType(string raw, out TransactionType type)
+    {
+        switch (raw.Trim().ToLowerInvariant())
         {
-            "income" or "in" => "income",
-            "expense" or "out" => "expense",
-            "transfer_out" => "transfer_out",
-            "transfer_in" => "transfer_in",
-            "INCOME" => "income",
-            "EXPENSE" => "expense",
-            "TRANSFER" => "transfer_out",
-            _ => type.Trim().ToLowerInvariant()
-        };
+            case "income" or "in": type = TransactionType.Income; return true;
+            case "expense" or "out": type = TransactionType.Expense; return true;
+            case "transfer_out" or "transfer": type = TransactionType.TransferOut; return true;
+            case "transfer_in": type = TransactionType.TransferIn; return true;
+            default: type = default; return false;
+        }
+    }
+
+    private static TransactionType NormalizeType(string type)
+        => TryParseType(type, out var parsed)
+            ? parsed
+            : throw new BadRequestException("type must be one of: expense, income, transfer_out, transfer_in.");
+
+    private static string ToTypeString(TransactionType type) => type switch
+    {
+        TransactionType.Income => "income",
+        TransactionType.Expense => "expense",
+        TransactionType.TransferOut => "transfer_out",
+        TransactionType.TransferIn => "transfer_in",
+        _ => "expense"
+    };
+
+    private static string ToEntryMethodString(EntryMethod method) => method switch
+    {
+        EntryMethod.Manual => "manual",
+        EntryMethod.Photo => "photo",
+        EntryMethod.SmsPaste => "sms_paste",
+        EntryMethod.CsvImport => "csv_import",
+        EntryMethod.SepaySync => "sepay_sync",
+        _ => "manual"
+    };
 
     private static TransactionResponseDto MapToDto(Transaction transaction) => new()
     {
@@ -254,9 +278,9 @@ public class TransactionRepository : ITransactionRepository
         CustomerId = transaction.CustomerId,
         WalletId = transaction.WalletId,
         CategoryId = transaction.CategoryId,
-        TransactionType = transaction.TransactionType,
-        SourceChannel = transaction.EntryMethod,
-        EntryMethod = transaction.EntryMethod,
+        TransactionType = ToTypeString(transaction.TransactionType),
+        SourceChannel = ToEntryMethodString(transaction.EntryMethod),
+        EntryMethod = ToEntryMethodString(transaction.EntryMethod),
         Amount = transaction.Amount,
         TransactionDate = transaction.TransactionDate ?? DateTime.UtcNow,
         Note = transaction.Description,
@@ -300,8 +324,10 @@ public class WalletRepository : IWalletRepository
         if (wallet == null)
             return null;
 
+        // Entity is already tracked by FindAsync; set only Balance so EF writes a single
+        // column. Calling Update(wallet) would mark every column modified — including the
+        // wallet_type enum — and EF would send it as text, failing the enum cast.
         wallet.Balance = newBalance;
-        _context.Wallets.Update(wallet);
         await _context.SaveChangesAsync(cancellationToken);
 
         return new WalletDto

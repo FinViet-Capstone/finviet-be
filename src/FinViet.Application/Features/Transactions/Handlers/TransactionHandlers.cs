@@ -37,6 +37,16 @@ internal static class TransactionRules
         return normalized;
     }
 
+    /// <summary>Transaction date is required and cannot be in the future (small clock skew allowed).</summary>
+    public static void ValidateDate(DateTime transactionDate)
+    {
+        if (transactionDate == default)
+            throw new BadRequestException("Transaction date is required.");
+
+        if (transactionDate.ToUniversalTime() > DateTime.UtcNow.AddMinutes(5))
+            throw new BadRequestException("Transaction date cannot be in the future.");
+    }
+
     /// <summary>Income increases the wallet balance; everything else decreases it.</summary>
     public static decimal SignedDelta(string normalizedType, decimal amount)
         => normalizedType == "income" ? amount : -amount;
@@ -97,10 +107,14 @@ public class CreateTransactionHandler : IRequestHandler<CreateTransactionCommand
     public async Task<TransactionResponseDto> Handle(CreateTransactionCommand request, CancellationToken cancellationToken)
     {
         var normalizedType = TransactionRules.ValidateInput(request.TransactionType, request.Amount);
+        TransactionRules.ValidateDate(request.TransactionDate);
 
         var wallet = await _walletRepository.GetByIdAsync(request.WalletId, cancellationToken);
         if (wallet == null)
             throw new NotFoundException("Wallet", request.WalletId);
+
+        if (wallet.CustomerId != request.CustomerId)
+            throw new ForbiddenException("You do not have access to this wallet.");
 
         await TransactionRules.ValidateCategoryAsync(_categoryService, request.CategoryId, normalizedType, cancellationToken);
 
@@ -141,6 +155,7 @@ public class UpdateTransactionHandler : IRequestHandler<UpdateTransactionCommand
     public async Task<TransactionResponseDto> Handle(UpdateTransactionCommand request, CancellationToken cancellationToken)
     {
         var normalizedType = TransactionRules.ValidateInput(request.TransactionType, request.Amount);
+        TransactionRules.ValidateDate(request.TransactionDate);
 
         var transaction = await _transactionRepository.GetByIdAsync(request.TransactionId, cancellationToken);
         if (transaction == null)
@@ -151,6 +166,9 @@ public class UpdateTransactionHandler : IRequestHandler<UpdateTransactionCommand
         var wallet = await _walletRepository.GetByIdAsync(transaction.WalletId, cancellationToken);
         if (wallet == null)
             throw new NotFoundException("Wallet", transaction.WalletId);
+
+        if (wallet.CustomerId != request.CustomerId)
+            throw new ForbiddenException("You do not have access to this transaction.");
 
         // Reverse the existing entry, then apply the new one.
         var newBalance = wallet.Balance
@@ -193,6 +211,9 @@ public class DeleteTransactionHandler : IRequestHandler<DeleteTransactionCommand
         var wallet = await _walletRepository.GetByIdAsync(transaction.WalletId, cancellationToken);
         if (wallet == null)
             throw new NotFoundException("Wallet", transaction.WalletId);
+
+        if (wallet.CustomerId != request.CustomerId)
+            throw new ForbiddenException("You do not have access to this transaction.");
 
         // Reverse the transaction's effect on the wallet balance.
         var newBalance = wallet.Balance

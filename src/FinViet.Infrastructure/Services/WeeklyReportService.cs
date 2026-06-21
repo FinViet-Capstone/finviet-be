@@ -2,6 +2,7 @@ using FinViet.Application.Common.Exceptions;
 using FinViet.Application.DTOs.Ai;
 using FinViet.Application.Exceptions;
 using FinViet.Application.Interfaces;
+using FinViet.Domain.Enums;
 using FinViet.Infrastructure.Persistence.Context;
 using FinViet.Infrastructure.Persistence.Entities;
 using Microsoft.EntityFrameworkCore;
@@ -132,7 +133,7 @@ public class WeeklyReportService : IWeeklyReportService
         var spendByCategory = await _db.Transactions
             .Join(_db.Wallets, t => t.WalletId, w => w.WalletId, (t, w) => new { t, w.CustomerId })
             .Where(x => x.CustomerId == customerId
-                        && x.t.TransactionType == "EXPENSE"
+                        && x.t.TransactionType == TransactionType.Expense
                         && x.t.TransactionDate >= startDt && x.t.TransactionDate <= endDt)
             .Join(_db.Categories, x => x.t.CategoryId, c => c.CategoryId, (x, c) => new { c.CategoryName, x.t.Amount })
             .GroupBy(x => x.CategoryName)

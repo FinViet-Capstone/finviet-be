@@ -3,6 +3,7 @@ using FinViet.Application.Common;
 using FinViet.Application.DTOs.Wallets;
 using FinViet.Application.Exceptions;
 using FinViet.Application.Interfaces;
+using FinViet.Domain.Enums;
 using FinViet.Infrastructure.Persistence.Context;
 using FinViet.Infrastructure.Persistence.Entities;
 using Microsoft.EntityFrameworkCore;
@@ -196,8 +197,8 @@ public class WalletService : IWalletService
             {
                 TransactionId = Guid.NewGuid(),
                 WalletId = fromWallet.WalletId,
-                TransactionType = "TRANSFER",
-                SourceChannel = "MANUAL",
+                TransactionType = TransactionType.TransferOut,
+                EntryMethod = EntryMethod.Manual,
                 Amount = request.Amount,
                 TransactionDate = now,
                 Note = $"OUT: {description}"
@@ -206,8 +207,8 @@ public class WalletService : IWalletService
             {
                 TransactionId = Guid.NewGuid(),
                 WalletId = toWallet.WalletId,
-                TransactionType = "TRANSFER",
-                SourceChannel = "MANUAL",
+                TransactionType = TransactionType.TransferIn,
+                EntryMethod = EntryMethod.Manual,
                 Amount = request.Amount,
                 TransactionDate = now,
                 Note = $"IN: {description}"
@@ -268,22 +269,29 @@ public class WalletService : IWalletService
         if (!string.IsNullOrWhiteSpace(query.TransactionType))
         {
             var type = query.TransactionType.Trim().ToUpperInvariant();
-            var allowedTypes = new[]
+            switch (type)
             {
-                "INCOME",
-                "EXPENSE",
-                "TRANSFER",
-                "DEBT_PAYMENT"
-            };
-
-            if (!allowedTypes.Contains(type))
-            {
-                throw new ValidationException(
-                    "Transaction type must be one of: INCOME, EXPENSE, TRANSFER, DEBT_PAYMENT.");
+                case "INCOME":
+                    transactionsQuery = transactionsQuery.Where(x => x.TransactionType == TransactionType.Income);
+                    break;
+                case "EXPENSE":
+                    transactionsQuery = transactionsQuery.Where(x => x.TransactionType == TransactionType.Expense);
+                    break;
+                case "TRANSFER":
+                    transactionsQuery = transactionsQuery.Where(x =>
+                        x.TransactionType == TransactionType.TransferOut ||
+                        x.TransactionType == TransactionType.TransferIn);
+                    break;
+                case "TRANSFER_OUT":
+                    transactionsQuery = transactionsQuery.Where(x => x.TransactionType == TransactionType.TransferOut);
+                    break;
+                case "TRANSFER_IN":
+                    transactionsQuery = transactionsQuery.Where(x => x.TransactionType == TransactionType.TransferIn);
+                    break;
+                default:
+                    throw new ValidationException(
+                        "Transaction type must be one of: INCOME, EXPENSE, TRANSFER, TRANSFER_OUT, TRANSFER_IN.");
             }
-
-            transactionsQuery = transactionsQuery
-                .Where(x => x.TransactionType == type);
         }
 
         transactionsQuery = query.SortOrder.Trim().ToLowerInvariant() == "asc"
@@ -292,22 +300,35 @@ public class WalletService : IWalletService
 
         var totalItems = await transactionsQuery.CountAsync(cancellationToken);
 
-        var items = await transactionsQuery
+        var rawItems = await transactionsQuery
             .Skip((query.Page - 1) * query.PageSize)
             .Take(query.PageSize)
+            .Select(x => new
+            {
+                x.TransactionId,
+                x.WalletId,
+                x.CategoryId,
+                x.TransactionType,
+                x.Amount,
+                x.TransactionDate,
+                x.Description
+            })
+            .ToListAsync(cancellationToken);
+
+        var items = rawItems
             .Select(x => new WalletTransactionResponse
             {
                 TransactionId = x.TransactionId,
                 WalletId = x.WalletId,
                 CategoryId = x.CategoryId,
-                TransactionType = x.TransactionType,
+                TransactionType = ToTransactionTypeString(x.TransactionType),
                 Amount = x.Amount,
                 TransactionDate = x.TransactionDate.HasValue
                     ? new DateTimeOffset(DateTime.SpecifyKind(x.TransactionDate.Value, DateTimeKind.Utc))
                     : DateTimeOffset.MinValue,
-                Note = x.Note
+                Note = x.Description
             })
-            .ToListAsync(cancellationToken);
+            .ToList();
 
         return new PagedResult<WalletTransactionResponse>
         {
@@ -398,4 +419,13 @@ public class WalletService : IWalletService
             "CASH" or "BANK_ACCOUNT" or "CREDIT_CARD" or "E_WALLET" or "INVESTMENT" => BasicWalletType,
             _ => walletType.ToLowerInvariant()
         };
+
+    private static string ToTransactionTypeString(TransactionType type) => type switch
+    {
+        TransactionType.Income => "income",
+        TransactionType.Expense => "expense",
+        TransactionType.TransferOut => "transfer_out",
+        TransactionType.TransferIn => "transfer_in",
+        _ => "expense"
+    };
 }

@@ -4,6 +4,7 @@ using System.Text.RegularExpressions;
 using FinViet.Application.DTOs.Categories;
 using FinViet.Application.Exceptions;
 using FinViet.Application.Interfaces;
+using FinViet.Domain.Enums;
 using FinViet.Infrastructure.Persistence.Context;
 using FinViet.Infrastructure.Persistence.Entities;
 using Microsoft.EntityFrameworkCore;
@@ -12,11 +13,6 @@ namespace FinViet.Infrastructure.Services;
 
 public class CategoryService : ICategoryService
 {
-    private static readonly HashSet<string> AllowedTypes = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "income", "expense"
-    };
-
     private static readonly HashSet<string> AllowedExpenseClasses = new(StringComparer.OrdinalIgnoreCase)
     {
         "needs", "wants", "savings"
@@ -179,18 +175,23 @@ public class CategoryService : ICategoryService
         return true;
     }
 
-    private static string NormalizeType(string type)
+    private static CategoryType NormalizeType(string type)
     {
         var normalized = type.Trim().ToLowerInvariant();
-        if (!AllowedTypes.Contains(normalized))
-            throw new ValidationException("Category type must be one of: income, expense.");
-
-        return normalized;
+        return normalized switch
+        {
+            "income" => CategoryType.Income,
+            "expense" => CategoryType.Expense,
+            _ => throw new ValidationException("Category type must be one of: income, expense.")
+        };
     }
 
-    private static string? NormalizeExpenseClass(string? expenseClass, string type)
+    private static string ToTypeString(CategoryType type)
+        => type == CategoryType.Income ? "income" : "expense";
+
+    private static string? NormalizeExpenseClass(string? expenseClass, CategoryType type)
     {
-        if (type == "income")
+        if (type == CategoryType.Income)
             return null;
 
         if (string.IsNullOrWhiteSpace(expenseClass))
@@ -205,7 +206,7 @@ public class CategoryService : ICategoryService
 
     private async Task<bool> CategoryNameExistsAsync(
         string categoryName,
-        string type,
+        CategoryType type,
         string? excludedCategoryId,
         CancellationToken cancellationToken)
     {
@@ -261,7 +262,7 @@ public class CategoryService : ICategoryService
             // CategoryName is mapped to the name_vi column; NameVi itself is unmapped.
             NameVi = category.CategoryName,
             NameEn = category.NameEn,
-            Type = category.Type,
+            Type = ToTypeString(category.Type),
             IsMandatory = category.IsMandatory ?? false,
             ExpenseClass = category.ExpenseClass,
             Icon = category.Icon,

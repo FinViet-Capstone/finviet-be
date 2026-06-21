@@ -32,9 +32,12 @@ public static class DependencyInjection
         dataSourceBuilder.MapEnum<AppLanguage>("app_language");
         dataSourceBuilder.MapEnum<AppTheme>("app_theme");
         dataSourceBuilder.MapEnum<SepaySyncStatus>("sepay_sync_status");
-        // Remaining Postgres enums (transaction_type, category_type, wallet_type, notification_type,
-        // chat_role, score_view, score_color, subscription_status, category_source, entry_method...)
-        // are handled as plain text via EnableUnmappedTypes + HasColumnType on each column.
+        dataSourceBuilder.MapEnum<CategoryType>("category_type");
+        dataSourceBuilder.MapEnum<TransactionType>("transaction_type");
+        dataSourceBuilder.MapEnum<EntryMethod>("entry_method");
+        // Remaining Postgres enums (wallet_type, notification_type, chat_role, score_view,
+        // score_color, subscription_status, category_source...) are handled as plain text
+        // via EnableUnmappedTypes + HasColumnType on each column.
         dataSourceBuilder.EnableUnmappedTypes();
         var dataSource = dataSourceBuilder.Build();
 
