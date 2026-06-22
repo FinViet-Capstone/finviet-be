@@ -35,7 +35,9 @@ public static class DependencyInjection
         dataSourceBuilder.MapEnum<CategoryType>("category_type");
         dataSourceBuilder.MapEnum<TransactionType>("transaction_type");
         dataSourceBuilder.MapEnum<EntryMethod>("entry_method");
-        // Remaining Postgres enums (wallet_type, notification_type, chat_role, score_view,
+        dataSourceBuilder.MapEnum<WalletType>("wallet_type");
+        dataSourceBuilder.MapEnum<CategoryRequestStatus>("category_request_status");
+        // Remaining Postgres enums (notification_type, chat_role, score_view,
         // score_color, subscription_status, category_source...) are handled as plain text
         // via EnableUnmappedTypes + HasColumnType on each column.
         dataSourceBuilder.EnableUnmappedTypes();

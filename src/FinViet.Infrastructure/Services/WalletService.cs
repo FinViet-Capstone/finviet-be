@@ -40,7 +40,7 @@ public class WalletService : IWalletService
                 WalletId = w.WalletId,
                 CustomerId = customerId,
                 WalletName = w.WalletName,
-                WalletType = NormalizeStoredWalletType(w.WalletType),
+                WalletType = w.WalletType == WalletType.SepayLinked ? "sepay_linked" : "basic",
                 Balance = w.Balance ?? 0m
             })
             .ToListAsync(cancellationToken);
@@ -86,7 +86,6 @@ public class WalletService : IWalletService
             WalletType = NormalizeWalletType(request.EffectiveType),
             Balance = request.InitialBalance
         };
-
         _dbContext.Wallets.Add(wallet);
         await _dbContext.SaveChangesAsync(cancellationToken);
 
@@ -156,15 +155,15 @@ public class WalletService : IWalletService
             cancellationToken);
 
         // Lock both wallet rows in a deterministic order to avoid overspending and transfer deadlocks.
-        // Phải SELECT đủ mọi cột của entity Wallet (kể cả is_deleted, deleted_at) cho FromSql.
+        // Phải SELECT đủ mọi cột của entity Wallet cho FromSql (v2.1: bảng wallets, cột id/name/type).
         var wallets = await _dbContext.Wallets
             .FromSqlInterpolated($"""
-                SELECT wallet_id, customer_id, wallet_name, wallet_type, balance, is_deleted, deleted_at
-                FROM wallet
+                SELECT id, customer_id, name, type, balance, is_deleted, created_at, updated_at
+                FROM wallets
                 WHERE customer_id = {customerId}
-                  AND wallet_id IN ({request.FromWalletId}, {request.ToWalletId})
+                  AND id IN ({request.FromWalletId}, {request.ToWalletId})
                   AND is_deleted = false
-                ORDER BY wallet_id
+                ORDER BY id
                 FOR UPDATE
                 """)
             .ToListAsync(cancellationToken);
@@ -368,7 +367,7 @@ public class WalletService : IWalletService
             throw new ValidationException("Wallet type cannot be changed after creation.");
     }
 
-    private static string NormalizeWalletType(string walletType)
+    private static WalletType NormalizeWalletType(string walletType)
     {
         var normalized = walletType.Trim();
         if (!AllowedWalletTypes.Contains(normalized))
@@ -376,10 +375,14 @@ public class WalletService : IWalletService
 
         return normalized.ToUpperInvariant() switch
         {
-            "CASH" or "BANK_ACCOUNT" or "CREDIT_CARD" or "E_WALLET" or "INVESTMENT" => BasicWalletType,
-            _ => normalized.ToLowerInvariant()
+            "CASH" or "BANK_ACCOUNT" or "CREDIT_CARD" or "E_WALLET" or "INVESTMENT" or "BASIC" => WalletType.Basic,
+            "SEPAY_LINKED" => WalletType.SepayLinked,
+            _ => WalletType.Basic
         };
     }
+
+    private static string ToWalletTypeString(WalletType walletType)
+        => walletType == WalletType.SepayLinked ? "sepay_linked" : "basic";
 
     private static WalletResponse ToResponse(Wallet wallet)
         => new()
@@ -387,7 +390,7 @@ public class WalletService : IWalletService
             WalletId = wallet.WalletId,
             CustomerId = GetRequiredCustomerId(wallet),
             WalletName = wallet.WalletName,
-            WalletType = NormalizeStoredWalletType(wallet.WalletType),
+            WalletType = ToWalletTypeString(wallet.WalletType),
             Balance = GetRequiredBalance(wallet)
         };
 
@@ -412,13 +415,6 @@ public class WalletService : IWalletService
                  && EF.Functions.ILike(w.WalletName, walletName),
             cancellationToken);
     }
-
-    private static string NormalizeStoredWalletType(string walletType)
-        => walletType.ToUpperInvariant() switch
-        {
-            "CASH" or "BANK_ACCOUNT" or "CREDIT_CARD" or "E_WALLET" or "INVESTMENT" => BasicWalletType,
-            _ => walletType.ToLowerInvariant()
-        };
 
     private static string ToTransactionTypeString(TransactionType type) => type switch
     {

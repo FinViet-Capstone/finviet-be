@@ -26,6 +26,8 @@ public partial class FinVietDbContext
         modelBuilder.HasPostgresEnum<CategoryType>("public", "category_type");
         modelBuilder.HasPostgresEnum<TransactionType>("public", "transaction_type");
         modelBuilder.HasPostgresEnum<EntryMethod>("public", "entry_method");
+        modelBuilder.HasPostgresEnum<WalletType>("public", "wallet_type");
+        modelBuilder.HasPostgresEnum<CategoryRequestStatus>("public", "category_request_status");
 
         modelBuilder.Entity<Bucket>(entity =>
         {
@@ -205,29 +207,26 @@ public partial class FinVietDbContext
                 .HasConstraintName("email_verification_tokens_customer_id_fkey");
         });
 
-        // ── CategoryRequest entity ───────────────────────────────
+        // ── CategoryRequest entity (table category_requests, v2.1) ──
         modelBuilder.Entity<CategoryRequest>(entity =>
         {
-            entity.HasKey(e => e.RequestId).HasName("category_request_pkey");
-            entity.ToTable("category_request");
+            entity.HasKey(e => e.RequestId).HasName("category_requests_pkey");
+            entity.ToTable("category_requests");
 
             entity.Property(e => e.RequestId)
                 .HasDefaultValueSql("gen_random_uuid()")
-                .HasColumnName("request_id");
+                .HasColumnName("id");
             entity.Property(e => e.CustomerId).HasColumnName("customer_id");
-            entity.Property(e => e.CategoryName).HasMaxLength(100).HasColumnName("category_name");
-            entity.Property(e => e.Type).HasMaxLength(50).HasColumnName("type");
-            entity.Property(e => e.ExpenseClass).HasMaxLength(50).HasColumnName("expense_class");
+            entity.Property(e => e.CategoryName).HasMaxLength(80).HasColumnName("requested_name");
+            entity.Property(e => e.Type).HasColumnName("type");
+            entity.Property(e => e.SuggestedBucketId).HasMaxLength(20).HasColumnName("suggested_bucket_id");
             entity.Property(e => e.Note).HasMaxLength(500).HasColumnName("note");
-            entity.Property(e => e.Status)
-                .HasMaxLength(20)
-                .HasDefaultValue("PENDING")
-                .HasColumnName("status");
-            entity.Property(e => e.ReviewedBy).HasColumnName("reviewed_by");
+            entity.Property(e => e.Status).HasColumnName("status");
+            entity.Property(e => e.ReviewedBy).HasColumnName("reviewed_by_admin_id");
             entity.Property(e => e.ReviewNote).HasMaxLength(500).HasColumnName("review_note");
-            entity.Property(e => e.CreatedCategoryId).HasColumnName("created_category_id");
+            entity.Property(e => e.CreatedCategoryId).HasMaxLength(40).HasColumnName("created_category_id");
             entity.Property(e => e.CreatedAt)
-                .HasDefaultValueSql("CURRENT_TIMESTAMP")
+                .HasDefaultValueSql("now()")
                 .HasColumnName("created_at");
             entity.Property(e => e.ReviewedAt).HasColumnName("reviewed_at");
 
@@ -235,7 +234,7 @@ public partial class FinVietDbContext
                 .WithMany()
                 .HasForeignKey(d => d.CustomerId)
                 .OnDelete(DeleteBehavior.Cascade)
-                .HasConstraintName("category_request_customer_id_fkey");
+                .HasConstraintName("category_requests_customer_id_fkey");
         });
     }
 }
