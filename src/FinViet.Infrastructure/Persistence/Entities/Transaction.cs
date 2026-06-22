@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using FinViet.Domain.Enums;
 
 namespace FinViet.Infrastructure.Persistence.Entities;
 
@@ -16,7 +15,7 @@ public partial class Transaction
 
     public decimal Amount { get; set; }
 
-    public TransactionType TransactionType { get; set; }
+    public string TransactionType { get; set; } = null!;
 
     public string? Description { get; set; }
 
@@ -24,7 +23,7 @@ public partial class Transaction
 
     public DateTime? TransactionDate { get; set; }
 
-    public EntryMethod EntryMethod { get; set; }
+    public string EntryMethod { get; set; } = null!;
 
     public Guid? TransferPairId { get; set; }
 
@@ -33,6 +32,12 @@ public partial class Transaction
     public DateTime CreatedAt { get; set; }
 
     public DateTime UpdatedAt { get; set; }
+
+    public string SourceChannel
+    {
+        get => EntryMethod;
+        set => EntryMethod = value;
+    }
 
     public string? Note
     {
@@ -45,9 +50,6 @@ public partial class Transaction
         get => Merchant;
         set => Merchant = value;
     }
-
-    // CLR-only compatibility members (not persisted in the v2.1 schema).
-    public string? SourceChannel { get; set; }
 
     public bool IsAiClassified { get; set; }
 
@@ -63,4 +65,3 @@ public partial class Transaction
 
     public virtual Wallet? Wallet { get; set; }
 }
-

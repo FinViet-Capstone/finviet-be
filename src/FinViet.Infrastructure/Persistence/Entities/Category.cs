@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using FinViet.Domain.Enums;
 
 namespace FinViet.Infrastructure.Persistence.Entities;
 
@@ -13,11 +12,15 @@ public partial class Category
 
     public string? NameEn { get; set; }
 
-    public CategoryType Type { get; set; }
+    public string Type { get; set; } = null!;
 
     public bool? IsMandatory { get; set; }
 
-    public string? ExpenseClass { get; set; }
+    /// <summary>
+    /// Maps to <c>categories.default_bucket</c> — a FK to <c>buckets(id)</c> whose values are the
+    /// lowercase slugs <c>needs</c> / <c>wants</c> / <c>savings</c> (null for income/uncategorized).
+    /// </summary>
+    public string? DefaultBucket { get; set; }
 
     public string? Icon { get; set; }
 

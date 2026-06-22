@@ -1,7 +1,6 @@
 using FinViet.Application.Common.Exceptions;
 using FinViet.Application.DTOs.Budgets;
 using FinViet.Application.Interfaces;
-using FinViet.Domain.Enums;
 using FinViet.Infrastructure.Persistence.Context;
 using FinViet.Infrastructure.Persistence.Entities;
 using Microsoft.EntityFrameworkCore;
@@ -79,6 +78,13 @@ public class BudgetService : IBudgetService
             .Where(b => b.CustomerId == customerId)
             .ToListAsync(cancellationToken);
 
+        // Hũ hiện tại của customer (kéo-thả đổi). Dùng CHUNG để phân loại cả hạn mức lẫn chi tiêu
+        // theo bucket, tránh lệch khi category đã được chuyển hũ khác default_bucket.
+        var customerBuckets = await _dbContext.CustomerCategories
+            .AsNoTracking()
+            .Where(x => x.CustomerId == customerId && x.IsActive)
+            .ToDictionaryAsync(x => x.CategoryId, x => x.BucketId, cancellationToken);
+
         var spentByBucket = await ComputeBucketSpentAsync(customerId, window, cancellationToken);
         var totalSpent = spentByBucket.Sum(x => x.Total);
         var uncategorizedSpent = await ComputeUncategorizedSpentAsync(customerId, window, cancellationToken);
@@ -96,7 +102,8 @@ public class BudgetService : IBudgetService
         {
             var allocationCap = Math.Round(monthlyIncome * config.Pct / 100m, 2);
             var categoryLimitTotal = budgets
-                .Where(b => NormalizeBucket(b.Category?.ExpenseClass).Equals(config.Bucket, StringComparison.OrdinalIgnoreCase))
+                .Where(b => ResolveCustomerBucket(b.CategoryId, b.Category?.DefaultBucket, customerBuckets)
+                    .Equals(config.Bucket, StringComparison.OrdinalIgnoreCase))
                 .Sum(b => b.MonthlyLimit);
             var spent = spentByBucket
                 .Where(s => s.Bucket.Equals(config.Bucket, StringComparison.OrdinalIgnoreCase))
@@ -300,7 +307,7 @@ public class BudgetService : IBudgetService
                 on transaction.WalletId equals wallet.WalletId
             where transaction.CategoryId != null
                   && ids.Contains(transaction.CategoryId)
-                  && transaction.TransactionType == TransactionType.Expense
+                  && transaction.TransactionType == "expense"
                   && transaction.TransactionDate >= window.StartUtc
                   && transaction.TransactionDate < window.EndExclusiveUtc
                   && wallet.CustomerId == customerId
@@ -329,14 +336,14 @@ public class BudgetService : IBudgetService
                   && transaction.CategoryId != null
                   && transaction.CategoryId != SavingsGoalCategoryId
                   && category.CategoryName != UncategorizedName
-                  && transaction.TransactionType == TransactionType.Expense
+                  && transaction.TransactionType == "expense"
                   && transaction.TransactionDate >= window.StartUtc
                   && transaction.TransactionDate < window.EndExclusiveUtc
             select new
             {
                 transaction.CategoryId,
                 transaction.Amount,
-                category.ExpenseClass
+                category.DefaultBucket
             })
             .ToListAsync(cancellationToken);
 
@@ -359,10 +366,7 @@ public class BudgetService : IBudgetService
                 cancellationToken);
 
         return spentRows
-            .GroupBy(x =>
-                customerBuckets.TryGetValue(x.CategoryId!, out var bucket)
-                    ? bucket
-                    : ToBudgetBucketId(x.ExpenseClass))
+            .GroupBy(x => ResolveCustomerBucket(x.CategoryId!, x.DefaultBucket, customerBuckets))
             .Select(group => new BucketSpent
             {
                 Bucket = group.Key,
@@ -386,7 +390,7 @@ public class BudgetService : IBudgetService
             join wallet in _dbContext.Wallets.AsNoTracking()
                 on transaction.WalletId equals wallet.WalletId
             where wallet.CustomerId == customerId
-                  && transaction.TransactionType == TransactionType.Expense
+                  && transaction.TransactionType == "expense"
                   && (transaction.CategoryId == null ||
                       (uncategorizedId != null && transaction.CategoryId == uncategorizedId))
                   && transaction.TransactionDate >= window.StartUtc
@@ -418,7 +422,7 @@ public class BudgetService : IBudgetService
             Remaining = budget.MonthlyLimit - spent,
             Percentage = percentage,
             Status = GetStatus(percentage, DefaultThresholdPct),
-            Bucket = ToBudgetBucketId(budget.Category?.ExpenseClass)
+            Bucket = ToBudgetBucketId(budget.Category?.DefaultBucket)
         };
     }
 
@@ -436,7 +440,7 @@ public class BudgetService : IBudgetService
         if (category is null)
             throw new NotFoundException("Category", categoryId);
 
-        if (category.Type != CategoryType.Expense)
+        if (!category.Type.Equals("expense", StringComparison.OrdinalIgnoreCase))
             throw new ValidationException("Budgets can only be created for expense categories.");
 
         if (category.CategoryId == SavingsGoalCategoryId ||
@@ -475,13 +479,13 @@ public class BudgetService : IBudgetService
         var categories = await _dbContext.Categories
             .AsNoTracking()
             .Where(c =>
-                c.Type == CategoryType.Expense &&
+                c.Type == "expense" &&
                 c.CategoryId != SavingsGoalCategoryId &&
                 c.CategoryName != UncategorizedName)
             .Select(c => new
             {
                 c.CategoryId,
-                c.ExpenseClass
+                c.DefaultBucket
             })
             .ToListAsync(cancellationToken);
 
@@ -491,7 +495,7 @@ public class BudgetService : IBudgetService
             {
                 CustomerId = customerId,
                 CategoryId = category.CategoryId,
-                BucketId = ToBudgetBucketId(category.ExpenseClass),
+                BucketId = ToBudgetBucketId(category.DefaultBucket),
                 Source = "system",
                 IsActive = true,
                 CreatedAt = DateTime.UtcNow
@@ -633,6 +637,15 @@ public class BudgetService : IBudgetService
             _ => "needs"
         };
 
+    // Hũ áp dụng cho 1 category: ưu tiên hũ customer đã chọn (kéo-thả), fallback default_bucket.
+    private static string ResolveCustomerBucket(
+        string categoryId,
+        string? expenseClass,
+        IReadOnlyDictionary<string, string> customerBuckets)
+        => customerBuckets.TryGetValue(categoryId, out var bucket)
+            ? bucket
+            : ToBudgetBucketId(expenseClass);
+
     private static decimal CalculatePercentage(decimal spent, decimal limit)
     {
         if (limit <= 0)
@@ -651,7 +664,8 @@ public class BudgetService : IBudgetService
         if (totalDays <= 0)
             return 0m;
 
-        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        // "Hôm nay" theo ICT (UTC+7) để khớp biên kỳ do ResolveMonthWindow tính cùng múi giờ.
+        var today = DateOnly.FromDateTime(DateTime.UtcNow.AddHours(7));
 
         // Trước kỳ → chưa nên tiêu gì; sau kỳ → cả kỳ.
         int elapsedDays;

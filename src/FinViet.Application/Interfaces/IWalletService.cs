@@ -33,7 +33,15 @@ public interface IWalletService
     Task<TransferWalletResponse> TransferAsync(
         Guid customerId,
         TransferWalletRequest request,
+        string? idempotencyKey,
         CancellationToken cancellationToken = default);
+
+    Task<TransferWalletResponse> WithdrawAsync(
+        Guid customerId,
+        WithdrawWalletRequest request,
+        string? idempotencyKey,
+        CancellationToken cancellationToken = default);
+
     Task<PagedResult<WalletTransactionResponse>> GetWalletTransactionsAsync(
       Guid customerId,
       Guid walletId,

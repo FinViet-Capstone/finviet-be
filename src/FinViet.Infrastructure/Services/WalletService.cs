@@ -3,9 +3,9 @@ using FinViet.Application.Common;
 using FinViet.Application.DTOs.Wallets;
 using FinViet.Application.Exceptions;
 using FinViet.Application.Interfaces;
-using FinViet.Domain.Enums;
 using FinViet.Infrastructure.Persistence.Context;
 using FinViet.Infrastructure.Persistence.Entities;
+using FinViet.Infrastructure.Persistence.Idempotency;
 using Microsoft.EntityFrameworkCore;
 using BusinessRuleException = FinViet.Application.Common.Exceptions.BusinessRuleException;
 
@@ -40,7 +40,7 @@ public class WalletService : IWalletService
                 WalletId = w.WalletId,
                 CustomerId = customerId,
                 WalletName = w.WalletName,
-                WalletType = w.WalletType == WalletType.SepayLinked ? "sepay_linked" : "basic",
+                WalletType = NormalizeStoredWalletType(w.WalletType),
                 Balance = w.Balance ?? 0m
             })
             .ToListAsync(cancellationToken);
@@ -86,6 +86,7 @@ public class WalletService : IWalletService
             WalletType = NormalizeWalletType(request.EffectiveType),
             Balance = request.InitialBalance
         };
+
         _dbContext.Wallets.Add(wallet);
         await _dbContext.SaveChangesAsync(cancellationToken);
 
@@ -142,7 +143,11 @@ public class WalletService : IWalletService
         return true;
     }
 
-    public async Task<TransferWalletResponse> TransferAsync(Guid customerId, TransferWalletRequest request, CancellationToken cancellationToken = default)
+    public async Task<TransferWalletResponse> TransferAsync(
+        Guid customerId,
+        TransferWalletRequest request,
+        string? idempotencyKey,
+        CancellationToken cancellationToken = default)
     {
         if (request.FromWalletId == request.ToWalletId)
             throw new ValidationException("From wallet and to wallet must be different.");
@@ -150,26 +155,116 @@ public class WalletService : IWalletService
         if (request.Amount <= 0)
             throw new ValidationException("Transfer amount must be greater than 0.");
 
+        return await ExecuteWalletTransferAsync(
+            customerId,
+            request.FromWalletId,
+            request.ToWalletId,
+            request.Amount,
+            request.Description,
+            "Transfer",
+            "wallet-transfer",
+            idempotencyKey,
+            cancellationToken);
+    }
+
+    public async Task<TransferWalletResponse> WithdrawAsync(
+        Guid customerId,
+        WithdrawWalletRequest request,
+        string? idempotencyKey,
+        CancellationToken cancellationToken = default)
+    {
+        if (request.Amount <= 0)
+            throw new ValidationException("Withdrawal amount must be greater than 0.");
+
+        // Source must be a SePay-linked wallet owned by the customer (rút tiền: sepay_linked → basic).
+        var sourceWallet = await _dbContext.Wallets
+            .AsNoTracking()
+            .FirstOrDefaultAsync(
+                w => w.CustomerId == customerId && w.WalletId == request.FromWalletId && !w.IsDeleted,
+                cancellationToken);
+
+        if (sourceWallet is null)
+            throw new NotFoundException("Source wallet not found.");
+
+        if (!NormalizeStoredWalletType(sourceWallet.WalletType).Equals(SepayLinkedWalletType, StringComparison.Ordinal))
+            throw new BusinessRuleException(
+                "Withdrawal is only allowed from a SePay-linked wallet.",
+                "withdraw_source_not_sepay");
+
+        // Destination is a basic wallet: auto-pick when there is exactly one, otherwise prompt for a choice.
+        var destinationWalletId = await ResolveWithdrawDestinationAsync(
+            customerId,
+            request.ToWalletId,
+            request.FromWalletId,
+            cancellationToken);
+
+        return await ExecuteWalletTransferAsync(
+            customerId,
+            request.FromWalletId,
+            destinationWalletId,
+            request.Amount,
+            request.Description,
+            "Withdrawal",
+            "wallet-withdraw",
+            idempotencyKey,
+            cancellationToken);
+    }
+
+    // Moves money between two wallets of the same customer as a transfer pair
+    // (transfer_out + transfer_in sharing one transfer_pair_id, category/merchant null) so the
+    // movement is excluded from spending/budget/score and a deleted leg can drop its partner.
+    private async Task<TransferWalletResponse> ExecuteWalletTransferAsync(
+        Guid customerId,
+        Guid fromWalletId,
+        Guid toWalletId,
+        decimal amount,
+        string? description,
+        string transferLabel,
+        string idempotencyOperation,
+        string? idempotencyKey,
+        CancellationToken cancellationToken)
+    {
         await using var transaction = await _dbContext.Database.BeginTransactionAsync(
             IsolationLevel.ReadCommitted,
             cancellationToken);
 
+        var requestHash = IdempotencyStore.ComputeRequestHash(new
+        {
+            fromWalletId,
+            toWalletId,
+            amount,
+            description,
+            transferLabel
+        });
+        var idempotency = await IdempotencyStore.ClaimAsync(
+            _dbContext,
+            customerId,
+            idempotencyOperation,
+            idempotencyKey,
+            requestHash,
+            cancellationToken);
+        if (idempotency.IsReplay)
+        {
+            await transaction.CommitAsync(cancellationToken);
+            return IdempotencyStore.ReadReplay<TransferWalletResponse>(idempotency);
+        }
+
         // Lock both wallet rows in a deterministic order to avoid overspending and transfer deadlocks.
-        // Phải SELECT đủ mọi cột của entity Wallet cho FromSql (v2.1: bảng wallets, cột id/name/type).
+        // FromSql must SELECT every mapped column of the Wallet entity (table: wallets).
         var wallets = await _dbContext.Wallets
             .FromSqlInterpolated($"""
                 SELECT id, customer_id, name, type, balance, is_deleted, created_at, updated_at
                 FROM wallets
                 WHERE customer_id = {customerId}
-                  AND id IN ({request.FromWalletId}, {request.ToWalletId})
+                  AND id IN ({fromWalletId}, {toWalletId})
                   AND is_deleted = false
                 ORDER BY id
                 FOR UPDATE
                 """)
             .ToListAsync(cancellationToken);
 
-        var fromWallet = wallets.FirstOrDefault(w => w.WalletId == request.FromWalletId);
-        var toWallet = wallets.FirstOrDefault(w => w.WalletId == request.ToWalletId);
+        var fromWallet = wallets.FirstOrDefault(w => w.WalletId == fromWalletId);
+        var toWallet = wallets.FirstOrDefault(w => w.WalletId == toWalletId);
 
         if (fromWallet is null)
             throw new NotFoundException("From wallet not found.");
@@ -180,49 +275,114 @@ public class WalletService : IWalletService
         var fromWalletBalance = GetRequiredBalance(fromWallet);
         var toWalletBalance = GetRequiredBalance(toWallet);
 
-        if (fromWalletBalance < request.Amount)
+        if (fromWalletBalance < amount)
             throw new ValidationException("Source wallet does not have enough balance.");
 
-        fromWallet.Balance = fromWalletBalance - request.Amount;
-        toWallet.Balance = toWalletBalance + request.Amount;
-
         var now = DateTime.UtcNow;
-        var description = string.IsNullOrWhiteSpace(request.Description)
-            ? $"Transfer from {fromWallet.WalletName} to {toWallet.WalletName}"
-            : request.Description.Trim();
+        fromWallet.Balance = fromWalletBalance - amount;
+        toWallet.Balance = toWalletBalance + amount;
+        fromWallet.UpdatedAt = now;
+        toWallet.UpdatedAt = now;
+
+        var note = string.IsNullOrWhiteSpace(description)
+            ? $"{transferLabel} from {fromWallet.WalletName} to {toWallet.WalletName}"
+            : description.Trim();
+        var transferPairId = Guid.NewGuid();
 
         _dbContext.Transactions.AddRange(
             new Transaction
             {
                 TransactionId = Guid.NewGuid(),
+                CustomerId = customerId,
                 WalletId = fromWallet.WalletId,
-                TransactionType = TransactionType.TransferOut,
-                EntryMethod = EntryMethod.Manual,
-                Amount = request.Amount,
+                CategoryId = null,
+                TransactionType = "transfer_out",
+                EntryMethod = "manual",
+                Amount = amount,
+                Merchant = null,
+                Description = note,
                 TransactionDate = now,
-                Note = $"OUT: {description}"
+                TransferPairId = transferPairId,
+                CreatedAt = now,
+                UpdatedAt = now
             },
             new Transaction
             {
                 TransactionId = Guid.NewGuid(),
+                CustomerId = customerId,
                 WalletId = toWallet.WalletId,
-                TransactionType = TransactionType.TransferIn,
-                EntryMethod = EntryMethod.Manual,
-                Amount = request.Amount,
+                CategoryId = null,
+                TransactionType = "transfer_in",
+                EntryMethod = "manual",
+                Amount = amount,
+                Merchant = null,
+                Description = note,
                 TransactionDate = now,
-                Note = $"IN: {description}"
+                TransferPairId = transferPairId,
+                CreatedAt = now,
+                UpdatedAt = now
             });
 
         await _dbContext.SaveChangesAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
 
-        return new TransferWalletResponse
+        var result = new TransferWalletResponse
         {
             FromWalletId = fromWallet.WalletId,
             ToWalletId = toWallet.WalletId,
             FromWalletBalance = GetRequiredBalance(fromWallet),
             ToWalletBalance = GetRequiredBalance(toWallet)
         };
+        await IdempotencyStore.CompleteAsync(
+            _dbContext,
+            customerId,
+            idempotencyOperation,
+            idempotencyKey!,
+            result,
+            cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+
+        return result;
+    }
+
+    // Picks the basic wallet that receives a withdrawal. With one basic wallet it is implicit;
+    // with several the caller must name one (FE prompts on the 422 "multiple_basic_wallets").
+    private async Task<Guid> ResolveWithdrawDestinationAsync(
+        Guid customerId,
+        Guid? requestedWalletId,
+        Guid sourceWalletId,
+        CancellationToken cancellationToken)
+    {
+        var basicWalletIds = (await _dbContext.Wallets
+                .AsNoTracking()
+                .Where(w => w.CustomerId == customerId && !w.IsDeleted)
+                .Select(w => new { w.WalletId, w.WalletType })
+                .ToListAsync(cancellationToken))
+            .Where(w => NormalizeStoredWalletType(w.WalletType).Equals(BasicWalletType, StringComparison.Ordinal))
+            .Select(w => w.WalletId)
+            .ToList();
+
+        if (basicWalletIds.Count == 0)
+            throw new BusinessRuleException(
+                "No basic wallet is available to receive the withdrawal. Create a basic wallet first.",
+                "no_basic_wallet");
+
+        if (requestedWalletId.HasValue)
+        {
+            if (requestedWalletId.Value == sourceWalletId)
+                throw new ValidationException("Destination wallet must be different from the source wallet.");
+
+            if (!basicWalletIds.Contains(requestedWalletId.Value))
+                throw new ValidationException("Destination wallet must be an existing basic wallet.");
+
+            return requestedWalletId.Value;
+        }
+
+        if (basicWalletIds.Count > 1)
+            throw new BusinessRuleException(
+                "Multiple basic wallets found. Specify which wallet should receive the withdrawal.",
+                "multiple_basic_wallets");
+
+        return basicWalletIds[0];
     }
 
     public async Task<PagedResult<WalletTransactionResponse>> GetWalletTransactionsAsync(
@@ -267,30 +427,23 @@ public class WalletService : IWalletService
 
         if (!string.IsNullOrWhiteSpace(query.TransactionType))
         {
-            var type = query.TransactionType.Trim().ToUpperInvariant();
-            switch (type)
+            var type = query.TransactionType.Trim().ToLowerInvariant();
+            var allowedTypes = new[]
             {
-                case "INCOME":
-                    transactionsQuery = transactionsQuery.Where(x => x.TransactionType == TransactionType.Income);
-                    break;
-                case "EXPENSE":
-                    transactionsQuery = transactionsQuery.Where(x => x.TransactionType == TransactionType.Expense);
-                    break;
-                case "TRANSFER":
-                    transactionsQuery = transactionsQuery.Where(x =>
-                        x.TransactionType == TransactionType.TransferOut ||
-                        x.TransactionType == TransactionType.TransferIn);
-                    break;
-                case "TRANSFER_OUT":
-                    transactionsQuery = transactionsQuery.Where(x => x.TransactionType == TransactionType.TransferOut);
-                    break;
-                case "TRANSFER_IN":
-                    transactionsQuery = transactionsQuery.Where(x => x.TransactionType == TransactionType.TransferIn);
-                    break;
-                default:
-                    throw new ValidationException(
-                        "Transaction type must be one of: INCOME, EXPENSE, TRANSFER, TRANSFER_OUT, TRANSFER_IN.");
+                "income",
+                "expense",
+                "transfer_out",
+                "transfer_in"
+            };
+
+            if (!allowedTypes.Contains(type))
+            {
+                throw new ValidationException(
+                    "Transaction type must be one of: income, expense, transfer_out, transfer_in.");
             }
+
+            transactionsQuery = transactionsQuery
+                .Where(x => x.TransactionType == type);
         }
 
         transactionsQuery = query.SortOrder.Trim().ToLowerInvariant() == "asc"
@@ -299,35 +452,22 @@ public class WalletService : IWalletService
 
         var totalItems = await transactionsQuery.CountAsync(cancellationToken);
 
-        var rawItems = await transactionsQuery
+        var items = await transactionsQuery
             .Skip((query.Page - 1) * query.PageSize)
             .Take(query.PageSize)
-            .Select(x => new
-            {
-                x.TransactionId,
-                x.WalletId,
-                x.CategoryId,
-                x.TransactionType,
-                x.Amount,
-                x.TransactionDate,
-                x.Description
-            })
-            .ToListAsync(cancellationToken);
-
-        var items = rawItems
             .Select(x => new WalletTransactionResponse
             {
                 TransactionId = x.TransactionId,
                 WalletId = x.WalletId,
                 CategoryId = x.CategoryId,
-                TransactionType = ToTransactionTypeString(x.TransactionType),
+                TransactionType = x.TransactionType,
                 Amount = x.Amount,
                 TransactionDate = x.TransactionDate.HasValue
                     ? new DateTimeOffset(DateTime.SpecifyKind(x.TransactionDate.Value, DateTimeKind.Utc))
                     : DateTimeOffset.MinValue,
                 Note = x.Description
             })
-            .ToList();
+            .ToListAsync(cancellationToken);
 
         return new PagedResult<WalletTransactionResponse>
         {
@@ -367,7 +507,7 @@ public class WalletService : IWalletService
             throw new ValidationException("Wallet type cannot be changed after creation.");
     }
 
-    private static WalletType NormalizeWalletType(string walletType)
+    private static string NormalizeWalletType(string walletType)
     {
         var normalized = walletType.Trim();
         if (!AllowedWalletTypes.Contains(normalized))
@@ -375,14 +515,10 @@ public class WalletService : IWalletService
 
         return normalized.ToUpperInvariant() switch
         {
-            "CASH" or "BANK_ACCOUNT" or "CREDIT_CARD" or "E_WALLET" or "INVESTMENT" or "BASIC" => WalletType.Basic,
-            "SEPAY_LINKED" => WalletType.SepayLinked,
-            _ => WalletType.Basic
+            "CASH" or "BANK_ACCOUNT" or "CREDIT_CARD" or "E_WALLET" or "INVESTMENT" => BasicWalletType,
+            _ => normalized.ToLowerInvariant()
         };
     }
-
-    private static string ToWalletTypeString(WalletType walletType)
-        => walletType == WalletType.SepayLinked ? "sepay_linked" : "basic";
 
     private static WalletResponse ToResponse(Wallet wallet)
         => new()
@@ -390,7 +526,7 @@ public class WalletService : IWalletService
             WalletId = wallet.WalletId,
             CustomerId = GetRequiredCustomerId(wallet),
             WalletName = wallet.WalletName,
-            WalletType = ToWalletTypeString(wallet.WalletType),
+            WalletType = NormalizeStoredWalletType(wallet.WalletType),
             Balance = GetRequiredBalance(wallet)
         };
 
@@ -416,12 +552,10 @@ public class WalletService : IWalletService
             cancellationToken);
     }
 
-    private static string ToTransactionTypeString(TransactionType type) => type switch
-    {
-        TransactionType.Income => "income",
-        TransactionType.Expense => "expense",
-        TransactionType.TransferOut => "transfer_out",
-        TransactionType.TransferIn => "transfer_in",
-        _ => "expense"
-    };
+    private static string NormalizeStoredWalletType(string walletType)
+        => walletType.ToUpperInvariant() switch
+        {
+            "CASH" or "BANK_ACCOUNT" or "CREDIT_CARD" or "E_WALLET" or "INVESTMENT" => BasicWalletType,
+            _ => walletType.ToLowerInvariant()
+        };
 }

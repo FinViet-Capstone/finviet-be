@@ -8,6 +8,7 @@ public class SavingGoalResponse
     public decimal TargetAmount { get; set; }
     public decimal CurrentAmount { get; set; }
     public DateOnly? Deadline { get; set; }
+    public Guid? FundingWalletId { get; set; }
 
     // ── Progress tracking (function 44) ──────────────────────
     public decimal RemainingAmount { get; set; }

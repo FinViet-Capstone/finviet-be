@@ -3,7 +3,6 @@ using FinViet.Application.Common.Exceptions;
 using FinViet.Application.DTOs.Ai;
 using FinViet.Application.Exceptions;
 using FinViet.Application.Interfaces;
-using FinViet.Domain.Enums;
 using FinViet.Infrastructure.Persistence.Context;
 using FinViet.Infrastructure.Persistence.Entities;
 using Microsoft.EntityFrameworkCore;
@@ -132,17 +131,17 @@ public class AiChatService : IAiChatService
         var spendByCategory = await _db.Transactions
             .Join(_db.Wallets, t => t.WalletId, w => w.WalletId, (t, w) => new { t, w.CustomerId })
             .Where(x => x.CustomerId == customerId
-                        && x.t.TransactionType == TransactionType.Expense
+                        && x.t.TransactionType == "EXPENSE"
                         && x.t.TransactionDate >= monthStart && x.t.TransactionDate <= monthEnd)
             .Join(_db.Categories, x => x.t.CategoryId, c => c.CategoryId,
-                (x, c) => new { c.CategoryName, c.ExpenseClass, x.t.Amount })
-            .GroupBy(x => new { x.CategoryName, x.ExpenseClass })
-            .Select(g => new { g.Key.CategoryName, g.Key.ExpenseClass, Total = g.Sum(x => x.Amount) })
+                (x, c) => new { c.CategoryName, c.DefaultBucket, x.t.Amount })
+            .GroupBy(x => new { x.CategoryName, x.DefaultBucket })
+            .Select(g => new { g.Key.CategoryName, g.Key.DefaultBucket, Total = g.Sum(x => x.Amount) })
             .ToListAsync(ct);
 
         var totalSpent = spendByCategory.Sum(s => s.Total);
         var byBucket = spendByCategory
-            .GroupBy(s => s.ExpenseClass ?? "Khác")
+            .GroupBy(s => s.DefaultBucket ?? "Khác")
             .ToDictionary(g => g.Key, g => g.Sum(x => x.Total));
 
         var sb = new StringBuilder();

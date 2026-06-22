@@ -2,7 +2,6 @@ using System.Text.Json;
 using FinViet.Application.DTOs.Ai;
 using FinViet.Application.Exceptions;
 using FinViet.Application.Interfaces;
-using FinViet.Domain.Enums;
 using FinViet.Infrastructure.Persistence.Context;
 using FinViet.Infrastructure.Persistence.Entities;
 using Microsoft.EntityFrameworkCore;
@@ -116,7 +115,7 @@ public class SpendingScoreService : ISpendingScoreService
         var rows = await _db.Transactions
             .Join(_db.Wallets, t => t.WalletId, w => w.WalletId, (t, w) => new { t, w.CustomerId })
             .Where(x => x.CustomerId == customerId
-                        && x.t.TransactionType == TransactionType.Expense
+                        && x.t.TransactionType == "expense"
                         && x.t.TransactionDate != null
                         && x.t.TransactionDate >= DateRange.StartUtc(windowStart)
                         && x.t.TransactionDate <= DateRange.EndUtc(asOf))
@@ -181,20 +180,20 @@ public class SpendingScoreService : ISpendingScoreService
             .ToDictionaryAsync(u => u.CategoryId, u => u.BucketId, ct);
 
         var categories = await _db.Categories
-            .Where(c => c.Type == CategoryType.Expense)
-            .Select(c => new { c.CategoryId, c.CategoryName, c.ExpenseClass })
+            .Where(c => c.Type == "expense")
+            .Select(c => new { c.CategoryId, c.CategoryName, c.DefaultBucket })
             .ToListAsync(ct);
         var catInfo = categories.ToDictionary(c => c.CategoryId, c => c);
 
         string? BucketOf(string categoryId) =>
             userBuckets.TryGetValue(categoryId, out var b) ? b
-            : catInfo.TryGetValue(categoryId, out var c) ? c.ExpenseClass : null;
+            : catInfo.TryGetValue(categoryId, out var c) ? c.DefaultBucket : null;
 
         // Actual spend per category (recomputed from transactions; exclude Uncategorized).
         var actuals = await _db.Transactions
             .Join(_db.Wallets, t => t.WalletId, w => w.WalletId, (t, w) => new { t, w.CustomerId })
             .Where(x => x.CustomerId == customerId
-                        && x.t.TransactionType == TransactionType.Expense
+                        && x.t.TransactionType == "expense"
                         && x.t.CategoryId != null
                         && x.t.TransactionDate != null
                         && x.t.TransactionDate >= DateRange.StartUtc(start)
@@ -290,14 +289,14 @@ public class SpendingScoreService : ISpendingScoreService
 
         // Savings-bucket transactions (categories with expense_class = SAVINGS).
         var savingsCatIds = await _db.Categories
-            .Where(c => c.ExpenseClass == "savings")
+            .Where(c => c.DefaultBucket == "savings")
             .Select(c => c.CategoryId)
             .ToListAsync(ct);
 
         var savingsTxns = await _db.Transactions
             .Join(_db.Wallets, t => t.WalletId, w => w.WalletId, (t, w) => new { t, w.CustomerId })
             .Where(x => x.CustomerId == customerId
-                        && x.t.TransactionType == TransactionType.Expense
+                        && x.t.TransactionType == "expense"
                         && x.t.CategoryId != null
                         && savingsCatIds.Contains(x.t.CategoryId!)
                         && x.t.TransactionDate >= windowStart

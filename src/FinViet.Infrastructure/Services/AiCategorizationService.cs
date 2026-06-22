@@ -1,7 +1,6 @@
 using FinViet.Application.DTOs.Ai;
 using FinViet.Application.Exceptions;
 using FinViet.Application.Interfaces;
-using FinViet.Domain.Enums;
 using FinViet.Infrastructure.Persistence.Context;
 using FinViet.Infrastructure.Persistence.Entities;
 using Microsoft.EntityFrameworkCore;
@@ -116,7 +115,7 @@ public class AiCategorizationService : IAiCategorizationService
 
     private async Task<Dictionary<string, string>> ExpenseCategoriesAsync(CancellationToken ct)
         => await _db.Categories
-            .Where(c => c.Type == CategoryType.Expense && c.CategoryName != UncategorizedName && c.CategoryId != "cat_savings_goal")
+            .Where(c => c.Type == "expense" && c.CategoryName != UncategorizedName && c.CategoryId != "cat_savings_goal")
             .ToDictionaryAsync(c => c.CategoryName, c => c.CategoryId, ct);
 
     private async Task ApplyUncategorizedAsync(Transaction txn, CancellationToken ct)

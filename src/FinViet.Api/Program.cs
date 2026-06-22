@@ -1,24 +1,26 @@
 using FinViet.Api.Middlewares;
-using Microsoft.OpenApi.Models;
-
-using System.Text;
-
 using FinViet.Application;
 using FinViet.Infrastructure;
 using FinViet.Infrastructure.Persistence;
 using FinViet.Infrastructure.Persistence.Context;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
+using Microsoft.OpenApi.Models;
+using System.Text;
 
 
 var builder = WebApplication.CreateBuilder(args);
 
 // ── Services ─────────────────────────────────────────────────────────────────
-
 // Application layer (FluentValidation + ValidationBehavior)
 builder.Services.AddApplicationServices();
 
 // Infrastructure layer (DbContext, JWT, Email, Firebase, Avatar, Wallets)
+// NOTE: DbContext is registered here via an Npgsql data source that maps Postgres
+// enums (email_token_type, gender, ...). Do NOT add a separate AddDbContext above —
+// AddDbContext uses TryAdd, so an earlier plain registration would win and enums
+// would be sent as integers ("operator does not exist: email_token_type = integer").
 builder.Services.AddInfrastructureServices(builder.Configuration);
 
 // Register MediatR handlers from Infrastructure (where handlers live in pragmatic arch)
