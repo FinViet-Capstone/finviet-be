@@ -9,7 +9,6 @@ namespace FinViet.Api.Controllers;
 [ApiController]
 [Authorize]
 [Route("api/categories")]
-[Route("v1/categories")]
 public class CategoriesController : ControllerBase
 {
     private readonly ICategoryService _categoryService;
