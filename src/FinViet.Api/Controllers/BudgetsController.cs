@@ -10,7 +10,6 @@ namespace FinViet.Api.Controllers;
 [ApiController]
 [Authorize(Roles = "Customer")]
 [Route("api/budgets")]
-[Route("v1/budgets")]
 public class BudgetsController : ControllerBase
 {
     private readonly IBudgetService _budgetService;

@@ -29,11 +29,22 @@ public class ExtractController : ControllerBase
         public int? MaxRows { get; set; }
     }
 
+    private const long MaxCsvFileBytes = 5 * 1024 * 1024; // 5 MB
+    private const int MaxSmsTextLength = 20_000;
+    private static readonly string[] AllowedCsvExtensions = { ".csv", ".xlsx", ".xls" };
+
     // POST /api/extract/sms — parse pasted SMS text → candidate rows + AI category suggestions
     [HttpPost("sms")]
     public async Task<ActionResult<ApiResponse<ExtractResponse>>> ExtractSms(
         [FromBody] SmsExtractRequest request, CancellationToken cancellationToken)
     {
+        if (request is null || string.IsNullOrWhiteSpace(request.Text))
+            return BadRequest(ApiResponse<ExtractResponse>.Fail("Vui lòng dán nội dung tin nhắn cần trích xuất."));
+
+        if (request.Text.Length > MaxSmsTextLength)
+            return BadRequest(ApiResponse<ExtractResponse>.Fail(
+                $"Nội dung quá dài (tối đa {MaxSmsTextLength:N0} ký tự). Hãy chia nhỏ và dán lại."));
+
         var result = await _extract.ExtractSmsAsync(request.Text, cancellationToken);
         return Ok(ApiResponse<ExtractResponse>.Ok(result, BuildSmsResultMessage(result)));
     }
@@ -60,7 +71,19 @@ public class ExtractController : ControllerBase
         [FromForm] CsvExtractFormRequest request, CancellationToken cancellationToken)
     {
         if (request.File == null || request.File.Length == 0)
-            return BadRequest(ApiResponse<ExtractResponse>.Fail("File is required."));
+            return BadRequest(ApiResponse<ExtractResponse>.Fail("Vui lòng chọn tệp sao kê (.csv, .xlsx) để trích xuất."));
+
+        if (request.File.Length > MaxCsvFileBytes)
+            return BadRequest(ApiResponse<ExtractResponse>.Fail(
+                $"Tệp quá lớn (tối đa {MaxCsvFileBytes / (1024 * 1024)} MB)."));
+
+        var extension = Path.GetExtension(request.File.FileName).ToLowerInvariant();
+        if (!AllowedCsvExtensions.Contains(extension))
+            return BadRequest(ApiResponse<ExtractResponse>.Fail(
+                $"Định dạng tệp không hợp lệ. Chỉ chấp nhận: {string.Join(", ", AllowedCsvExtensions)}."));
+
+        if (request.MaxRows is < 1)
+            return BadRequest(ApiResponse<ExtractResponse>.Fail("maxRows phải lớn hơn 0."));
 
         await using var stream = request.File.OpenReadStream();
         var result = await _extract.ExtractCsvAsync(stream, request.MaxRows, cancellationToken);
