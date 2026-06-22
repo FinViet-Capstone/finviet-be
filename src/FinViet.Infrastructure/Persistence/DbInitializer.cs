@@ -168,8 +168,13 @@ public static class DbInitializer
         CancellationToken cancellationToken)
     {
         await SeedAdminAsync(db, logger, cancellationToken);
-        // Demo customers (demo/alice/bob) are intentionally NOT seeded — they wrote demo
-        // accounts into every environment on startup. Re-enable only for local fixtures.
+        // (merge origin/dev) Seed thư viện danh mục GLOBAL — BẮT BUỘC: mọi luồng transaction/
+        // budget/goal phụ thuộc category; thiếu là app vỡ. Idempotent theo CategoryId.
+        await SeedCategoriesAsync(db, logger, cancellationToken);
+        // (merge origin/dev) Demo customers (demo/alice/bob) cho môi trường dev/demo. Idempotent
+        // theo email. Local trước đây cố ý KHÔNG seed (tránh demo account vào mọi env); bật lại để
+        // khớp origin/dev và dữ liệu dev hiện có. Tắt dòng này nếu deploy production.
+        await SeedCustomersAsync(db, logger, cancellationToken);
         await db.SaveChangesAsync(cancellationToken);
     }
 
@@ -189,5 +194,91 @@ public static class DbInitializer
         });
 
         logger.LogInformation("Seeded admin account: username={Username} password=Admin@123", adminUsername);
+    }
+
+    /// <summary>
+    /// (Merge của origin/dev `SeedCategoriesAsync`, đã chỉnh cho entity bản LOCAL.)
+    /// Khác biệt khi gộp: origin/dev dùng <c>Type = CategoryType.Expense</c> + <c>ExpenseClass</c>;
+    /// local dùng <c>Type</c> là string (qua PgEnumStringConverter&lt;CategoryType&gt; → pg enum
+    /// <c>category_type</c>) và field <c>DefaultBucket</c> (varchar, FK buckets: needs/wants/savings).
+    /// Vì vậy mọi <c>CategoryType.Expense</c> → <c>"expense"</c>, <c>CategoryType.Income</c> → <c>"income"</c>,
+    /// <c>ExpenseClass</c> → <c>DefaultBucket</c>. Income có <c>DefaultBucket = null</c>.
+    /// </summary>
+    private static async Task SeedCategoriesAsync(FinVietDbContext db, ILogger logger, CancellationToken ct)
+    {
+        var seedCategories = new[]
+        {
+            new Category { CategoryId = "cat_food",              CategoryName = "Ăn uống",              NameEn = "Food",                Type = "expense", Icon = "restaurant",      Color = "#4EDEA3", DefaultBucket = "needs",   SortOrder = 1 },
+            new Category { CategoryId = "cat_housing",           CategoryName = "Nhà ở & Tiện ích",     NameEn = "Housing & Utilities", Type = "expense", Icon = "home",            Color = "#D0BCFF", DefaultBucket = "needs",   SortOrder = 2 },
+            new Category { CategoryId = "cat_transport",         CategoryName = "Di chuyển",            NameEn = "Transport",           Type = "expense", Icon = "directions_car",  Color = "#90CAF9", DefaultBucket = "needs",   SortOrder = 3 },
+            new Category { CategoryId = "cat_health",            CategoryName = "Sức khỏe & Y tế",      NameEn = "Health",              Type = "expense", Icon = "local_hospital",  Color = "#EF9A9A", DefaultBucket = "needs",   SortOrder = 4 },
+            new Category { CategoryId = "cat_education",         CategoryName = "Giáo dục",             NameEn = "Education",           Type = "expense", Icon = "school",          Color = "#FFE082", DefaultBucket = "needs",   SortOrder = 5 },
+            new Category { CategoryId = "cat_family",            CategoryName = "Gửi tiền gia đình",    NameEn = "Family support",      Type = "expense", Icon = "family_restroom", Color = "#BCAAA4", DefaultBucket = "needs",   SortOrder = 6 },
+            new Category { CategoryId = "cat_entertain",         CategoryName = "Giải trí",             NameEn = "Entertainment",       Type = "expense", Icon = "sports_esports",  Color = "#CE93D8", DefaultBucket = "wants",   SortOrder = 7 },
+            new Category { CategoryId = "cat_beauty",            CategoryName = "Quần áo & Thời trang", NameEn = "Fashion",             Type = "expense", Icon = "checkroom",       Color = "#F8BBD0", DefaultBucket = "wants",   SortOrder = 8 },
+            new Category { CategoryId = "cat_shopping",          CategoryName = "Mua sắm online",       NameEn = "Shopping",            Type = "expense", Icon = "shopping_bag",    Color = "#FFB690", DefaultBucket = "wants",   SortOrder = 9 },
+            new Category { CategoryId = "cat_dining",            CategoryName = "Ăn ngoài & Cà phê",    NameEn = "Dining & Coffee",     Type = "expense", Icon = "local_cafe",      Color = "#FFCC80", DefaultBucket = "wants",   SortOrder = 10 },
+            new Category { CategoryId = "cat_savings",           CategoryName = "Tiết kiệm",            NameEn = "Savings",             Type = "expense", Icon = "savings",         Color = "#4EDEA3", DefaultBucket = "savings", SortOrder = 11 },
+            new Category { CategoryId = "cat_invest",            CategoryName = "Đầu tư",               NameEn = "Investment",          Type = "expense", Icon = "trending_up",     Color = "#A5D6A7", DefaultBucket = "savings", SortOrder = 12 },
+            new Category { CategoryId = "cat_savings_goal",      CategoryName = "Mục tiêu tiết kiệm",   NameEn = "Saving goal",         Type = "expense", Icon = "flag",            Color = "#80CBC4", DefaultBucket = "savings", SortOrder = 13 },
+            new Category { CategoryId = "cat_salary",            CategoryName = "Lương",                NameEn = "Salary",              Type = "income",  Icon = "payments",        Color = "#81C784", DefaultBucket = null,      SortOrder = 101 },
+            new Category { CategoryId = "cat_freelance",         CategoryName = "Freelance",            NameEn = "Freelance",           Type = "income",  Icon = "work",            Color = "#64B5F6", DefaultBucket = null,      SortOrder = 102 },
+            new Category { CategoryId = "cat_investment_return", CategoryName = "Lợi nhuận đầu tư",     NameEn = "Investment return",   Type = "income",  Icon = "trending_up",     Color = "#A5D6A7", DefaultBucket = null,      SortOrder = 103 },
+            new Category { CategoryId = "cat_gift",              CategoryName = "Quà tặng",             NameEn = "Gift",                Type = "income",  Icon = "redeem",          Color = "#F48FB1", DefaultBucket = null,      SortOrder = 104 },
+            new Category { CategoryId = "cat_income_other",      CategoryName = "Thu nhập khác",        NameEn = "Other income",        Type = "income",  Icon = "more_horiz",      Color = "#B0BEC5", DefaultBucket = null,      SortOrder = 105 },
+        };
+
+        var ids = seedCategories.Select(c => c.CategoryId).ToArray();
+        var existingIds = await db.Categories
+            .Where(c => ids.Contains(c.CategoryId))
+            .Select(c => c.CategoryId)
+            .ToListAsync(ct);
+
+        var added = 0;
+        foreach (var category in seedCategories)
+        {
+            if (existingIds.Contains(category.CategoryId)) continue;
+            db.Categories.Add(category);
+            added++;
+        }
+
+        if (added > 0)
+            logger.LogInformation("Seeded {Count} categories", added);
+    }
+
+    /// <summary>
+    /// (Merge của origin/dev `SeedCustomersAsync`.) Customer entity giống nhau ở cả hai bản nên
+    /// bê nguyên; idempotent theo email. NeedsPct/WantsPct/SavingsPct lấy default 50/30/20 của entity.
+    /// </summary>
+    private static async Task SeedCustomersAsync(FinVietDbContext db, ILogger logger, CancellationToken ct)
+    {
+        var seedCustomers = new[]
+        {
+            new { Email = "demo@finviet.local",  FullName = "Demo User",    Password = "Demo@1234",  MonthlyIncomeExpected = 15_000_000m },
+            new { Email = "alice@finviet.local", FullName = "Alice Nguyen", Password = "Alice@1234", MonthlyIncomeExpected = 20_000_000m },
+            new { Email = "bob@finviet.local",   FullName = "Bob Tran",     Password = "Bob@12345",  MonthlyIncomeExpected = 12_000_000m }
+        };
+
+        foreach (var s in seedCustomers)
+        {
+            var email = s.Email.ToLowerInvariant();
+            var exists = await db.Customers.AnyAsync(c => c.Email == email, ct);
+            if (exists) continue;
+
+            db.Customers.Add(new Customer
+            {
+                CustomerId            = Guid.NewGuid(),
+                FullName              = s.FullName,
+                Email                 = email,
+                PasswordHash          = BCrypt.Net.BCrypt.HashPassword(s.Password),
+                IsEmailVerified       = true,
+                EmailVerifiedAt       = DateTime.UtcNow,
+                IsActive              = true,
+                MonthlyIncomeExpected = s.MonthlyIncomeExpected,
+                CreatedAt             = DateTime.UtcNow
+            });
+
+            logger.LogInformation("Seeded customer: {Email}", email);
+        }
     }
 }
