@@ -181,13 +181,13 @@ public class SpendingScoreService : ISpendingScoreService
 
         var categories = await _db.Categories
             .Where(c => c.Type == "expense")
-            .Select(c => new { c.CategoryId, c.CategoryName, c.ExpenseClass })
+            .Select(c => new { c.CategoryId, c.CategoryName, c.DefaultBucket })
             .ToListAsync(ct);
         var catInfo = categories.ToDictionary(c => c.CategoryId, c => c);
 
         string? BucketOf(string categoryId) =>
             userBuckets.TryGetValue(categoryId, out var b) ? b
-            : catInfo.TryGetValue(categoryId, out var c) ? c.ExpenseClass : null;
+            : catInfo.TryGetValue(categoryId, out var c) ? c.DefaultBucket : null;
 
         // Actual spend per category (recomputed from transactions; exclude Uncategorized).
         var actuals = await _db.Transactions
@@ -289,7 +289,7 @@ public class SpendingScoreService : ISpendingScoreService
 
         // Savings-bucket transactions (categories with expense_class = SAVINGS).
         var savingsCatIds = await _db.Categories
-            .Where(c => c.ExpenseClass == "savings")
+            .Where(c => c.DefaultBucket == "savings")
             .Select(c => c.CategoryId)
             .ToListAsync(ct);
 

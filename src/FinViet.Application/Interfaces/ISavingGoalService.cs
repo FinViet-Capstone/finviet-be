@@ -16,6 +16,7 @@ public interface ISavingGoalService
     Task<SavingGoalResponse> CreateGoalAsync(
         Guid customerId,
         CreateSavingGoalRequest request,
+        string? idempotencyKey,
         CancellationToken cancellationToken = default);
 
     Task<SavingGoalResponse?> UpdateGoalAsync(
@@ -34,5 +35,6 @@ public interface ISavingGoalService
         Guid customerId,
         Guid goalId,
         ContributeSavingGoalRequest request,
+        string? idempotencyKey,
         CancellationToken cancellationToken = default);
 }

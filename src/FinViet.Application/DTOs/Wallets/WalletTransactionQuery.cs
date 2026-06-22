@@ -18,7 +18,7 @@ namespace FinViet.Application.DTOs.Wallets
 
     public string? CategoryId { get; set; }
 
-    // INCOME, EXPENSE, TRANSFER, DEBT_PAYMENT
+    // income, expense, transfer_out, transfer_in
     public string? TransactionType { get; set; }
 
         // asc / desc

@@ -32,9 +32,19 @@ public static class DependencyInjection
         dataSourceBuilder.MapEnum<AppLanguage>("app_language");
         dataSourceBuilder.MapEnum<AppTheme>("app_theme");
         dataSourceBuilder.MapEnum<SepaySyncStatus>("sepay_sync_status");
-        // Remaining Postgres enums (transaction_type, category_type, wallet_type, notification_type,
-        // chat_role, score_view, score_color, subscription_status, category_source, entry_method...)
-        // are handled as plain text via EnableUnmappedTypes + HasColumnType on each column.
+        dataSourceBuilder.MapEnum<WalletType>("wallet_type");
+        dataSourceBuilder.MapEnum<TransactionType>("transaction_type");
+        dataSourceBuilder.MapEnum<EntryMethod>("entry_method");
+        dataSourceBuilder.MapEnum<CategoryType>("category_type");
+        dataSourceBuilder.MapEnum<CategorySource>("category_source");
+        dataSourceBuilder.MapEnum<CategoryRequestStatus>("category_request_status");
+        dataSourceBuilder.MapEnum<NotificationType>("notification_type");
+        dataSourceBuilder.MapEnum<NotificationEntityType>("notification_entity_type");
+        dataSourceBuilder.MapEnum<SubscriptionStatus>("subscription_status");
+        // The entities expose these enum columns as strings; an EF value converter
+        // (PgEnumStringConverter) binds them to the CLR enums mapped above so Npgsql sends the
+        // enum OID, not text. The remaining DB enums (chat_role, score_view, score_color) are not
+        // currently surfaced by any mapped EF column, so they need no mapping yet.
         dataSourceBuilder.EnableUnmappedTypes();
         var dataSource = dataSourceBuilder.Build();
 

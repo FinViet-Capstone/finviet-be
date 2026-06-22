@@ -168,7 +168,8 @@ public static class DbInitializer
         CancellationToken cancellationToken)
     {
         await SeedAdminAsync(db, logger, cancellationToken);
-        await SeedCustomersAsync(db, logger, cancellationToken);
+        // Demo customers (demo/alice/bob) are intentionally NOT seeded — they wrote demo
+        // accounts into every environment on startup. Re-enable only for local fixtures.
         await db.SaveChangesAsync(cancellationToken);
     }
 
@@ -188,55 +189,5 @@ public static class DbInitializer
         });
 
         logger.LogInformation("Seeded admin account: username={Username} password=Admin@123", adminUsername);
-    }
-
-    private static async Task SeedCustomersAsync(FinVietDbContext db, ILogger logger, CancellationToken ct)
-    {
-        var seedCustomers = new[]
-        {
-            new
-            {
-                Email                 = "demo@finviet.local",
-                FullName              = "Demo User",
-                Password              = "Demo@1234",
-                MonthlyIncomeExpected = 15_000_000m
-            },
-            new
-            {
-                Email                 = "alice@finviet.local",
-                FullName              = "Alice Nguyen",
-                Password              = "Alice@1234",
-                MonthlyIncomeExpected = 20_000_000m
-            },
-            new
-            {
-                Email                 = "bob@finviet.local",
-                FullName              = "Bob Tran",
-                Password              = "Bob@12345",
-                MonthlyIncomeExpected = 12_000_000m
-            }
-        };
-
-        foreach (var s in seedCustomers)
-        {
-            var email = s.Email.ToLower();
-            var exists = await db.Customers.AnyAsync(c => c.Email == email, ct);
-            if (exists) continue;
-
-            db.Customers.Add(new Customer
-            {
-                CustomerId            = Guid.NewGuid(),
-                FullName              = s.FullName,
-                Email                 = email,
-                PasswordHash          = BCrypt.Net.BCrypt.HashPassword(s.Password),
-                IsEmailVerified       = true,
-                EmailVerifiedAt       = DateTime.UtcNow,
-                IsActive              = true,
-                MonthlyIncomeExpected = s.MonthlyIncomeExpected,
-                CreatedAt             = DateTime.UtcNow
-            });
-
-            logger.LogInformation("Seeded customer: {Email} password={Password}", email, s.Password);
-        }
     }
 }

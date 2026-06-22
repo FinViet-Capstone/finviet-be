@@ -61,16 +61,20 @@ public class TransactionsController : ControllerBase
     }
 
     [HttpPost]
-    public async Task<ActionResult<TransactionResponseDto>> CreateTransaction([FromBody] CreateTransactionDto dto)
+    public async Task<ActionResult<TransactionResponseDto>> CreateTransaction(
+        [FromBody] CreateTransactionDto dto,
+        [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey)
     {
         var command = new CreateTransactionCommand
         {
+            CustomerId = GetCustomerId(),
             WalletId = dto.WalletId,
             CategoryId = dto.CategoryId,
             TransactionType = dto.TransactionType,
             Amount = dto.Amount,
             TransactionDate = dto.TransactionDate,
-            Note = dto.Note
+            Note = dto.Note ?? string.Empty,
+            IdempotencyKey = idempotencyKey
         };
 
         var result = await _mediator.Send(command);
@@ -82,12 +86,9 @@ public class TransactionsController : ControllerBase
     {
         var command = new UpdateTransactionCommand
         {
+            CustomerId = GetCustomerId(),
             TransactionId = id,
-            CategoryId = dto.CategoryId,
-            TransactionType = dto.TransactionType,
-            Amount = dto.Amount,
-            TransactionDate = dto.TransactionDate,
-            Note = dto.Note
+            CategoryId = dto.CategoryId
         };
 
         var result = await _mediator.Send(command);
@@ -97,7 +98,11 @@ public class TransactionsController : ControllerBase
     [HttpDelete("{id}")]
     public async Task<ActionResult<bool>> DeleteTransaction(Guid id)
     {
-        var command = new DeleteTransactionCommand { TransactionId = id };
+        var command = new DeleteTransactionCommand
+        {
+            CustomerId = GetCustomerId(),
+            TransactionId = id
+        };
         var result = await _mediator.Send(command);
         return Ok(result);
     }

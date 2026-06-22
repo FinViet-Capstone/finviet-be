@@ -16,7 +16,11 @@ public partial class Category
 
     public bool? IsMandatory { get; set; }
 
-    public string? ExpenseClass { get; set; }
+    /// <summary>
+    /// Maps to <c>categories.default_bucket</c> — a FK to <c>buckets(id)</c> whose values are the
+    /// lowercase slugs <c>needs</c> / <c>wants</c> / <c>savings</c> (null for income/uncategorized).
+    /// </summary>
+    public string? DefaultBucket { get; set; }
 
     public string? Icon { get; set; }
 

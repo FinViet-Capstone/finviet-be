@@ -134,14 +134,14 @@ public class AiChatService : IAiChatService
                         && x.t.TransactionType == "EXPENSE"
                         && x.t.TransactionDate >= monthStart && x.t.TransactionDate <= monthEnd)
             .Join(_db.Categories, x => x.t.CategoryId, c => c.CategoryId,
-                (x, c) => new { c.CategoryName, c.ExpenseClass, x.t.Amount })
-            .GroupBy(x => new { x.CategoryName, x.ExpenseClass })
-            .Select(g => new { g.Key.CategoryName, g.Key.ExpenseClass, Total = g.Sum(x => x.Amount) })
+                (x, c) => new { c.CategoryName, c.DefaultBucket, x.t.Amount })
+            .GroupBy(x => new { x.CategoryName, x.DefaultBucket })
+            .Select(g => new { g.Key.CategoryName, g.Key.DefaultBucket, Total = g.Sum(x => x.Amount) })
             .ToListAsync(ct);
 
         var totalSpent = spendByCategory.Sum(s => s.Total);
         var byBucket = spendByCategory
-            .GroupBy(s => s.ExpenseClass ?? "Khác")
+            .GroupBy(s => s.DefaultBucket ?? "Khác")
             .ToDictionary(g => g.Key, g => g.Sum(x => x.Total));
 
         var sb = new StringBuilder();

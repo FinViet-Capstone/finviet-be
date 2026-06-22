@@ -50,10 +50,11 @@ public class SavingGoalsController : ControllerBase
     [HttpPost]
     public async Task<ActionResult<ApiResponse<SavingGoalResponse>>> CreateGoal(
         [FromBody] CreateSavingGoalRequest request,
+        [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey,
         CancellationToken cancellationToken)
     {
         var customerId = GetCustomerId();
-        var goal = await _savingGoalService.CreateGoalAsync(customerId, request, cancellationToken);
+        var goal = await _savingGoalService.CreateGoalAsync(customerId, request, idempotencyKey, cancellationToken);
 
         return CreatedAtAction(
             nameof(GetGoalById),
@@ -96,10 +97,11 @@ public class SavingGoalsController : ControllerBase
     public async Task<ActionResult<ApiResponse<SavingGoalResponse>>> Contribute(
         [FromRoute] Guid id,
         [FromBody] ContributeSavingGoalRequest request,
+        [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey,
         CancellationToken cancellationToken)
     {
         var customerId = GetCustomerId();
-        var goal = await _savingGoalService.ContributeAsync(customerId, id, request, cancellationToken);
+        var goal = await _savingGoalService.ContributeAsync(customerId, id, request, idempotencyKey, cancellationToken);
 
         if (goal is null)
             return NotFound(ApiResponse<SavingGoalResponse>.Fail("Saving goal not found."));

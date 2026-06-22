@@ -14,9 +14,10 @@ public class CategoryRequestService : ICategoryRequestService
         "INCOME", "EXPENSE"
     };
 
-    private static readonly HashSet<string> AllowedExpenseClasses = new(StringComparer.OrdinalIgnoreCase)
+    // suggested_bucket_id is a FK to buckets(id); valid ids are the lowercase slugs.
+    private static readonly HashSet<string> AllowedBuckets = new(StringComparer.OrdinalIgnoreCase)
     {
-        "NEEDS", "WANTS", "SAVINGS"
+        "needs", "wants", "savings"
     };
 
     private readonly FinVietDbContext _dbContext;
@@ -39,7 +40,7 @@ public class CategoryRequestService : ICategoryRequestService
             throw new NotFoundException("Customer not found.");
 
         var normalizedType = NormalizeType(request.Type);
-        var normalizedExpenseClass = NormalizeExpenseClass(request.ExpenseClass);
+        var normalizedBucket = NormalizeBucket(request.ExpenseClass, normalizedType);
         var trimmedName = request.CategoryName.Trim();
 
         // If the category already exists, there's no point requesting it.
@@ -53,7 +54,7 @@ public class CategoryRequestService : ICategoryRequestService
         // Prevent duplicate pending requests for the same name/type.
         var duplicatePending = await _dbContext.CategoryRequests.AnyAsync(
             r => r.CustomerId == customerId
-                 && r.Status == "PENDING"
+                 && r.Status == "pending"
                  && r.Type == normalizedType
                  && EF.Functions.ILike(r.CategoryName, trimmedName),
             cancellationToken);
@@ -67,9 +68,9 @@ public class CategoryRequestService : ICategoryRequestService
             CustomerId = customerId,
             CategoryName = trimmedName,
             Type = normalizedType,
-            ExpenseClass = normalizedExpenseClass,
+            SuggestedBucketId = normalizedBucket,
             Note = string.IsNullOrWhiteSpace(request.Note) ? null : request.Note.Trim(),
-            Status = "PENDING",
+            Status = "pending",
             CreatedAt = DateTime.UtcNow
         };
 
@@ -123,7 +124,9 @@ public class CategoryRequestService : ICategoryRequestService
         if (entity is null)
             return null;
 
-        if (entity.Status != "PENDING")
+        // entity.Status comes back as the canonical lower-case enum label (e.g. "pending"),
+        // so compare case-insensitively rather than against the upper-case literal.
+        if (!string.Equals(entity.Status, "pending", StringComparison.OrdinalIgnoreCase))
             throw new ValidationException($"Request has already been {entity.Status.ToLowerInvariant()}.");
 
         // Create the real category from the request (unless an identical one appeared meanwhile).
@@ -140,22 +143,63 @@ public class CategoryRequestService : ICategoryRequestService
         {
             category = new Category
             {
-                CategoryId = $"cat_{Guid.NewGuid():N}"[..40],
+                // "cat_" + a GUID without separators is 36 characters, already
+                // within the category-id column limit; slicing it to 40 throws.
+                CategoryId = $"cat_{Guid.NewGuid():N}",
                 CategoryName = entity.CategoryName,
                 NameVi = entity.CategoryName,
                 NameEn = entity.CategoryName,
                 Type = entity.Type.ToLowerInvariant(),
                 IsMandatory = false,
-                ExpenseClass = entity.ExpenseClass?.ToLowerInvariant()
+                DefaultBucket = entity.SuggestedBucketId?.ToLowerInvariant()
             };
             _dbContext.Categories.Add(category);
         }
 
-        entity.Status = "APPROVED";
+        entity.Status = "approved";
         entity.ReviewedBy = adminId;
         entity.ReviewNote = string.IsNullOrWhiteSpace(request.ReviewNote) ? null : request.ReviewNote.Trim();
         entity.CreatedCategoryId = category.CategoryId;
         entity.ReviewedAt = DateTime.UtcNow;
+
+        // A successfully approved expense request must immediately be usable by
+        // its requester. The global category library remains shared, while the
+        // requester receives a customer-specific bucket assignment marked as a
+        // request-origin row.
+        if (string.Equals(category.Type, "expense", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(category.CategoryId, "cat_savings_goal", StringComparison.OrdinalIgnoreCase))
+        {
+            var bucketId = category.DefaultBucket ?? entity.SuggestedBucketId;
+            if (string.IsNullOrWhiteSpace(bucketId))
+                throw new ValidationException("Approved expense categories require a bucket assignment.");
+
+            var customerCategory = await _dbContext.CustomerCategories
+                .FirstOrDefaultAsync(
+                    x => x.CustomerId == entity.CustomerId && x.CategoryId == category.CategoryId,
+                    cancellationToken);
+
+            if (customerCategory is null)
+            {
+                _dbContext.CustomerCategories.Add(new CustomerCategory
+                {
+                    Id = Guid.NewGuid(),
+                    CustomerId = entity.CustomerId,
+                    CategoryId = category.CategoryId,
+                    BucketId = bucketId,
+                    Source = "request",
+                    IsActive = true,
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow
+                });
+            }
+            else
+            {
+                customerCategory.BucketId = bucketId;
+                customerCategory.IsActive = true;
+                customerCategory.Source = "request";
+                customerCategory.UpdatedAt = DateTime.UtcNow;
+            }
+        }
 
         await _dbContext.SaveChangesAsync(cancellationToken);
         return ToResponse(entity);
@@ -173,10 +217,12 @@ public class CategoryRequestService : ICategoryRequestService
         if (entity is null)
             return null;
 
-        if (entity.Status != "PENDING")
+        // entity.Status comes back as the canonical lower-case enum label (e.g. "pending"),
+        // so compare case-insensitively rather than against the upper-case literal.
+        if (!string.Equals(entity.Status, "pending", StringComparison.OrdinalIgnoreCase))
             throw new ValidationException($"Request has already been {entity.Status.ToLowerInvariant()}.");
 
-        entity.Status = "REJECTED";
+        entity.Status = "rejected";
         entity.ReviewedBy = adminId;
         entity.ReviewNote = string.IsNullOrWhiteSpace(request.ReviewNote) ? null : request.ReviewNote.Trim();
         entity.ReviewedAt = DateTime.UtcNow;
@@ -194,23 +240,29 @@ public class CategoryRequestService : ICategoryRequestService
         return normalized;
     }
 
-    private static string? NormalizeExpenseClass(string? expenseClass)
+    private static string? NormalizeBucket(string? bucket, string normalizedType)
     {
-        if (string.IsNullOrWhiteSpace(expenseClass))
+        if (normalizedType == "INCOME")
             return null;
 
-        var normalized = expenseClass.Trim().ToUpperInvariant();
-        if (!AllowedExpenseClasses.Contains(normalized))
-            throw new ValidationException("Expense class must be one of: NEEDS, WANTS, SAVINGS.");
+        if (string.IsNullOrWhiteSpace(bucket))
+            throw new ValidationException("Suggested bucket is required for expense categories.");
+
+        // Store the lowercase slug so it satisfies the suggested_bucket_id → buckets(id) FK.
+        var normalized = bucket.Trim().ToLowerInvariant();
+        if (!AllowedBuckets.Contains(normalized))
+            throw new ValidationException("Suggested bucket must be one of: needs, wants, savings.");
 
         return normalized;
     }
 
     private static string NormalizeStatus(string status)
     {
-        var normalized = status.Trim().ToUpperInvariant();
-        if (normalized is not ("PENDING" or "APPROVED" or "REJECTED"))
-            throw new ValidationException("Status must be one of: PENDING, APPROVED, REJECTED.");
+        // Store/compare the canonical lower-case enum label so in-memory comparisons against
+        // values read back through PgEnumStringConverter line up.
+        var normalized = status.Trim().ToLowerInvariant();
+        if (normalized is not ("pending" or "approved" or "rejected"))
+            throw new ValidationException("Status must be one of: pending, approved, rejected.");
 
         return normalized;
     }
@@ -222,7 +274,7 @@ public class CategoryRequestService : ICategoryRequestService
             CustomerId = r.CustomerId,
             CategoryName = r.CategoryName,
             Type = r.Type,
-            ExpenseClass = r.ExpenseClass,
+            ExpenseClass = r.SuggestedBucketId,
             Note = r.Note,
             Status = r.Status,
             ReviewNote = r.ReviewNote,

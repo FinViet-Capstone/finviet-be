@@ -1,5 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
+using FinViet.Domain.Enums;
+using FinViet.Infrastructure.Persistence.Conventions;
 using FinViet.Infrastructure.Persistence.Entities;
 using Microsoft.EntityFrameworkCore;
 
@@ -106,13 +108,13 @@ public partial class FinVietDbContext : DbContext
             entity.Property(e => e.NameEn)
                 .HasMaxLength(80)
                 .HasColumnName("name_en");
-            entity.Property(e => e.ExpenseClass)
+            entity.Property(e => e.DefaultBucket)
                 .HasMaxLength(20)
                 .HasColumnName("default_bucket");
             entity.Ignore(e => e.IsMandatory);
             entity.Property(e => e.Type)
-                .HasColumnType("category_type")
-                .HasColumnName("type");
+                .HasColumnName("type")
+                .HasConversion(PgEnumStringConverter.Create<CategoryType>());
             entity.Property(e => e.Icon)
                 .HasMaxLength(60)
                 .HasColumnName("icon");
@@ -297,8 +299,8 @@ public partial class FinVietDbContext : DbContext
             entity.Property(e => e.CustomerId).HasColumnName("customer_id");
             entity.Property(e => e.PlanId).HasColumnName("plan_id");
             entity.Property(e => e.Status)
-                .HasColumnType("subscription_status")
-                .HasColumnName("status");
+                .HasColumnName("status")
+                .HasConversion(PgEnumStringConverter.Create<SubscriptionStatus>());
             entity.Property(e => e.StartDate).HasColumnName("start_date");
             entity.Property(e => e.EndDate).HasColumnName("end_date");
             entity.Property(e => e.CreatedAt)
@@ -330,15 +332,15 @@ public partial class FinVietDbContext : DbContext
                 .HasColumnName("id");
             entity.Property(e => e.CustomerId).HasColumnName("customer_id");
             entity.Property(e => e.Type)
-                .HasColumnType("notification_type")
-                .HasColumnName("type");
+                .HasColumnName("type")
+                .HasConversion(PgEnumStringConverter.Create<NotificationType>());
             entity.Property(e => e.Title)
                 .HasMaxLength(255)
                 .HasColumnName("title");
             entity.Property(e => e.Message).HasColumnName("body");
             entity.Property(e => e.EntityType)
-                .HasColumnType("notification_entity_type")
-                .HasColumnName("entity_type");
+                .HasColumnName("entity_type")
+                .HasConversion(PgEnumStringConverter.CreateNullable<NotificationEntityType>());
             entity.Property(e => e.EntityId).HasColumnName("entity_id");
             entity.Property(e => e.IsRead)
                 .HasDefaultValue(false)
@@ -527,12 +529,12 @@ public partial class FinVietDbContext : DbContext
                 .HasDefaultValueSql("CURRENT_TIMESTAMP")
                 .HasColumnName("transaction_date");
             entity.Property(e => e.TransactionType)
-                .HasColumnType("transaction_type")
-                .HasColumnName("type");
+                .HasColumnName("type")
+                .HasConversion(PgEnumStringConverter.Create<TransactionType>());
             entity.Property(e => e.EntryMethod)
                 .IsRequired()
-                .HasColumnType("entry_method")
-                .HasColumnName("entry_method");
+                .HasColumnName("entry_method")
+                .HasConversion(PgEnumStringConverter.Create<EntryMethod>());
             entity.Property(e => e.WalletId)
                 .IsRequired()
                 .HasColumnName("wallet_id");
@@ -582,10 +584,15 @@ public partial class FinVietDbContext : DbContext
                 .HasMaxLength(120)
                 .IsRequired()
                 .HasColumnName("name");
+            // The `type` column is the Postgres enum `wallet_type` (mapped via MapEnum<WalletType>).
+            // The entity keeps WalletType as a normalized string ("basic"/"sepay_linked"); this
+            // converter sends/receives it as the mapped CLR enum so Npgsql binds the parameter as
+            // the enum type rather than text (text would fail: "column type is of type wallet_type
+            // but expression is of type text").
             entity.Property(e => e.WalletType)
                 .IsRequired()
-                .HasColumnType("wallet_type")
-                .HasColumnName("type");
+                .HasColumnName("type")
+                .HasConversion(PgEnumStringConverter.Create<WalletType>());
             entity.Property(e => e.IsDeleted)
                 .HasDefaultValue(false)
                 .HasColumnName("is_deleted");

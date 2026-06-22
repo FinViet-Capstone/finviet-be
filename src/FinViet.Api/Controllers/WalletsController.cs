@@ -111,17 +111,37 @@ public class WalletsController : ControllerBase
     [HttpPost("transfer")]
     public async Task<ActionResult<ApiResponse<TransferWalletResponse>>> TransferBetweenWallets(
         [FromBody] TransferWalletRequest request,
+        [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey,
         CancellationToken cancellationToken)
     {
         var customerId = User.GetCustomerId();
         var result = await _walletService.TransferAsync(
             customerId,
             request,
+            idempotencyKey,
             cancellationToken);
 
         return Ok(ApiResponse<TransferWalletResponse>.Ok(
             result,
             "Transfer completed successfully"));
+    }
+
+    [HttpPost("withdraw")]
+    public async Task<ActionResult<ApiResponse<TransferWalletResponse>>> Withdraw(
+        [FromBody] WithdrawWalletRequest request,
+        [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey,
+        CancellationToken cancellationToken)
+    {
+        var customerId = User.GetCustomerId();
+        var result = await _walletService.WithdrawAsync(
+            customerId,
+            request,
+            idempotencyKey,
+            cancellationToken);
+
+        return Ok(ApiResponse<TransferWalletResponse>.Ok(
+            result,
+            "Withdrawal completed successfully"));
     }
 
     [HttpGet("{id:guid}/transactions")]

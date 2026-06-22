@@ -4,6 +4,7 @@ using FinViet.Application.DTOs;
 using FinViet.Application.Interfaces;
 using FinViet.Infrastructure.Persistence.Context;
 using FinViet.Infrastructure.Persistence.Entities;
+using FinViet.Infrastructure.Persistence.Idempotency;
 using Microsoft.EntityFrameworkCore;
 
 namespace FinViet.Infrastructure.Persistence.Repositories;
@@ -193,6 +194,82 @@ public class TransactionRepository : ITransactionRepository
         return MapToDto(transaction);
     }
 
+    public async Task<TransactionResponseDto> CreateManualForCustomerAsync(
+        Guid customerId,
+        Guid walletId,
+        string? categoryId,
+        string transactionType,
+        decimal amount,
+        DateTime transactionDate,
+        string? note,
+        string? idempotencyKey,
+        CancellationToken cancellationToken = default)
+    {
+        await using var databaseTransaction = await _context.Database.BeginTransactionAsync(cancellationToken);
+
+        var requestHash = IdempotencyStore.ComputeRequestHash(new
+        {
+            walletId,
+            categoryId,
+            transactionType,
+            amount,
+            transactionDate,
+            note
+        });
+        var idempotency = await IdempotencyStore.ClaimAsync(
+            _context,
+            customerId,
+            "transaction-create",
+            idempotencyKey,
+            requestHash,
+            cancellationToken);
+        if (idempotency.IsReplay)
+        {
+            await databaseTransaction.CommitAsync(cancellationToken);
+            return IdempotencyStore.ReadReplay<TransactionResponseDto>(idempotency);
+        }
+
+        var wallet = (await LockWalletsAsync(new[] { walletId }, cancellationToken)).SingleOrDefault();
+        if (wallet is null || wallet.CustomerId != customerId || wallet.IsDeleted)
+            throw new NotFoundException("Wallet", walletId);
+
+        var normalizedType = NormalizeType(transactionType);
+        var transaction = new Transaction
+        {
+            TransactionId = Guid.NewGuid(),
+            CustomerId = customerId,
+            WalletId = walletId,
+            CategoryId = categoryId,
+            TransactionType = normalizedType,
+            EntryMethod = "manual",
+            Amount = amount,
+            TransactionDate = transactionDate,
+            Description = note,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
+
+        var newBalance = (wallet.Balance ?? 0m) + (normalizedType == "income" ? amount : -amount);
+        if (newBalance < 0)
+            throw new BusinessRuleException("Source wallet does not have enough balance.", "insufficient_balance");
+
+        wallet.Balance = newBalance;
+        wallet.UpdatedAt = DateTime.UtcNow;
+        _context.Transactions.Add(transaction);
+        await _context.SaveChangesAsync(cancellationToken);
+
+        var response = MapToDto(transaction);
+        await IdempotencyStore.CompleteAsync(
+            _context,
+            customerId,
+            "transaction-create",
+            idempotencyKey!,
+            response,
+            cancellationToken);
+        await databaseTransaction.CommitAsync(cancellationToken);
+        return response;
+    }
+
     public async Task<TransactionResponseDto> UpdateAsync(Guid transactionId, string? categoryId, string transactionType, decimal amount, DateTime transactionDate, string note, CancellationToken cancellationToken = default)
     {
         var transaction = await _context.Transactions.FindAsync(new object[] { transactionId }, cancellationToken: cancellationToken);
@@ -222,6 +299,74 @@ public class TransactionRepository : ITransactionRepository
         return true;
     }
 
+    public async Task<bool> DeleteForCustomerAsync(
+        Guid customerId,
+        Guid transactionId,
+        CancellationToken cancellationToken = default)
+    {
+        await using var databaseTransaction = await _context.Database.BeginTransactionAsync(cancellationToken);
+
+        var target = await _context.Transactions
+            .FirstOrDefaultAsync(t => t.TransactionId == transactionId && t.CustomerId == customerId, cancellationToken);
+        if (target is null)
+            return false;
+
+        if (string.Equals(target.EntryMethod, "sepay_sync", StringComparison.OrdinalIgnoreCase))
+            throw new BusinessRuleException("SePay-synced transactions cannot be deleted.", "sepay_transaction_locked");
+
+        if (target.TransferPairId.HasValue)
+        {
+            var pair = await _context.Transactions
+                .Where(t => t.CustomerId == customerId && t.TransferPairId == target.TransferPairId)
+                .ToListAsync(cancellationToken);
+
+            if (pair.Count != 2
+                || pair.Count(t => t.TransactionType == "transfer_out") != 1
+                || pair.Count(t => t.TransactionType == "transfer_in") != 1)
+            {
+                throw new BusinessRuleException("Transfer pair is incomplete and cannot be reversed safely.", "transfer_pair_invalid");
+            }
+
+            var wallets = await LockWalletsAsync(pair.Select(t => t.WalletId).Distinct().ToArray(), cancellationToken);
+            if (wallets.Count != 2 || wallets.Any(w => w.CustomerId != customerId))
+                throw new BusinessRuleException("Transfer wallets are no longer available for reversal.", "transfer_wallet_missing");
+
+            var walletsById = wallets.ToDictionary(w => w.WalletId);
+            foreach (var leg in pair)
+            {
+                var wallet = walletsById[leg.WalletId];
+                var reversedBalance = (wallet.Balance ?? 0m) + ReverseBalanceDelta(leg.TransactionType, leg.Amount);
+                if (reversedBalance < 0)
+                    throw new BusinessRuleException(
+                        "Transfer cannot be deleted because one receiving wallet no longer has the transferred balance.",
+                        "transfer_reversal_insufficient_balance");
+
+                wallet.Balance = reversedBalance;
+                wallet.UpdatedAt = DateTime.UtcNow;
+            }
+
+            _context.Transactions.RemoveRange(pair);
+        }
+        else
+        {
+            var wallet = (await LockWalletsAsync(new[] { target.WalletId }, cancellationToken)).SingleOrDefault();
+            if (wallet is null || wallet.CustomerId != customerId)
+                return false;
+
+            var reversedBalance = (wallet.Balance ?? 0m) + ReverseBalanceDelta(target.TransactionType, target.Amount);
+            if (reversedBalance < 0)
+                throw new BusinessRuleException("Transaction cannot be deleted because its balance has already been spent.", "reversal_insufficient_balance");
+
+            wallet.Balance = reversedBalance;
+            wallet.UpdatedAt = DateTime.UtcNow;
+            _context.Transactions.Remove(target);
+        }
+
+        await _context.SaveChangesAsync(cancellationToken);
+        await databaseTransaction.CommitAsync(cancellationToken);
+        return true;
+    }
+
     public async Task<TransactionResponseDto?> ClassifyAsync(Guid transactionId, string? categoryId, CancellationToken cancellationToken = default)
     {
         var transaction = await _context.Transactions.FindAsync(new object[] { transactionId }, cancellationToken: cancellationToken);
@@ -246,6 +391,32 @@ public class TransactionRepository : ITransactionRepository
             "EXPENSE" => "expense",
             "TRANSFER" => "transfer_out",
             _ => type.Trim().ToLowerInvariant()
+        };
+
+    private async Task<List<Wallet>> LockWalletsAsync(Guid[] walletIds, CancellationToken cancellationToken)
+    {
+        if (walletIds.Length == 0)
+            return new List<Wallet>();
+
+        return await _context.Wallets
+            .FromSqlInterpolated($"""
+                SELECT id, customer_id, name, type, balance, is_deleted, created_at, updated_at
+                FROM wallets
+                WHERE id = ANY({walletIds})
+                ORDER BY id
+                FOR UPDATE
+                """)
+            .ToListAsync(cancellationToken);
+    }
+
+    private static decimal ReverseBalanceDelta(string transactionType, decimal amount)
+        => NormalizeType(transactionType) switch
+        {
+            "income" => -amount,
+            "expense" => amount,
+            "transfer_out" => amount,
+            "transfer_in" => -amount,
+            _ => throw new BusinessRuleException($"Unsupported transaction type '{transactionType}'.", "transaction_type_invalid")
         };
 
     private static TransactionResponseDto MapToDto(Transaction transaction) => new()

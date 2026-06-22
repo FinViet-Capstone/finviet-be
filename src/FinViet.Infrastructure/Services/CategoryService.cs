@@ -94,7 +94,7 @@ public class CategoryService : ICategoryService
             NameEn = trimmedNameEn,
             Type = normalizedType,
             IsMandatory = request.IsMandatory,
-            ExpenseClass = normalizedExpenseClass,
+            DefaultBucket = normalizedExpenseClass,
             Icon = request.Icon,
             Color = request.Color,
             SortOrder = request.SortOrder
@@ -140,7 +140,7 @@ public class CategoryService : ICategoryService
             category.IsMandatory = request.IsMandatory.Value;
 
         if (request.ExpenseClass is not null)
-            category.ExpenseClass = NormalizeExpenseClass(request.ExpenseClass, category.Type);
+            category.DefaultBucket = NormalizeExpenseClass(request.ExpenseClass, category.Type);
 
         if (request.NameEn is not null)
             category.NameEn = request.NameEn;
@@ -263,7 +263,7 @@ public class CategoryService : ICategoryService
             NameEn = category.NameEn,
             Type = category.Type,
             IsMandatory = category.IsMandatory ?? false,
-            ExpenseClass = category.ExpenseClass,
+            ExpenseClass = category.DefaultBucket,
             Icon = category.Icon,
             Color = category.Color,
             SortOrder = category.SortOrder
