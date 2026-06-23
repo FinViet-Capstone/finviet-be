@@ -72,7 +72,7 @@ public class WalletService : IWalletService
         if (walletCount >= MaximumWalletsPerCustomer)
             throw new ValidationException("Maximum 10 wallets allowed per account.");
 
-        var trimmedName = request.EffectiveName.Trim();
+        var trimmedName = request.WalletName.Trim();
         var isDuplicateName = await WalletNameExistsAsync(customerId, trimmedName, null, cancellationToken);
 
         if (isDuplicateName)
@@ -83,7 +83,7 @@ public class WalletService : IWalletService
             WalletId = Guid.NewGuid(),
             CustomerId = customerId,
             WalletName = trimmedName,
-            WalletType = NormalizeWalletType(request.EffectiveType),
+            WalletType = NormalizeWalletType(request.WalletType),
             Balance = request.InitialBalance
         };
 
@@ -103,9 +103,9 @@ public class WalletService : IWalletService
         if (wallet is null)
             return null;
 
-        if (!string.IsNullOrWhiteSpace(request.EffectiveName))
+        if (!string.IsNullOrWhiteSpace(request.WalletName))
         {
-            var newName = request.EffectiveName.Trim();
+            var newName = request.WalletName.Trim();
             var duplicateName = await WalletNameExistsAsync(customerId, newName, walletId, cancellationToken);
 
             if (duplicateName)
@@ -114,7 +114,7 @@ public class WalletService : IWalletService
             wallet.WalletName = newName;
         }
 
-        if (!string.IsNullOrWhiteSpace(request.EffectiveType))
+        if (!string.IsNullOrWhiteSpace(request.WalletType))
             throw new ValidationException("Wallet type cannot be changed after creation.");
 
         await _dbContext.SaveChangesAsync(cancellationToken);
@@ -488,10 +488,10 @@ public class WalletService : IWalletService
 
     private static void ValidateCreate(CreateWalletRequest request)
     {
-        if (string.IsNullOrWhiteSpace(request.EffectiveName))
+        if (string.IsNullOrWhiteSpace(request.WalletName))
             throw new ValidationException("Wallet name is required.");
 
-        if (string.IsNullOrWhiteSpace(request.EffectiveType))
+        if (string.IsNullOrWhiteSpace(request.WalletType))
             throw new ValidationException("Wallet type is required.");
 
         if (request.InitialBalance < 0)
@@ -500,10 +500,10 @@ public class WalletService : IWalletService
 
     private static void ValidateUpdate(UpdateWalletRequest request)
     {
-        if ((request.Name is not null || request.WalletName is not null) && string.IsNullOrWhiteSpace(request.EffectiveName))
+        if (request.WalletName is not null && string.IsNullOrWhiteSpace(request.WalletName))
             throw new ValidationException("Wallet name cannot be empty.");
 
-        if (request.Type is not null || request.WalletType is not null)
+        if (request.WalletType is not null)
             throw new ValidationException("Wallet type cannot be changed after creation.");
     }
 
