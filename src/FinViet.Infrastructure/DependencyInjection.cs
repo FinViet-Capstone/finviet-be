@@ -84,6 +84,9 @@ public static class DependencyInjection
         services.AddScoped<ICategoryService, CategoryService>();
         services.AddScoped<ICategoryRequestService, CategoryRequestService>();
 
+        // Merchant auto-categorization rules
+        services.AddScoped<IMerchantRuleService, MerchantRuleService>();
+
         // Linked wallets (SePay): static-token API client + connect/exchange/sync service.
         services.AddMemoryCache();
         services.Configure<SepayOptions>(configuration.GetSection(SepayOptions.SectionName));
