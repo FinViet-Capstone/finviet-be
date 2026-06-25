@@ -11,21 +11,24 @@ public class TransactionExtractService : ITransactionExtractService
     private readonly ISmsTransactionParser _smsParser;
     private readonly IBankStatementParser _bankParser;
     private readonly IAiCategorizationService _categorization;
+    private readonly IMerchantRuleService _ruleService;
     private readonly ILogger<TransactionExtractService> _logger;
 
     public TransactionExtractService(
         ISmsTransactionParser smsParser,
         IBankStatementParser bankParser,
         IAiCategorizationService categorization,
+        IMerchantRuleService ruleService,
         ILogger<TransactionExtractService> logger)
     {
         _smsParser = smsParser;
         _bankParser = bankParser;
         _categorization = categorization;
+        _ruleService = ruleService;
         _logger = logger;
     }
 
-    public async Task<ExtractResponse> ExtractSmsAsync(string text, CancellationToken cancellationToken = default)
+    public async Task<ExtractResponse> ExtractSmsAsync(Guid customerId, string text, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(text))
             throw new Application.Common.Exceptions.BadRequestException(
@@ -34,16 +37,16 @@ public class TransactionExtractService : ITransactionExtractService
                 "Có thể dán nhiều tin, mỗi tin cách nhau một dòng trống.");
 
         var parsed = _smsParser.Parse(text);
-        return await BuildResponseAsync(parsed, cancellationToken);
+        return await BuildResponseAsync(customerId, parsed, cancellationToken);
     }
 
-    public async Task<ExtractResponse> ExtractCsvAsync(Stream fileStream, int? maxRows, CancellationToken cancellationToken = default)
+    public async Task<ExtractResponse> ExtractCsvAsync(Guid customerId, Stream fileStream, int? maxRows, CancellationToken cancellationToken = default)
     {
         var parsed = _bankParser.Parse(fileStream, maxRows);
-        return await BuildResponseAsync(parsed, cancellationToken);
+        return await BuildResponseAsync(customerId, parsed, cancellationToken);
     }
 
-    private async Task<ExtractResponse> BuildResponseAsync(ParseResult parsed, CancellationToken ct)
+    private async Task<ExtractResponse> BuildResponseAsync(Guid customerId, ParseResult parsed, CancellationToken ct)
     {
         var response = new ExtractResponse
         {
@@ -51,6 +54,10 @@ public class TransactionExtractService : ITransactionExtractService
             Skipped = parsed.SkippedDuringParse,
             Errors = new List<string>(parsed.ParseErrors)
         };
+
+        // Load the customer's rules once (already ordered longest-keyword-first). A matching rule
+        // takes precedence over AI categorization for that row (BUSINESS_LOGIC §2b).
+        var rules = await _ruleService.GetRulesAsync(customerId, ct);
 
         foreach (var row in parsed.Rows)
         {
@@ -67,16 +74,30 @@ public class TransactionExtractService : ITransactionExtractService
             if (string.Equals(row.TransactionType, "EXPENSE", StringComparison.OrdinalIgnoreCase)
                 && !string.IsNullOrWhiteSpace(row.Note))
             {
-                try
+                // 1) Rule precedence: deterministic, no AI call.
+                var ruleMatch = rules.FirstOrDefault(r =>
+                    row.Note!.Contains(r.MerchantKeyword, StringComparison.OrdinalIgnoreCase));
+
+                if (ruleMatch is not null)
                 {
-                    var suggestion = await _categorization.PreviewAsync(row.Note, ct);
-                    item.CategoryName = suggestion.CategoryName;
-                    item.Confidence = suggestion.Confidence;
+                    item.CategoryId = ruleMatch.CategoryId;
+                    item.CategoryName = ruleMatch.CategoryName;
+                    item.Confidence = 1.0m;
                 }
-                catch (Exception ex)
+                else
                 {
-                    // AI down → leave the row uncategorized; the user resolves it on the review screen.
-                    _logger.LogWarning(ex, "Category preview failed during extract; returning row uncategorized.");
+                    // 2) Fall back to AI categorization.
+                    try
+                    {
+                        var suggestion = await _categorization.PreviewAsync(row.Note, ct);
+                        item.CategoryName = suggestion.CategoryName;
+                        item.Confidence = suggestion.Confidence;
+                    }
+                    catch (Exception ex)
+                    {
+                        // AI down → leave the row uncategorized; the user resolves it on the review screen.
+                        _logger.LogWarning(ex, "Category preview failed during extract; returning row uncategorized.");
+                    }
                 }
             }
 
