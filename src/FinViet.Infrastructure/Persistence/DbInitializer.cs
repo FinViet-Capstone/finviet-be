@@ -20,7 +20,34 @@ public static class DbInitializer
         CancellationToken cancellationToken = default)
     {
         await ApplyMigrationsAsync(db, logger, cancellationToken);
+        await EnsureAdditiveTablesAsync(db, logger, cancellationToken);
         await SeedAsync(db, logger, cancellationToken);
+    }
+
+    /// <summary>
+    /// Idempotently creates additive tables that are NOT part of the externally-provisioned
+    /// v3 schema. The v3 path skips all SQL migrations (see <see cref="ApplyMigrationsAsync"/>),
+    /// so new tables introduced after v3 must be created here to exist on every environment.
+    /// </summary>
+    private static async Task EnsureAdditiveTablesAsync(
+        FinVietDbContext db, ILogger logger, CancellationToken cancellationToken)
+    {
+        const string sql = @"
+CREATE TABLE IF NOT EXISTS merchant_rules (
+    rule_id          uuid         PRIMARY KEY DEFAULT gen_random_uuid(),
+    customer_id      uuid         NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+    merchant_keyword varchar(255) NOT NULL,
+    category_id      varchar(40)  NOT NULL REFERENCES categories(id),
+    applied_count    integer      NOT NULL DEFAULT 0,
+    created_at       timestamptz  NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_merchant_rules_customer_keyword
+    ON merchant_rules (customer_id, lower(merchant_keyword));
+CREATE INDEX IF NOT EXISTS ix_merchant_rules_customer
+    ON merchant_rules (customer_id);";
+
+        await db.Database.ExecuteSqlRawAsync(sql, cancellationToken);
+        logger.LogInformation("Ensured additive table merchant_rules exists.");
     }
 
     private static async Task ApplyMigrationsAsync(
