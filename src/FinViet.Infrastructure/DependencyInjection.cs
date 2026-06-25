@@ -83,6 +83,9 @@ public static class DependencyInjection
         services.AddScoped<ICategoryService, CategoryService>();
         services.AddScoped<ICategoryRequestService, CategoryRequestService>();
 
+        // Merchant auto-categorization rules
+        services.AddScoped<IMerchantRuleService, MerchantRuleService>();
+
         // Saving Goals & Notifications
         services.AddScoped<INotificationService, NotificationService>();
         services.AddScoped<ISavingGoalService, SavingGoalService>();

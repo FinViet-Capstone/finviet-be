@@ -1,5 +1,6 @@
 using FinViet.Application.Common.Exceptions;
 using FinViet.Application.DTOs;
+using FinViet.Application.DTOs.Rules;
 using FinViet.Application.Features.Transactions.Commands;
 using FinViet.Application.Interfaces;
 using MediatR;
@@ -77,30 +78,61 @@ public class CreateTransactionHandler : IRequestHandler<CreateTransactionCommand
 {
     private readonly ITransactionRepository _transactionRepository;
     private readonly ICategoryService _categoryService;
+    private readonly IMerchantRuleService _ruleService;
 
     public CreateTransactionHandler(
         ITransactionRepository transactionRepository,
-        ICategoryService categoryService)
+        ICategoryService categoryService,
+        IMerchantRuleService ruleService)
     {
         _transactionRepository = transactionRepository;
         _categoryService = categoryService;
+        _ruleService = ruleService;
     }
 
     public async Task<TransactionResponseDto> Handle(CreateTransactionCommand request, CancellationToken cancellationToken)
     {
         var normalizedType = TransactionRules.ValidateManualInput(request.TransactionType, request.Amount);
-        await TransactionRules.ValidateCategoryAsync(_categoryService, request.CategoryId, normalizedType, cancellationToken);
 
-        return await _transactionRepository.CreateManualForCustomerAsync(
+        // Auto-apply a merchant rule when the caller did not choose a category (manual entry keeps
+        // the user's choice; uncategorized expenses get the matching rule's category — §2b). A rule
+        // pointing at an incompatible category type is ignored so it never blocks the create.
+        var categoryId = request.CategoryId;
+        RuleMatch? match = null;
+        if (string.IsNullOrWhiteSpace(categoryId) && normalizedType == "expense")
+        {
+            match = await _ruleService.ResolveAsync(request.CustomerId, merchant: null, description: request.Note, cancellationToken);
+            if (match is not null)
+            {
+                try
+                {
+                    await TransactionRules.ValidateCategoryAsync(_categoryService, match.CategoryId, normalizedType, cancellationToken);
+                    categoryId = match.CategoryId;
+                }
+                catch (BusinessRuleException)
+                {
+                    match = null; // incompatible rule category → leave uncategorized
+                }
+            }
+        }
+
+        await TransactionRules.ValidateCategoryAsync(_categoryService, categoryId, normalizedType, cancellationToken);
+
+        var result = await _transactionRepository.CreateManualForCustomerAsync(
             request.CustomerId,
             request.WalletId,
-            request.CategoryId,
+            categoryId,
             normalizedType,
             request.Amount,
             request.TransactionDate,
             request.Note,
             request.IdempotencyKey,
             cancellationToken);
+
+        if (match is not null)
+            await _ruleService.IncrementAppliedAsync(match.RuleId, 1, cancellationToken);
+
+        return result;
     }
 }
 
