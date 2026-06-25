@@ -17,6 +17,9 @@ public class WalletLink
 
     public DateTime? SepayLastSyncAt { get; set; }
 
+    /// <summary>Last SePay transaction id pulled — used as the since_id polling cursor.</summary>
+    public string? SepayLastSyncedTxnId { get; set; }
+
     public SepaySyncStatus SepaySyncStatus { get; set; }
 
     public DateTime CreatedAt { get; set; }
