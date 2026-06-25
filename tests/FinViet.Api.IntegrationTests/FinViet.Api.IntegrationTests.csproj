@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <!--
+    HTTP-level integration tests. They run against an already-running FinViet API
+    instance (default http://localhost:5122) so they exercise the real controllers,
+    the real PostgreSQL (FinViet_update v3) schema, JWT auth and the seeded admin.
+
+    Run:  start the API, then  `dotnet test tests/FinViet.Api.IntegrationTests`.
+    Configure target/credentials via environment variables (see ApiTestFixture).
+    If the server is unreachable the whole suite is SKIPPED (not failed).
+  -->
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" Version="6.0.2" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+    <PackageReference Include="Xunit.SkippableFact" Version="1.5.23" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+</Project>

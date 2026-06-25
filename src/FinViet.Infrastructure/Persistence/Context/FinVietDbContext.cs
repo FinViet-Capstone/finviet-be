@@ -32,6 +32,8 @@ public partial class FinVietDbContext : DbContext
 
     public virtual DbSet<CategoryCorrectionLog> CategoryCorrectionLogs { get; set; }
 
+    public virtual DbSet<MerchantRule> MerchantRules { get; set; }
+
     public virtual DbSet<ChatMessage> ChatMessages { get; set; }
 
     public virtual DbSet<Customer> Customers { get; set; }
@@ -166,6 +168,30 @@ public partial class FinVietDbContext : DbContext
                 .HasForeignKey(d => d.TransactionId)
                 .OnDelete(DeleteBehavior.Cascade)
                 .HasConstraintName("category_correction_log_transaction_id_fkey");
+        });
+
+        modelBuilder.Entity<MerchantRule>(entity =>
+        {
+            entity.HasKey(e => e.RuleId).HasName("merchant_rules_pkey");
+
+            entity.ToTable("merchant_rules");
+
+            entity.Property(e => e.RuleId)
+                .HasDefaultValueSql("gen_random_uuid()")
+                .HasColumnName("rule_id");
+            entity.Property(e => e.CustomerId).HasColumnName("customer_id");
+            entity.Property(e => e.MerchantKeyword)
+                .HasMaxLength(255)
+                .HasColumnName("merchant_keyword");
+            entity.Property(e => e.CategoryId)
+                .HasMaxLength(40)
+                .HasColumnName("category_id");
+            entity.Property(e => e.AppliedCount)
+                .HasDefaultValue(0)
+                .HasColumnName("applied_count");
+            entity.Property(e => e.CreatedAt)
+                .HasDefaultValueSql("now()")
+                .HasColumnName("created_at");
         });
 
         modelBuilder.Entity<ChatMessage>(entity =>
