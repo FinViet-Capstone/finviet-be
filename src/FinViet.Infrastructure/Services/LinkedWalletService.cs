@@ -198,8 +198,20 @@ public class LinkedWalletService : ILinkedWalletService
 
         var imported = 0;
         var skipped = 0;
-        var sinceId = link.SepayLastSyncedTxnId;
-        string? newestId = sinceId;
+
+        // Polling cursor: resume from the newest SePay transaction we've already imported for
+        // this wallet. This used to be cached on wallet_links.sepay_last_synced_txn_id; that
+        // column was removed, so we derive the cursor from the transactions already stored.
+        // Imports run oldest-first, so the most recently created sepay_sync row carries the
+        // newest SePay id. If this returns null we simply re-scan from the start — the
+        // ExternalId dedup in TryImportAsync keeps that correct (just less efficient).
+        var sinceId = await _db.Transactions
+            .Where(t => t.WalletId == walletId
+                        && t.EntryMethod == "sepay_sync"
+                        && t.ExternalId != null)
+            .OrderByDescending(t => t.CreatedAt)
+            .Select(t => t.ExternalId)
+            .FirstOrDefaultAsync(cancellationToken);
 
         try
         {
@@ -214,7 +226,6 @@ public class LinkedWalletService : ILinkedWalletService
                 {
                     var (ok, isDuplicate) = await TryImportAsync(wallet, tx, cancellationToken);
                     if (ok) imported++; else if (isDuplicate) skipped++;
-                    newestId = tx.Id;
                 }
 
                 if (response.Meta?.Pagination?.HasMore != true)
@@ -224,7 +235,6 @@ public class LinkedWalletService : ILinkedWalletService
                 await Task.Delay(RateLimitDelayMs, cancellationToken);
             }
 
-            link.SepayLastSyncedTxnId = newestId;
             link.SepayLastSyncAt = DateTime.UtcNow;
             link.SepaySyncStatus = SepaySyncStatus.Ok;
             link.UpdatedAt = DateTime.UtcNow;

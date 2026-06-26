@@ -59,7 +59,6 @@ public partial class FinVietDbContext
             entity.Property(e => e.SepayAccountId).HasMaxLength(120).HasColumnName("sepay_account_id");
             entity.Property(e => e.SepayAccountMask).HasMaxLength(8).HasColumnName("sepay_account_mask");
             entity.Property(e => e.SepayLastSyncAt).HasColumnName("sepay_last_sync_at");
-            entity.Property(e => e.SepayLastSyncedTxnId).HasMaxLength(64).HasColumnName("sepay_last_synced_txn_id");
             entity.Property(e => e.SepaySyncStatus).HasColumnName("sepay_sync_status");
             entity.Property(e => e.CreatedAt).HasDefaultValueSql("now()").HasColumnName("created_at");
             entity.Property(e => e.UpdatedAt).HasDefaultValueSql("now()").HasColumnName("updated_at");
