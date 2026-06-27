@@ -10,6 +10,7 @@ using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
+using Npgsql;
 
 namespace FinViet.Infrastructure.Services;
 
@@ -130,6 +131,8 @@ public class LinkedWalletService : ILinkedWalletService
         if (wallet.CustomerId != customerId)
             throw new ForbiddenException("You do not have access to this wallet.");
 
+        // Only SePay-linked wallets may bind a token. Basic (and any other) wallet types are
+        // rejected here with a 422 — never a 500 — so the FE can surface a clear message.
         if (!string.Equals(wallet.WalletType, SepayLinkedWalletType, StringComparison.OrdinalIgnoreCase))
             throw new BusinessRuleException(
                 "Chỉ ví loại liên kết SePay mới gắn được token.", "wallet_not_sepay_linked");
@@ -158,7 +161,23 @@ public class LinkedWalletService : ILinkedWalletService
         link.SepaySyncStatus = SepaySyncStatus.Ok;
         link.UpdatedAt = DateTime.UtcNow;
 
-        await _db.SaveChangesAsync(cancellationToken);
+        try
+        {
+            await _db.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException ex) when (IsUniqueViolation(ex))
+        {
+            // Multiple sepay_linked wallets pointing at the same SePay account/token are allowed.
+            // The legacy v3 schema may still carry a UNIQUE constraint on wallet_links
+            // (sepay_account_id / sepay_token); DbInitializer relaxes it, but if an environment
+            // hasn't run that yet we degrade to a clean 422 instead of a raw 500.
+            _logger.LogWarning(ex,
+                "wallet_links unique violation while linking wallet {WalletId}; treat as already-linked account.",
+                walletId);
+            throw new BusinessRuleException(
+                "Tài khoản SePay này đã được liên kết. Vui lòng cập nhật cơ sở dữ liệu để cho phép liên kết nhiều ví.",
+                "sepay_account_already_linked");
+        }
 
         return new LinkWalletResponse
         {
@@ -198,8 +217,20 @@ public class LinkedWalletService : ILinkedWalletService
 
         var imported = 0;
         var skipped = 0;
-        var sinceId = link.SepayLastSyncedTxnId;
-        string? newestId = sinceId;
+
+        // Polling cursor: resume from the newest SePay transaction we've already imported for
+        // this wallet. This used to be cached on wallet_links.sepay_last_synced_txn_id; that
+        // column was removed, so we derive the cursor from the transactions already stored.
+        // Imports run oldest-first, so the most recently created sepay_sync row carries the
+        // newest SePay id. If this returns null we simply re-scan from the start — the
+        // ExternalId dedup in TryImportAsync keeps that correct (just less efficient).
+        var sinceId = await _db.Transactions
+            .Where(t => t.WalletId == walletId
+                        && t.EntryMethod == "sepay_sync"
+                        && t.ExternalId != null)
+            .OrderByDescending(t => t.CreatedAt)
+            .Select(t => t.ExternalId)
+            .FirstOrDefaultAsync(cancellationToken);
 
         try
         {
@@ -214,7 +245,6 @@ public class LinkedWalletService : ILinkedWalletService
                 {
                     var (ok, isDuplicate) = await TryImportAsync(wallet, tx, cancellationToken);
                     if (ok) imported++; else if (isDuplicate) skipped++;
-                    newestId = tx.Id;
                 }
 
                 if (response.Meta?.Pagination?.HasMore != true)
@@ -224,7 +254,6 @@ public class LinkedWalletService : ILinkedWalletService
                 await Task.Delay(RateLimitDelayMs, cancellationToken);
             }
 
-            link.SepayLastSyncedTxnId = newestId;
             link.SepayLastSyncAt = DateTime.UtcNow;
             link.SepaySyncStatus = SepaySyncStatus.Ok;
             link.UpdatedAt = DateTime.UtcNow;
@@ -327,6 +356,10 @@ public class LinkedWalletService : ILinkedWalletService
             throw new BusinessRuleException("Token SePay đã lưu không hợp lệ. Hãy liên kết lại ví.", "sepay_token_corrupt");
         }
     }
+
+    /// <summary>True when an EF save failed because of a Postgres unique-constraint violation (23505).</summary>
+    private static bool IsUniqueViolation(DbUpdateException ex)
+        => ex.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation };
 
     private static string? Mask(string? accountNumber)
         => string.IsNullOrWhiteSpace(accountNumber) || accountNumber.Length <= 4
