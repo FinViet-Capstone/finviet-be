@@ -1,11 +1,11 @@
 using FinViet.Application.Features.Auth.Commands.ForgotPassword;
 using FinViet.Application.Interfaces;
 using FinViet.Domain.Enums;
+using FinViet.Infrastructure.Features.Auth;
 using FinViet.Infrastructure.Persistence.Context;
 using FinViet.Infrastructure.Persistence.Entities;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Configuration;
 
 namespace FinViet.Infrastructure.Features.Auth.Commands.ForgotPassword;
 
@@ -13,10 +13,9 @@ public class ForgotPasswordCommandHandler : IRequestHandler<ForgotPasswordComman
 {
     private readonly FinVietDbContext _db;
     private readonly IEmailService _email;
-    private readonly IConfiguration _config;
 
-    public ForgotPasswordCommandHandler(FinVietDbContext db, IEmailService email, IConfiguration config)
-    { _db = db; _email = email; _config = config; }
+    public ForgotPasswordCommandHandler(FinVietDbContext db, IEmailService email)
+    { _db = db; _email = email; }
 
     public async Task<string> Handle(ForgotPasswordCommand request, CancellationToken cancellationToken)
     {
@@ -24,7 +23,7 @@ public class ForgotPasswordCommandHandler : IRequestHandler<ForgotPasswordComman
             .FirstOrDefaultAsync(c => c.Email == request.Email.ToLower() && c.IsActive, cancellationToken);
 
         if (customer is null)
-            return "If this email is registered, a reset link will be sent.";
+            return "If this email is registered, a reset code will be sent.";
 
         // Invalidate old unused reset tokens
         var oldTokens = await _db.EmailVerificationTokens
@@ -35,24 +34,38 @@ public class ForgotPasswordCommandHandler : IRequestHandler<ForgotPasswordComman
 
         foreach (var t in oldTokens) t.UsedAt = DateTime.UtcNow;
 
-        var rawToken = Guid.NewGuid().ToString("N") + Guid.NewGuid().ToString("N");
+        var now  = DateTime.UtcNow;
+        var code = await GenerateUniqueCodeAsync(cancellationToken);
 
         _db.EmailVerificationTokens.Add(new EmailVerificationToken
         {
             TokenId    = Guid.NewGuid(),
             CustomerId = customer.CustomerId,
-            Token      = rawToken,
+            Token      = code,
             TokenType  = EmailTokenType.ResetPassword,
-            ExpiresAt  = DateTime.UtcNow.AddHours(1),
-            CreatedAt  = DateTime.UtcNow
+            ExpiresAt  = now.AddHours(1),
+            CreatedAt  = now
         });
 
         await _db.SaveChangesAsync(cancellationToken);
 
-        var frontendUrl = _config["AppSettings:FrontendUrl"] ?? "http://localhost:3000";
-        await _email.SendPasswordResetEmailAsync(customer.Email, customer.FullName,
-            $"{frontendUrl}/reset-password?token={rawToken}");
+        await _email.SendPasswordResetEmailAsync(customer.Email, customer.FullName, code);
 
-        return "If this email is registered, a reset link will be sent.";
+        return "If this email is registered, a reset code will be sent.";
+    }
+
+    /// <summary>Generate a 6-char code unique among active (unused, non-expired) reset tokens.</summary>
+    private async Task<string> GenerateUniqueCodeAsync(CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+        string code;
+        do
+        {
+            code = VerificationCode.Generate();
+        }
+        while (await _db.EmailVerificationTokens.AnyAsync(t =>
+            t.Token == code && t.TokenType == EmailTokenType.ResetPassword &&
+            t.UsedAt == null && t.ExpiresAt > now, ct));
+        return code;
     }
 }

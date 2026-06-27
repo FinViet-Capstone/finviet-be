@@ -53,25 +53,24 @@ public class EmailService : IEmailService
             $"Mã xác minh FinViet của bạn là: {verificationCode} (hết hạn sau 24 giờ).", htmlContent);
     }
 
-    public async Task SendPasswordResetEmailAsync(string toEmail, string toName, string resetUrl)
+    public async Task SendPasswordResetEmailAsync(string toEmail, string toName, string resetCode)
     {
         var htmlContent = $@"
 <div style='font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;'>
   <h2 style='color: #4F46E5;'>FinViet – Đặt lại Mật khẩu</h2>
   <p>Xin chào <strong>{toName}</strong>,</p>
-  <p>Chúng tôi nhận được yêu cầu đặt lại mật khẩu cho tài khoản của bạn.</p>
-  <a href='{resetUrl}'
-     style='display:inline-block;padding:12px 24px;background:#EF4444;color:#fff;text-decoration:none;border-radius:6px;font-weight:bold;'>
-    Đặt lại Mật khẩu
-  </a>
+  <p>Chúng tôi nhận được yêu cầu đặt lại mật khẩu cho tài khoản của bạn. Nhập mã dưới đây vào ứng dụng để tiếp tục.</p>
+  <div style='margin:24px 0;padding:16px 24px;background:#F3F4F6;border-radius:8px;text-align:center;'>
+    <span style='font-size:32px;font-weight:bold;letter-spacing:8px;color:#EF4444;font-family:monospace;'>{resetCode}</span>
+  </div>
   <p style='color:#666;margin-top:16px;font-size:13px;'>
-    Liên kết này sẽ hết hạn sau <strong>1 giờ</strong>.<br/>
+    Mã này sẽ hết hạn sau <strong>1 giờ</strong>.<br/>
     Nếu bạn không yêu cầu đặt lại mật khẩu, hãy bỏ qua email này.
   </p>
 </div>";
 
-        await SendAsync(toEmail, toName, "FinViet – Đặt lại Mật khẩu",
-            $"Đặt lại mật khẩu tại: {resetUrl}", htmlContent);
+        await SendAsync(toEmail, toName, "FinViet – Mã đặt lại Mật khẩu",
+            $"Mã đặt lại mật khẩu FinViet của bạn là: {resetCode} (hết hạn sau 1 giờ).", htmlContent);
     }
 
     private async Task SendAsync(string toEmail, string toName, string subject, string plainText, string html)
