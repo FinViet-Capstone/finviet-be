@@ -1,4 +1,5 @@
 using FinViet.Application.DTOs.LinkedWallets;
+using FinViet.Application.DTOs.Wallets;
 
 namespace FinViet.Application.Interfaces;
 
@@ -32,6 +33,15 @@ public interface ILinkedWalletService
         Guid customerId,
         Guid walletId,
         LinkWalletRequest request,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// One-step link: creates a new sepay_linked wallet for the chosen SePay account and binds the
+    /// token to it. Returns the created wallet so the client can sync it immediately.
+    /// </summary>
+    Task<WalletResponse> LinkAccountAsync(
+        Guid customerId,
+        LinkAccountRequest request,
         CancellationToken cancellationToken = default);
 
     Task<SyncResultResponse> SyncAsync(

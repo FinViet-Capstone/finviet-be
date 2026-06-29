@@ -1,6 +1,7 @@
 using System.Globalization;
 using FinViet.Application.Common.Exceptions;
 using FinViet.Application.DTOs.LinkedWallets;
+using FinViet.Application.DTOs.Wallets;
 using FinViet.Application.Interfaces;
 using FinViet.Domain.Enums;
 using FinViet.Infrastructure.ExternalServices.Sepay;
@@ -186,6 +187,87 @@ public class LinkedWalletService : ILinkedWalletService
             BankName = link.SepayBankName,
             AccountMask = link.SepayAccountMask
         };
+    }
+
+    public async Task<WalletResponse> LinkAccountAsync(
+        Guid customerId,
+        LinkAccountRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var sepayToken = ResolveAccessToken(request.AccessToken);
+
+        var accounts = await _sepay.GetBankAccountsAsync(sepayToken, cancellationToken);
+        var account = string.IsNullOrWhiteSpace(request.SepayAccountId)
+            ? accounts.Data.FirstOrDefault()
+            : accounts.Data.FirstOrDefault(a => a.Id == request.SepayAccountId);
+
+        if (account is null)
+            throw new BusinessRuleException("Không tìm thấy tài khoản SePay tương ứng.", "sepay_account_not_found");
+
+        var walletCount = await _db.Wallets
+            .CountAsync(w => w.CustomerId == customerId && !w.IsDeleted, cancellationToken);
+        if (walletCount >= 10)
+            throw new BusinessRuleException("Tối đa 10 ví cho mỗi tài khoản.", "wallet_limit_reached");
+
+        var bankName = account.BankFullName ?? account.BankShortName ?? "Ngân hàng";
+        var mask = Mask(account.AccountNumber);
+        var baseName = string.IsNullOrWhiteSpace(mask) ? bankName : $"{bankName} ••{mask}";
+        var walletName = await EnsureUniqueWalletNameAsync(customerId, baseName, cancellationToken);
+
+        var wallet = new Wallet
+        {
+            WalletId = Guid.NewGuid(),
+            CustomerId = customerId,
+            WalletName = walletName,
+            WalletType = SepayLinkedWalletType,
+            Balance = 0m
+        };
+        _db.Wallets.Add(wallet);
+
+        _db.WalletLinks.Add(new WalletLink
+        {
+            WalletId = wallet.WalletId,
+            SepayToken = _protector.Protect(sepayToken),
+            SepayAccountId = account.Id,
+            SepayBankName = bankName,
+            SepayAccountMask = mask,
+            SepaySyncStatus = SepaySyncStatus.Ok,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        });
+
+        await _db.SaveChangesAsync(cancellationToken);
+
+        return new WalletResponse
+        {
+            WalletId = wallet.WalletId,
+            CustomerId = customerId,
+            WalletName = wallet.WalletName,
+            WalletType = SepayLinkedWalletType,
+            Balance = 0m
+        };
+    }
+
+    /// <summary>Appends " (2)", " (3)"… if the base name is already taken by an active wallet.</summary>
+    private async Task<string> EnsureUniqueWalletNameAsync(
+        Guid customerId, string baseName, CancellationToken cancellationToken)
+    {
+        var existing = await _db.Wallets
+            .Where(w => w.CustomerId == customerId && !w.IsDeleted)
+            .Select(w => w.WalletName)
+            .ToListAsync(cancellationToken);
+
+        if (!existing.Contains(baseName, StringComparer.OrdinalIgnoreCase))
+            return baseName;
+
+        for (var i = 2; i < 100; i++)
+        {
+            var candidate = $"{baseName} ({i})";
+            if (!existing.Contains(candidate, StringComparer.OrdinalIgnoreCase))
+                return candidate;
+        }
+
+        return $"{baseName} {Guid.NewGuid():N}"[..40];
     }
 
     public async Task<SyncResultResponse> SyncAsync(

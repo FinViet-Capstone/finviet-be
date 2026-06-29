@@ -1,6 +1,7 @@
 using FinViet.Api.Common;
 using FinViet.Application.Common;
 using FinViet.Application.DTOs.LinkedWallets;
+using FinViet.Application.DTOs.Wallets;
 using FinViet.Application.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -17,10 +18,37 @@ namespace FinViet.Api.Controllers;
 public class LinkedWalletsController : ControllerBase
 {
     private readonly ILinkedWalletService _linkedWalletService;
+    private readonly IFinverseLinkService _finverse;
 
-    public LinkedWalletsController(ILinkedWalletService linkedWalletService)
+    public LinkedWalletsController(
+        ILinkedWalletService linkedWalletService,
+        IFinverseLinkService finverse)
     {
         _linkedWalletService = linkedWalletService;
+        _finverse = finverse;
+    }
+
+    // ── Finverse (consumer bank aggregation) ──────────────────────────────────
+
+    /// <summary>Start a Finverse link session; returns the hosted Link UI url to open.</summary>
+    [HttpPost("finverse/link")]
+    public async Task<ActionResult<ApiResponse<FinverseLinkResponse>>> CreateFinverseLink(
+        CancellationToken cancellationToken)
+    {
+        var customerId = User.GetCustomerId();
+        var data = await _finverse.CreateLinkAsync(customerId, cancellationToken);
+        return Ok(ApiResponse<FinverseLinkResponse>.Ok(data, "Link session created"));
+    }
+
+    /// <summary>Complete linking: exchange the redirect code, create wallets, import transactions.</summary>
+    [HttpPost("finverse/exchange")]
+    public async Task<ActionResult<ApiResponse<IReadOnlyList<WalletResponse>>>> ExchangeFinverse(
+        [FromBody] FinverseExchangeRequest request,
+        CancellationToken cancellationToken)
+    {
+        var customerId = User.GetCustomerId();
+        var data = await _finverse.ExchangeAsync(customerId, request, cancellationToken);
+        return Ok(ApiResponse<IReadOnlyList<WalletResponse>>.Ok(data, "Bank linked successfully"));
     }
 
     /// <summary>List of banks that can be linked (static catalog).</summary>
@@ -50,6 +78,17 @@ public class LinkedWalletsController : ControllerBase
     {
         var data = await _linkedWalletService.ConnectAsync(request, cancellationToken);
         return Ok(ApiResponse<ConnectResponse>.Ok(data, "Connected successfully"));
+    }
+
+    /// <summary>One-step: create a SePay-linked wallet for the chosen account and bind the token.</summary>
+    [HttpPost("link-account")]
+    public async Task<ActionResult<ApiResponse<WalletResponse>>> LinkAccount(
+        [FromBody] LinkAccountRequest request,
+        CancellationToken cancellationToken)
+    {
+        var customerId = User.GetCustomerId();
+        var data = await _linkedWalletService.LinkAccountAsync(customerId, request, cancellationToken);
+        return Ok(ApiResponse<WalletResponse>.Ok(data, "Bank account linked successfully"));
     }
 
     /// <summary>Bind a SePay-linked wallet to the token resolved by the access token.</summary>

@@ -44,10 +44,19 @@ public class TransactionRepository : ITransactionRepository
         if (!string.IsNullOrWhiteSpace(filter.CategoryId))
             query = query.Where(t => t.CategoryId == filter.CategoryId);
 
+        // The query filters arrive as date-only (Kind=Unspecified); Npgsql's timestamptz
+        // requires UTC. Treat From as start-of-day UTC and To as exclusive next-day UTC so
+        // the whole last day is included.
         if (filter.From.HasValue)
-            query = query.Where(t => t.TransactionDate >= filter.From.Value);
+        {
+            var from = DateTime.SpecifyKind(filter.From.Value.Date, DateTimeKind.Utc);
+            query = query.Where(t => t.TransactionDate >= from);
+        }
         if (filter.To.HasValue)
-            query = query.Where(t => t.TransactionDate <= filter.To.Value);
+        {
+            var toExclusive = DateTime.SpecifyKind(filter.To.Value.Date, DateTimeKind.Utc).AddDays(1);
+            query = query.Where(t => t.TransactionDate < toExclusive);
+        }
 
         if (filter.UncategorizedOnly)
             query = query.Where(t => t.CategoryId == null && t.TransactionType != "transfer_out" && t.TransactionType != "transfer_in");
