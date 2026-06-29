@@ -1,6 +1,7 @@
 using FinViet.Application.Interfaces;
 using FinViet.Domain.Enums;
 using FinViet.Infrastructure.ExternalServices;
+using FinViet.Infrastructure.ExternalServices.Documents;
 using FinViet.Infrastructure.ExternalServices.Gemini;
 using FinViet.Infrastructure.ExternalServices.Notification;
 using FinViet.Infrastructure.ExternalServices.Sepay;
@@ -15,6 +16,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
+using Pgvector.EntityFrameworkCore;
 
 namespace FinViet.Infrastructure;
 
@@ -42,15 +44,19 @@ public static class DependencyInjection
         dataSourceBuilder.MapEnum<NotificationType>("notification_type");
         dataSourceBuilder.MapEnum<NotificationEntityType>("notification_entity_type");
         dataSourceBuilder.MapEnum<SubscriptionStatus>("subscription_status");
+        dataSourceBuilder.MapEnum<ScoreView>("score_view");
+        dataSourceBuilder.MapEnum<ScoreColor>("score_color");
+        dataSourceBuilder.MapEnum<ChatRole>("chat_role");
         // The entities expose these enum columns as strings; an EF value converter
         // (PgEnumStringConverter) binds them to the CLR enums mapped above so Npgsql sends the
         // enum OID, not text. The remaining DB enums (chat_role, score_view, score_color) are not
         // currently surfaced by any mapped EF column, so they need no mapping yet.
         dataSourceBuilder.EnableUnmappedTypes();
+        dataSourceBuilder.UseVector();
         var dataSource = dataSourceBuilder.Build();
 
         services.AddDbContext<FinVietDbContext>(options =>
-            options.UseNpgsql(dataSource));
+            options.UseNpgsql(dataSource, o => o.UseVector()));
 
         // JWT
         services.AddScoped<IJwtTokenService, JwtTokenService>();
@@ -117,6 +123,17 @@ public static class DependencyInjection
         services.AddScoped<IWeeklyReportService, WeeklyReportService>();
         services.AddScoped<IAiChatService, AiChatService>();
         services.AddScoped<IAiReportNotifier, FirebaseAiReportNotifier>();
+
+        // ── RAG layer (pgvector + Gemini embeddings) ──────────────────────────────
+        services.AddHttpClient<IEmbeddingService, GeminiEmbeddingService>((sp, http) =>
+        {
+            var cfg = configuration.GetSection(GeminiOptions.SectionName);
+            var timeout = int.TryParse(cfg["TimeoutSeconds"], out var t) ? t : 30;
+            http.Timeout = TimeSpan.FromSeconds(timeout);
+        });
+        services.AddSingleton<IAiRateLimiter, InMemoryAiRateLimiter>();
+        services.AddScoped<IRagRetriever, PgVectorRagRetriever>();
+        services.AddScoped<IDocumentIngestionService, PdfDocumentIngestionService>();
 
         services.AddHostedService<WeeklyReportScheduler>();
 

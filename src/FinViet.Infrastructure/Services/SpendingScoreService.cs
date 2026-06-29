@@ -1,4 +1,3 @@
-using System.Text.Json;
 using FinViet.Application.DTOs.Ai;
 using FinViet.Application.Exceptions;
 using FinViet.Application.Interfaces;
@@ -364,33 +363,39 @@ public class SpendingScoreService : ISpendingScoreService
 
     private async Task SnapshotAsync(Guid customerId, SpendingScoreResult r, CancellationToken ct)
     {
+        var view = r.PeriodType.ToUpperInvariant() == "MONTHLY" ? "monthly" : "weekly";
+
         var existing = await _db.AiSpendingScores.FirstOrDefaultAsync(
-            s => s.CustomerId == customerId && s.PeriodType == r.PeriodType && s.PeriodStart == r.PeriodStart, ct);
+            s => s.CustomerId == customerId && s.View == view && s.PeriodStart == r.PeriodStart, ct);
 
-        var weightsJson = JsonSerializer.Serialize(r.Weights);
-
-        if (existing is null)
-        {
-            _db.AiSpendingScores.Add(new AiSpendingScore
-            {
-                ScoreId = Guid.NewGuid(),
-                CustomerId = customerId,
-                PeriodType = r.PeriodType,
-                PeriodStart = r.PeriodStart,
-                PeriodEnd = r.PeriodEnd,
-                FinalScore = r.FinalScore,
-                SpikeScore = r.SpikeScore,
-                BudgetScore = r.BudgetScore,
-                SavingsScore = r.SavingsScore,
-                WeightsJson = weightsJson,
-                ColorBadge = r.ColorBadge,
-                Comment = r.Comment,
-                CreatedAt = DateTime.UtcNow
-            });
-            await _db.SaveChangesAsync(ct);
-        }
         // If a snapshot already exists for this closed period, keep it (idempotent re-run).
+        if (existing is not null)
+            return;
+
+        _db.AiSpendingScores.Add(new AiSpendingScore
+        {
+            ScoreId = Guid.NewGuid(),
+            CustomerId = customerId,
+            View = view,
+            Score = (int)Math.Round(r.FinalScore),
+            SpikeScore = r.SpikeScore is null ? null : (int)Math.Round(r.SpikeScore.Value),
+            BudgetScore = r.BudgetScore is null ? null : (int)Math.Round(r.BudgetScore.Value),
+            SavingsScore = r.SavingsScore is null ? null : (int)Math.Round(r.SavingsScore.Value),
+            Color = ToColor(r.ColorBadge),
+            CommentaryVi = r.Comment,
+            PeriodStart = r.PeriodStart,
+            GeneratedAt = DateTime.UtcNow
+        });
+        await _db.SaveChangesAsync(ct);
     }
+
+    /// <summary>Map the DTO badge ("GREEN"/"YELLOW"/"RED") to the v3 score_color enum label.</summary>
+    private static string ToColor(string badge) => badge.ToUpperInvariant() switch
+    {
+        "GREEN" => "green",
+        "RED" => "red",
+        _ => "amber"
+    };
 
     private static DateOnly StartOfWeek(DateOnly d)
     {

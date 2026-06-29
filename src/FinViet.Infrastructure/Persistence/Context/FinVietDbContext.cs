@@ -60,6 +60,10 @@ public partial class FinVietDbContext : DbContext
 
     public virtual DbSet<WalletLink> WalletLinks { get; set; }
 
+    public virtual DbSet<RagDocument> RagDocuments { get; set; }
+
+    public virtual DbSet<RagChunk> RagChunks { get; set; }
+
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
     {
         // Connection string is configured via DI in Infrastructure.DependencyInjection.
@@ -196,26 +200,27 @@ public partial class FinVietDbContext : DbContext
 
         modelBuilder.Entity<ChatMessage>(entity =>
         {
-            entity.HasKey(e => e.MessageId).HasName("chat_message_pkey");
+            entity.HasKey(e => e.MessageId).HasName("ai_chat_messages_pkey");
 
-            entity.ToTable("chat_message");
+            entity.ToTable("ai_chat_messages");
 
             entity.Property(e => e.MessageId)
                 .HasDefaultValueSql("gen_random_uuid()")
-                .HasColumnName("message_id");
-            entity.Property(e => e.Content).HasColumnName("content");
+                .HasColumnName("id");
             entity.Property(e => e.CustomerId).HasColumnName("customer_id");
-            entity.Property(e => e.SenderType)
-                .HasMaxLength(50)
-                .HasColumnName("sender_type");
-            entity.Property(e => e.Timestamps)
-                .HasDefaultValueSql("CURRENT_TIMESTAMP")
-                .HasColumnName("timestamps");
+            entity.Property(e => e.Role)
+                .HasColumnName("role")
+                .HasConversion(PgEnumStringConverter.Create<ChatRole>());
+            entity.Property(e => e.Content).HasColumnName("content");
+            entity.Property(e => e.SessionId).HasColumnName("session_id");
+            entity.Property(e => e.CreatedAt)
+                .HasDefaultValueSql("now()")
+                .HasColumnName("created_at");
 
             entity.HasOne(d => d.Customer).WithMany(p => p.ChatMessages)
                 .HasForeignKey(d => d.CustomerId)
                 .OnDelete(DeleteBehavior.Cascade)
-                .HasConstraintName("chat_message_customer_id_fkey");
+                .HasConstraintName("ai_chat_messages_customer_id_fkey");
         });
 
         modelBuilder.Entity<Customer>(entity =>
@@ -646,40 +651,34 @@ public partial class FinVietDbContext : DbContext
 
             entity.ToTable("ai_spending_scores");
 
-            entity.HasIndex(e => new { e.CustomerId, e.PeriodType, e.PeriodStart },
+            entity.HasIndex(e => new { e.CustomerId, e.View, e.PeriodStart },
                 "ux_ai_spending_scores_customer_period").IsUnique();
 
             entity.Property(e => e.ScoreId)
                 .HasDefaultValueSql("gen_random_uuid()")
-                .HasColumnName("score_id");
+                .HasColumnName("id");
             entity.Property(e => e.CustomerId).HasColumnName("customer_id");
-            entity.Property(e => e.PeriodType)
-                .HasMaxLength(10)
-                .HasColumnName("period_type");
+            entity.Property(e => e.View)
+                .HasColumnName("view")
+                .HasConversion(PgEnumStringConverter.Create<ScoreView>());
+            entity.Property(e => e.Score).HasColumnName("score");
+            entity.Property(e => e.SpikeScore).HasColumnName("spike_score");
+            entity.Property(e => e.BudgetScore).HasColumnName("budget_score");
+            entity.Property(e => e.SavingsScore).HasColumnName("savings_score");
+            entity.Property(e => e.Color)
+                .HasColumnName("color")
+                .HasConversion(PgEnumStringConverter.Create<ScoreColor>());
+            entity.Property(e => e.VerdictVi)
+                .HasMaxLength(120)
+                .HasColumnName("verdict_vi");
+            entity.Property(e => e.ReasonVi)
+                .HasMaxLength(255)
+                .HasColumnName("reason_vi");
+            entity.Property(e => e.CommentaryVi).HasColumnName("commentary_vi");
             entity.Property(e => e.PeriodStart).HasColumnName("period_start");
-            entity.Property(e => e.PeriodEnd).HasColumnName("period_end");
-            entity.Property(e => e.FinalScore)
-                .HasPrecision(5, 2)
-                .HasColumnName("final_score");
-            entity.Property(e => e.SpikeScore)
-                .HasPrecision(5, 2)
-                .HasColumnName("spike_score");
-            entity.Property(e => e.BudgetScore)
-                .HasPrecision(5, 2)
-                .HasColumnName("budget_score");
-            entity.Property(e => e.SavingsScore)
-                .HasPrecision(5, 2)
-                .HasColumnName("savings_score");
-            entity.Property(e => e.WeightsJson)
-                .HasColumnType("jsonb")
-                .HasColumnName("weights_json");
-            entity.Property(e => e.ColorBadge)
-                .HasMaxLength(20)
-                .HasColumnName("color_badge");
-            entity.Property(e => e.Comment).HasColumnName("comment");
-            entity.Property(e => e.CreatedAt)
+            entity.Property(e => e.GeneratedAt)
                 .HasDefaultValueSql("now()")
-                .HasColumnName("created_at");
+                .HasColumnName("generated_at");
 
             entity.HasOne(d => d.Customer).WithMany()
                 .HasForeignKey(d => d.CustomerId)
@@ -693,17 +692,18 @@ public partial class FinVietDbContext : DbContext
 
             entity.ToTable("ai_weekly_reports");
 
-            entity.HasIndex(e => new { e.CustomerId, e.PeriodStart },
+            entity.HasIndex(e => new { e.CustomerId, e.WeekStart },
                 "ux_ai_weekly_reports_customer_period").IsUnique();
 
             entity.Property(e => e.ReportId)
                 .HasDefaultValueSql("gen_random_uuid()")
-                .HasColumnName("report_id");
+                .HasColumnName("id");
             entity.Property(e => e.CustomerId).HasColumnName("customer_id");
-            entity.Property(e => e.ScoreId).HasColumnName("score_id");
-            entity.Property(e => e.PeriodStart).HasColumnName("period_start");
-            entity.Property(e => e.PeriodEnd).HasColumnName("period_end");
-            entity.Property(e => e.Narrative).HasColumnName("narrative");
+            entity.Property(e => e.Narrative).HasColumnName("report_text_vi");
+            entity.Property(e => e.WeekStart).HasColumnName("week_start");
+            entity.Property(e => e.IsRead)
+                .HasDefaultValue(false)
+                .HasColumnName("is_read");
             entity.Property(e => e.GeneratedAt)
                 .HasDefaultValueSql("now()")
                 .HasColumnName("generated_at");
@@ -712,11 +712,63 @@ public partial class FinVietDbContext : DbContext
                 .HasForeignKey(d => d.CustomerId)
                 .OnDelete(DeleteBehavior.Cascade)
                 .HasConstraintName("ai_weekly_reports_customer_id_fkey");
+        });
 
-            entity.HasOne(d => d.Score).WithMany()
-                .HasForeignKey(d => d.ScoreId)
-                .OnDelete(DeleteBehavior.SetNull)
-                .HasConstraintName("ai_weekly_reports_score_id_fkey");
+        modelBuilder.Entity<RagDocument>(entity =>
+        {
+            entity.HasKey(e => e.Id).HasName("rag_document_pkey");
+            entity.ToTable("rag_document");
+
+            entity.Property(e => e.Id)
+                .HasDefaultValueSql("gen_random_uuid()")
+                .HasColumnName("id");
+            entity.Property(e => e.CustomerId).HasColumnName("customer_id");
+            entity.Property(e => e.SourceType)
+                .HasMaxLength(20)
+                .HasColumnName("source_type");
+            entity.Property(e => e.Title)
+                .HasMaxLength(255)
+                .HasColumnName("title");
+            entity.Property(e => e.Uri)
+                .HasMaxLength(512)
+                .HasColumnName("uri");
+            entity.Property(e => e.CreatedAt)
+                .HasDefaultValueSql("now()")
+                .HasColumnName("created_at");
+
+            entity.HasOne<Customer>().WithMany()
+                .HasForeignKey(d => d.CustomerId)
+                .OnDelete(DeleteBehavior.Cascade)
+                .HasConstraintName("rag_document_customer_id_fkey");
+        });
+
+        modelBuilder.Entity<RagChunk>(entity =>
+        {
+            entity.HasKey(e => e.Id).HasName("rag_chunk_pkey");
+            entity.ToTable("rag_chunk");
+
+            entity.Property(e => e.Id)
+                .HasDefaultValueSql("gen_random_uuid()")
+                .HasColumnName("id");
+            entity.Property(e => e.DocumentId).HasColumnName("document_id");
+            entity.Property(e => e.CustomerId).HasColumnName("customer_id");
+            entity.Property(e => e.Content).HasColumnName("content");
+            entity.Property(e => e.Embedding)
+                .HasColumnType("vector(768)")
+                .HasColumnName("embedding");
+            entity.Property(e => e.Metadata)
+                .HasColumnType("jsonb")
+                .HasColumnName("metadata");
+            entity.Property(e => e.CreatedAt)
+                .HasDefaultValueSql("now()")
+                .HasColumnName("created_at");
+
+            entity.HasIndex(e => e.CustomerId, "ix_rag_chunk_customer");
+
+            entity.HasOne(d => d.Document).WithMany(p => p.Chunks)
+                .HasForeignKey(d => d.DocumentId)
+                .OnDelete(DeleteBehavior.Cascade)
+                .HasConstraintName("rag_chunk_document_id_fkey");
         });
 
         OnModelCreatingPartial(modelBuilder);

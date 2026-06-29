@@ -12,18 +12,35 @@ namespace FinViet.Infrastructure.Services;
 public class AiChatService : IAiChatService
 {
     private const int RecentTurnsForPrompt = 6;
+    private const int RetrievedChunks = 5;
+    private const string RoleUser = "user";
+    private const string RoleAssistant = "assistant";
     private const string SenderUser = "USER";
     private const string SenderAi = "AI";
+
+    private const string RateLimitedReply =
+        "Bạn đã hỏi trợ lý khá nhiều trong thời gian ngắn. Vui lòng thử lại sau ít phút nhé.";
+    private const string UnavailableReply =
+        "Xin lỗi, trợ lý AI hiện chưa sẵn sàng. Bạn vui lòng thử lại sau ít phút.";
 
     private readonly FinVietDbContext _db;
     private readonly IGeminiClient _gemini;
     private readonly ISpendingScoreService _scoreService;
+    private readonly IRagRetriever _retriever;
+    private readonly IAiRateLimiter _rateLimiter;
 
-    public AiChatService(FinVietDbContext db, IGeminiClient gemini, ISpendingScoreService scoreService)
+    public AiChatService(
+        FinVietDbContext db,
+        IGeminiClient gemini,
+        ISpendingScoreService scoreService,
+        IRagRetriever retriever,
+        IAiRateLimiter rateLimiter)
     {
         _db = db;
         _gemini = gemini;
         _scoreService = scoreService;
+        _retriever = retriever;
+        _rateLimiter = rateLimiter;
     }
 
     public async Task<ChatMessageResponse> AskAsync(
@@ -32,49 +49,93 @@ public class AiChatService : IAiChatService
         if (string.IsNullOrWhiteSpace(question))
             throw new BadRequestException("Câu hỏi không được để trống.");
 
+        // ai_chat_messages.session_id is required. The API has no session concept yet, so use a
+        // stable per-customer session (the customerId) — one continuous thread per customer (MVP).
+        var sessionId = customerId;
+
         // Persist the user turn first.
         var userMsg = new ChatMessage
         {
             MessageId = Guid.NewGuid(),
             CustomerId = customerId,
-            SenderType = SenderUser,
+            Role = RoleUser,
             Content = question.Trim(),
-            Timestamps = DateTime.UtcNow
+            SessionId = sessionId,
+            CreatedAt = DateTime.UtcNow
         };
         _db.ChatMessages.Add(userMsg);
         await _db.SaveChangesAsync(cancellationToken);
 
+        // In-memory rate limit (replaces the durable ai_usage_log). On limit, persist a
+        // friendly reply turn rather than throwing, matching the graceful-fallback pattern.
+        if (!_rateLimiter.TryAcquire(customerId, "chat"))
+            return await PersistAiReplyAsync(customerId, sessionId, RateLimitedReply, cancellationToken);
+
         var context = await BuildContextAsync(customerId, cancellationToken);
+        var retrieved = await RetrieveKnowledgeAsync(customerId, question.Trim(), cancellationToken);
         var recentTurns = await RecentTurnsAsync(customerId, cancellationToken);
+
+        var contextBlock = string.IsNullOrEmpty(retrieved)
+            ? context
+            : $"{context}\n=== TÀI LIỆU & BÁO CÁO LIÊN QUAN ===\n{retrieved}";
 
         string answer;
         try
         {
-            answer = await _gemini.ChatAsync(context, recentTurns, question.Trim(), cancellationToken);
+            answer = await _gemini.ChatAsync(contextBlock, recentTurns, question.Trim(), cancellationToken);
         }
         catch (GeminiUnavailableException)
         {
-            answer = "Xin lỗi, trợ lý AI hiện chưa sẵn sàng. Bạn vui lòng thử lại sau ít phút.";
+            answer = UnavailableReply;
         }
 
+        return await PersistAiReplyAsync(customerId, sessionId, answer, cancellationToken);
+    }
+
+    private async Task<ChatMessageResponse> PersistAiReplyAsync(
+        Guid customerId, Guid sessionId, string answer, CancellationToken ct)
+    {
         var aiMsg = new ChatMessage
         {
             MessageId = Guid.NewGuid(),
             CustomerId = customerId,
-            SenderType = SenderAi,
+            Role = RoleAssistant,
             Content = answer,
-            Timestamps = DateTime.UtcNow
+            SessionId = sessionId,
+            CreatedAt = DateTime.UtcNow
         };
         _db.ChatMessages.Add(aiMsg);
-        await _db.SaveChangesAsync(cancellationToken);
+        await _db.SaveChangesAsync(ct);
 
         return new ChatMessageResponse
         {
             MessageId = aiMsg.MessageId,
             SenderType = SenderAi,
             Content = answer,
-            Timestamp = aiMsg.Timestamps
+            Timestamp = aiMsg.CreatedAt
         };
+    }
+
+    /// <summary>Semantic retrieval over the customer's narratives + global knowledge docs.
+    /// Best-effort: if embedding/retrieval is unavailable, returns empty so chat still works
+    /// from the deterministic aggregate context alone.</summary>
+    private async Task<string> RetrieveKnowledgeAsync(Guid customerId, string question, CancellationToken ct)
+    {
+        try
+        {
+            var hits = await _retriever.RetrieveAsync(customerId, question, RetrievedChunks, ct);
+            if (hits.Count == 0)
+                return string.Empty;
+
+            var sb = new StringBuilder();
+            foreach (var hit in hits)
+                sb.AppendLine($"- ({hit.Title}) {hit.Content}");
+            return sb.ToString();
+        }
+        catch (GeminiUnavailableException)
+        {
+            return string.Empty;
+        }
     }
 
     public async Task<IReadOnlyList<ChatMessageResponse>> GetHistoryAsync(
@@ -82,18 +143,18 @@ public class AiChatService : IAiChatService
     {
         var rows = await _db.ChatMessages
             .Where(m => m.CustomerId == customerId)
-            .OrderByDescending(m => m.Timestamps)
+            .OrderByDescending(m => m.CreatedAt)
             .Take(limit)
             .ToListAsync(cancellationToken);
 
         return rows
-            .OrderBy(m => m.Timestamps)
+            .OrderBy(m => m.CreatedAt)
             .Select(m => new ChatMessageResponse
             {
                 MessageId = m.MessageId,
-                SenderType = m.SenderType,
+                SenderType = ToSender(m.Role),
                 Content = m.Content,
-                Timestamp = m.Timestamps
+                Timestamp = m.CreatedAt
             })
             .ToList();
     }
@@ -102,15 +163,19 @@ public class AiChatService : IAiChatService
     {
         var rows = await _db.ChatMessages
             .Where(m => m.CustomerId == customerId)
-            .OrderByDescending(m => m.Timestamps)
+            .OrderByDescending(m => m.CreatedAt)
             .Take(RecentTurnsForPrompt)
             .ToListAsync(ct);
 
         return rows
-            .OrderBy(m => m.Timestamps)
-            .Select(m => new AiChatTurn { SenderType = m.SenderType, Content = m.Content })
+            .OrderBy(m => m.CreatedAt)
+            .Select(m => new AiChatTurn { SenderType = ToSender(m.Role), Content = m.Content })
             .ToList();
     }
+
+    /// <summary>Map the v3 chat_role label ("user"/"assistant") to the DTO sender ("USER"/"AI").</summary>
+    private static string ToSender(string role) =>
+        string.Equals(role, RoleAssistant, StringComparison.OrdinalIgnoreCase) ? SenderAi : SenderUser;
 
     /// <summary>Aggregated financial summary for the current month — never raw transactions.</summary>
     private async Task<string> BuildContextAsync(Guid customerId, CancellationToken ct)

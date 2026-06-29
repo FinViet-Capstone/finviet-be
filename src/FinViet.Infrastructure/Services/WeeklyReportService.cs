@@ -18,6 +18,7 @@ public class WeeklyReportService : IWeeklyReportService
     private readonly ISpendingScoreService _scoreService;
     private readonly IGeminiClient _gemini;
     private readonly IAiReportNotifier _notifier;
+    private readonly IDocumentIngestionService _ingestion;
     private readonly ILogger<WeeklyReportService> _logger;
 
     public WeeklyReportService(
@@ -25,12 +26,14 @@ public class WeeklyReportService : IWeeklyReportService
         ISpendingScoreService scoreService,
         IGeminiClient gemini,
         IAiReportNotifier notifier,
+        IDocumentIngestionService ingestion,
         ILogger<WeeklyReportService> logger)
     {
         _db = db;
         _scoreService = scoreService;
         _gemini = gemini;
         _notifier = notifier;
+        _ingestion = ingestion;
         _logger = logger;
     }
 
@@ -39,18 +42,13 @@ public class WeeklyReportService : IWeeklyReportService
     {
         // Idempotent: return existing report for this week if present.
         var existing = await _db.AiWeeklyReports
-            .FirstOrDefaultAsync(r => r.CustomerId == customerId && r.PeriodStart == weekStart, cancellationToken);
+            .FirstOrDefaultAsync(r => r.CustomerId == customerId && r.WeekStart == weekStart, cancellationToken);
         if (existing is not null)
             return await ToResponseAsync(existing, cancellationToken);
 
         // 1. Compute + snapshot the weekly score (persist true).
         var score = await _scoreService.ComputeAsync(
             customerId, "WEEKLY", weekStart, weekEnd, persist: true, includeComment: true, cancellationToken);
-
-        var scoreId = await _db.AiSpendingScores
-            .Where(s => s.CustomerId == customerId && s.PeriodType == "WEEKLY" && s.PeriodStart == weekStart)
-            .Select(s => (Guid?)s.ScoreId)
-            .FirstOrDefaultAsync(cancellationToken);
 
         // 2. Build the report context + generate narrative.
         var context = await BuildReportContextAsync(customerId, weekStart, weekEnd, score, cancellationToken);
@@ -71,10 +69,9 @@ public class WeeklyReportService : IWeeklyReportService
         {
             ReportId = Guid.NewGuid(),
             CustomerId = customerId,
-            ScoreId = scoreId,
-            PeriodStart = weekStart,
-            PeriodEnd = weekEnd,
+            WeekStart = weekStart,
             Narrative = narrative,
+            IsRead = false,
             GeneratedAt = DateTime.UtcNow
         };
         _db.AiWeeklyReports.Add(report);
@@ -87,7 +84,7 @@ public class WeeklyReportService : IWeeklyReportService
             // Lost a race — another run inserted it. Return the winner.
             _db.Entry(report).State = EntityState.Detached;
             var winner = await _db.AiWeeklyReports
-                .FirstAsync(r => r.CustomerId == customerId && r.PeriodStart == weekStart, cancellationToken);
+                .FirstAsync(r => r.CustomerId == customerId && r.WeekStart == weekStart, cancellationToken);
             return await ToResponseAsync(winner, cancellationToken);
         }
 
@@ -98,6 +95,16 @@ public class WeeklyReportService : IWeeklyReportService
             $"Điểm ví tuần này: {score.FinalScore:0}/100. Xem chi tiết trong ứng dụng.",
             cancellationToken);
 
+        // 5. Index the narrative into the customer's personal RAG corpus (best-effort).
+        try
+        {
+            await _ingestion.IndexWeeklyReportAsync(report.ReportId, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to index weekly report {ReportId} into RAG corpus.", report.ReportId);
+        }
+
         return await ToResponseAsync(report, cancellationToken);
     }
 
@@ -106,7 +113,7 @@ public class WeeklyReportService : IWeeklyReportService
     {
         var reports = await _db.AiWeeklyReports
             .Where(r => r.CustomerId == customerId)
-            .OrderByDescending(r => r.PeriodStart)
+            .OrderByDescending(r => r.WeekStart)
             .ToListAsync(cancellationToken);
 
         var result = new List<WeeklyReportResponse>(reports.Count);
@@ -157,29 +164,20 @@ public class WeeklyReportService : IWeeklyReportService
 
     private async Task<WeeklyReportResponse> ToResponseAsync(AiWeeklyReport r, CancellationToken ct)
     {
-        decimal? finalScore = null;
-        string? badge = null;
-        if (r.ScoreId is not null)
-        {
-            var s = await _db.AiSpendingScores
-                .Where(x => x.ScoreId == r.ScoreId)
-                .Select(x => new { x.FinalScore, x.ColorBadge })
-                .FirstOrDefaultAsync(ct);
-            if (s is not null)
-            {
-                finalScore = s.FinalScore;
-                badge = s.ColorBadge;
-            }
-        }
+        // v3 has no report→score link; fetch the matching weekly snapshot by (customer, week_start).
+        var snapshot = await _db.AiSpendingScores
+            .Where(s => s.CustomerId == r.CustomerId && s.View == "weekly" && s.PeriodStart == r.WeekStart)
+            .Select(s => new { s.Score, s.Color })
+            .FirstOrDefaultAsync(ct);
 
         return new WeeklyReportResponse
         {
             ReportId = r.ReportId,
-            PeriodStart = r.PeriodStart,
-            PeriodEnd = r.PeriodEnd,
+            PeriodStart = r.WeekStart,
+            PeriodEnd = r.WeekStart.AddDays(6),
             Narrative = r.Narrative,
-            FinalScore = finalScore,
-            ColorBadge = badge,
+            FinalScore = snapshot is null ? null : snapshot.Score,
+            ColorBadge = snapshot?.Color,
             GeneratedAt = r.GeneratedAt
         };
     }

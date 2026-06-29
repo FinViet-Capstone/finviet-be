@@ -44,10 +44,46 @@ CREATE TABLE IF NOT EXISTS merchant_rules (
 CREATE UNIQUE INDEX IF NOT EXISTS ux_merchant_rules_customer_keyword
     ON merchant_rules (customer_id, lower(merchant_keyword));
 CREATE INDEX IF NOT EXISTS ix_merchant_rules_customer
-    ON merchant_rules (customer_id);";
+    ON merchant_rules (customer_id);
+
+-- ── RAG layer (pgvector) ────────────────────────────────────────────────────
+-- Redundant AI tables removed: re-process is now a query over unclassified
+-- transactions, rate limiting moved in-memory, and per-user bucket overrides are
+-- superseded by customer_categories. Drops are idempotent (may not exist on v3).
+DROP TABLE IF EXISTS ai_classification_queue;
+DROP TABLE IF EXISTS ai_usage_log;
+DROP TABLE IF EXISTS user_category_buckets;
+
+-- pgvector extension must be installed on the Postgres server image.
+CREATE EXTENSION IF NOT EXISTS vector;
+
+-- A document is either a global knowledge source (customer_id NULL, e.g. an
+-- ingested finance PDF) or a per-customer narrative (weekly_report/monthly_summary).
+CREATE TABLE IF NOT EXISTS rag_document (
+    id          uuid         PRIMARY KEY DEFAULT gen_random_uuid(),
+    customer_id uuid         NULL REFERENCES customers(id) ON DELETE CASCADE,
+    source_type varchar(20)  NOT NULL,
+    title       varchar(255) NOT NULL,
+    uri         varchar(512) NULL,
+    created_at  timestamptz  NOT NULL DEFAULT now()
+);
+
+-- Gemini text-embedding-004 produces 768-dim vectors.
+CREATE TABLE IF NOT EXISTS rag_chunk (
+    id          uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+    document_id uuid        NOT NULL REFERENCES rag_document(id) ON DELETE CASCADE,
+    customer_id uuid        NULL,
+    content     text        NOT NULL,
+    embedding   vector(768) NOT NULL,
+    metadata    jsonb       NULL,
+    created_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS ix_rag_chunk_customer ON rag_chunk (customer_id);
+CREATE INDEX IF NOT EXISTS ix_rag_chunk_embedding
+    ON rag_chunk USING hnsw (embedding vector_cosine_ops);";
 
         await db.Database.ExecuteSqlRawAsync(sql, cancellationToken);
-        logger.LogInformation("Ensured additive table merchant_rules exists.");
+        logger.LogInformation("Ensured additive tables (merchant_rules, rag_document, rag_chunk) and dropped redundant AI tables.");
     }
 
     private static async Task ApplyMigrationsAsync(

@@ -17,19 +17,22 @@ public class AiController : ControllerBase
     private readonly ISpendingScoreService _score;
     private readonly IWeeklyReportService _reports;
     private readonly IAiChatService _chat;
+    private readonly IDocumentIngestionService _ingestion;
 
     public AiController(
         IAiCategorizationService categorization,
         IBeneficiaryRuleService rules,
         ISpendingScoreService score,
         IWeeklyReportService reports,
-        IAiChatService chat)
+        IAiChatService chat,
+        IDocumentIngestionService ingestion)
     {
         _categorization = categorization;
         _rules = rules;
         _score = score;
         _reports = reports;
         _chat = chat;
+        _ingestion = ingestion;
     }
 
     // ── Categorization ───────────────────────────────────────────────────────────────
@@ -127,5 +130,24 @@ public class AiController : ControllerBase
         var customerId = User.GetCustomerId();
         var history = await _chat.GetHistoryAsync(customerId, limit, cancellationToken);
         return Ok(ApiResponse<IReadOnlyList<ChatMessageResponse>>.Ok(history, "Lịch sử hội thoại."));
+    }
+
+    // ── RAG knowledge documents (admin) ────────────────────────────────────────────
+    /// <summary>Ingest a finance PDF into the GLOBAL knowledge corpus the chatbot retrieves over.
+    /// Admin-only: these documents are visible to all customers' chats.</summary>
+    [HttpPost("documents")]
+    [Authorize(Roles = "Admin")]
+    [RequestSizeLimit(20 * 1024 * 1024)]
+    public async Task<ActionResult<ApiResponse<Guid>>> IngestDocument(
+        IFormFile file, [FromForm] string? title, CancellationToken cancellationToken)
+    {
+        if (file is null || file.Length == 0)
+            return BadRequest(ApiResponse<Guid>.Fail("Vui lòng chọn tệp PDF."));
+
+        await using var stream = file.OpenReadStream();
+        var documentId = await _ingestion.IngestPdfAsync(
+            stream, string.IsNullOrWhiteSpace(title) ? file.FileName : title, cancellationToken);
+
+        return Ok(ApiResponse<Guid>.Ok(documentId, "Đã nạp tài liệu vào kho tri thức."));
     }
 }
