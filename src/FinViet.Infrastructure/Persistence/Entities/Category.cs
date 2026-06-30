@@ -1,0 +1,38 @@
+using System.Collections.Generic;
+
+namespace FinViet.Infrastructure.Persistence.Entities;
+
+public partial class Category
+{
+    public string CategoryId { get; set; } = null!;
+
+    public string CategoryName { get; set; } = null!;
+
+    public string? NameVi { get; set; }
+
+    public string? NameEn { get; set; }
+
+    public string Type { get; set; } = null!;
+
+    public bool? IsMandatory { get; set; }
+
+    /// <summary>
+    /// Maps to <c>categories.default_bucket</c> — a FK to <c>buckets(id)</c> whose values are the
+    /// lowercase slugs <c>needs</c> / <c>wants</c> / <c>savings</c> (null for income/uncategorized).
+    /// </summary>
+    public string? DefaultBucket { get; set; }
+
+    public string? Icon { get; set; }
+
+    public string? Color { get; set; }
+
+    public int? SortOrder { get; set; }
+
+    public virtual ICollection<Budget> Budgets { get; set; } = new List<Budget>();
+
+    public virtual ICollection<CategoryCorrectionLog> CategoryCorrectionLogs { get; set; } = new List<CategoryCorrectionLog>();
+
+    public virtual ICollection<CustomerCategory> CustomerCategories { get; set; } = new List<CustomerCategory>();
+
+    public virtual ICollection<Transaction> Transactions { get; set; } = new List<Transaction>();
+}
