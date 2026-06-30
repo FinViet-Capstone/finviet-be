@@ -99,6 +99,12 @@ public static class DependencyInjection
         services.AddHttpClient<ISepayClient, SepayClient>();
         services.AddScoped<ILinkedWalletService, LinkedWalletService>();
 
+        // Linked wallets (Finverse): consumer bank aggregation — hosted Link UI + transactions API.
+        services.Configure<ExternalServices.Finverse.FinverseOptions>(
+            configuration.GetSection(ExternalServices.Finverse.FinverseOptions.SectionName));
+        services.AddHttpClient<ExternalServices.Finverse.IFinverseClient, ExternalServices.Finverse.FinverseClient>();
+        services.AddScoped<IFinverseLinkService, FinverseLinkService>();
+
         // Saving Goals & Notifications
         services.AddScoped<INotificationService, NotificationService>();
         services.AddScoped<ISavingGoalService, SavingGoalService>();
