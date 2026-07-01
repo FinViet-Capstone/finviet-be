@@ -15,6 +15,7 @@ public class WalletService : IWalletService
 {
     private const string BasicWalletType = "basic";
     private const string SepayLinkedWalletType = "sepay_linked";
+    private const string FinverseLinkedWalletType = "finverse_linked";
     private const int MaximumWalletsPerCustomer = 10;
 
     private static readonly HashSet<string> AllowedWalletTypes = new(StringComparer.OrdinalIgnoreCase)
@@ -41,7 +42,11 @@ public class WalletService : IWalletService
                 CustomerId = customerId,
                 WalletName = w.WalletName,
                 WalletType = NormalizeStoredWalletType(w.WalletType),
-                Balance = w.Balance ?? 0m
+                Balance = w.Balance ?? 0m,
+                FinverseAccountId = w.FinverseLink != null ? w.FinverseLink.FinverseAccountId : null,
+                InstitutionName = w.FinverseLink != null ? w.FinverseLink.InstitutionName : null,
+                AccountMask = w.FinverseLink != null ? w.FinverseLink.AccountMask : null,
+                LastSyncedAt = w.FinverseLink != null ? w.FinverseLink.LastSyncedAt : null
             })
             .ToListAsync(cancellationToken);
 
@@ -56,6 +61,7 @@ public class WalletService : IWalletService
     {
         var wallet = await _dbContext.Wallets
             .AsNoTracking()
+            .Include(w => w.FinverseLink)
             .FirstOrDefaultAsync(w => w.CustomerId == customerId && w.WalletId == walletId && !w.IsDeleted, cancellationToken);
 
         return wallet is null ? null : ToResponse(wallet);
@@ -98,6 +104,7 @@ public class WalletService : IWalletService
         ValidateUpdate(request);
 
         var wallet = await _dbContext.Wallets
+            .Include(w => w.FinverseLink)
             .FirstOrDefaultAsync(w => w.CustomerId == customerId && w.WalletId == walletId && !w.IsDeleted, cancellationToken);
 
         if (wallet is null)
@@ -271,6 +278,14 @@ public class WalletService : IWalletService
 
         if (toWallet is null)
             throw new NotFoundException("To wallet not found.");
+
+        if (NormalizeStoredWalletType(fromWallet.WalletType).Equals(FinverseLinkedWalletType, StringComparison.Ordinal)
+            || NormalizeStoredWalletType(toWallet.WalletType).Equals(FinverseLinkedWalletType, StringComparison.Ordinal))
+        {
+            throw new BusinessRuleException(
+                "Finverse-linked wallets are read-only and cannot participate in manual transfers.",
+                "finverse_wallet_read_only");
+        }
 
         var fromWalletBalance = GetRequiredBalance(fromWallet);
         var toWalletBalance = GetRequiredBalance(toWallet);
@@ -527,7 +542,11 @@ public class WalletService : IWalletService
             CustomerId = GetRequiredCustomerId(wallet),
             WalletName = wallet.WalletName,
             WalletType = NormalizeStoredWalletType(wallet.WalletType),
-            Balance = GetRequiredBalance(wallet)
+            Balance = GetRequiredBalance(wallet),
+            FinverseAccountId = wallet.FinverseLink?.FinverseAccountId,
+            InstitutionName = wallet.FinverseLink?.InstitutionName,
+            AccountMask = wallet.FinverseLink?.AccountMask,
+            LastSyncedAt = wallet.FinverseLink?.LastSyncedAt
         };
 
     private static Guid GetRequiredCustomerId(Wallet wallet)

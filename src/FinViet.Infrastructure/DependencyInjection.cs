@@ -6,6 +6,7 @@ using FinViet.Infrastructure.ExternalServices.Gemini;
 using FinViet.Infrastructure.ExternalServices.Notification;
 using FinViet.Infrastructure.ExternalServices.Sepay;
 using FinViet.Infrastructure.ExternalServices.TransactionImport;
+using FinViet.Infrastructure.ExternalServices.Finverse;
 using FinViet.Infrastructure.Features.Auth.Commands.Login;
 using FinViet.Infrastructure.Identity;
 using FinViet.Infrastructure.Persistence.Context;
@@ -13,6 +14,8 @@ using FinViet.Infrastructure.Persistence.Repositories;
 using FinViet.Infrastructure.Services;
 using FinViet.Infrastructure.Services.Background;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.DataProtection;
+using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
@@ -58,6 +61,23 @@ public static class DependencyInjection
         services.AddDbContext<FinVietDbContext>(options =>
             options.UseNpgsql(dataSource, o => o.UseVector()));
 
+        // Finverse Data API. Credentials stay in server-side configuration/user-secrets;
+        // Login Identity tokens are encrypted before database persistence.
+        services.Configure<FinverseOptions>(configuration.GetSection(FinverseOptions.SectionName));
+        services.AddMemoryCache();
+        services.AddDataProtection().SetApplicationName("FinViet");
+        services.AddSingleton<IFinverseTokenProtector, FinverseTokenProtector>();
+        services.AddSingleton<IFinverseLinkStateProtector, FinverseLinkStateProtector>();
+        services.AddHttpClient<IFinverseClient, FinverseClient>((sp, http) =>
+        {
+            var options = sp.GetRequiredService<IOptions<FinverseOptions>>().Value;
+            var baseUrl = string.IsNullOrWhiteSpace(options.BaseUrl)
+                ? "https://api.prod.finverse.net/"
+                : options.BaseUrl;
+            http.BaseAddress = new Uri(baseUrl.EndsWith('/') ? baseUrl : $"{baseUrl}/");
+            http.Timeout = TimeSpan.FromSeconds(Math.Clamp(options.TimeoutSeconds, 5, 120));
+        });
+
         // JWT
         services.AddScoped<IJwtTokenService, JwtTokenService>();
 
@@ -84,6 +104,7 @@ public static class DependencyInjection
 
         // Wallet Service
         services.AddScoped<IWalletService, WalletService>();
+        services.AddScoped<IFinverseWalletService, FinverseWalletService>();
         services.AddScoped<IBudgetService, BudgetService>();
 
         // Category & Category Request Services
@@ -98,12 +119,6 @@ public static class DependencyInjection
         services.Configure<SepayOptions>(configuration.GetSection(SepayOptions.SectionName));
         services.AddHttpClient<ISepayClient, SepayClient>();
         services.AddScoped<ILinkedWalletService, LinkedWalletService>();
-
-        // Linked wallets (Finverse): consumer bank aggregation — hosted Link UI + transactions API.
-        services.Configure<ExternalServices.Finverse.FinverseOptions>(
-            configuration.GetSection(ExternalServices.Finverse.FinverseOptions.SectionName));
-        services.AddHttpClient<ExternalServices.Finverse.IFinverseClient, ExternalServices.Finverse.FinverseClient>();
-        services.AddScoped<IFinverseLinkService, FinverseLinkService>();
 
         // Saving Goals & Notifications
         services.AddScoped<INotificationService, NotificationService>();

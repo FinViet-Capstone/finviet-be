@@ -44,3 +44,27 @@ public class BusinessRuleException : Exception
         Code = code;
     }
 }
+
+/// <summary>Failure while calling a required upstream service (HTTP 502).</summary>
+public class ExternalServiceException : Exception
+{
+    public string? Code { get; }
+
+    public ExternalServiceException(string message, string? code = null, Exception? innerException = null)
+        : base(message, innerException)
+    {
+        Code = code;
+    }
+}
+
+/// <summary>Required external integration is not configured (HTTP 503).</summary>
+public class IntegrationUnavailableException : Exception
+{
+    public string? Code { get; }
+
+    public IntegrationUnavailableException(string message, string? code = null)
+        : base(message)
+    {
+        Code = code;
+    }
+}

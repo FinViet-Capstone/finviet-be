@@ -18,38 +18,14 @@ namespace FinViet.Api.Controllers;
 public class LinkedWalletsController : ControllerBase
 {
     private readonly ILinkedWalletService _linkedWalletService;
-    private readonly IFinverseLinkService _finverse;
 
-    public LinkedWalletsController(
-        ILinkedWalletService linkedWalletService,
-        IFinverseLinkService finverse)
+    public LinkedWalletsController(ILinkedWalletService linkedWalletService)
     {
         _linkedWalletService = linkedWalletService;
-        _finverse = finverse;
     }
 
-    // ── Finverse (consumer bank aggregation) ──────────────────────────────────
-
-    /// <summary>Start a Finverse link session; returns the hosted Link UI url to open.</summary>
-    [HttpPost("finverse/link")]
-    public async Task<ActionResult<ApiResponse<FinverseLinkResponse>>> CreateFinverseLink(
-        CancellationToken cancellationToken)
-    {
-        var customerId = User.GetCustomerId();
-        var data = await _finverse.CreateLinkAsync(customerId, cancellationToken);
-        return Ok(ApiResponse<FinverseLinkResponse>.Ok(data, "Link session created"));
-    }
-
-    /// <summary>Complete linking: exchange the redirect code, create wallets, import transactions.</summary>
-    [HttpPost("finverse/exchange")]
-    public async Task<ActionResult<ApiResponse<IReadOnlyList<WalletResponse>>>> ExchangeFinverse(
-        [FromBody] FinverseExchangeRequest request,
-        CancellationToken cancellationToken)
-    {
-        var customerId = User.GetCustomerId();
-        var data = await _finverse.ExchangeAsync(customerId, request, cancellationToken);
-        return Ok(ApiResponse<IReadOnlyList<WalletResponse>>.Ok(data, "Bank linked successfully"));
-    }
+    // Finverse (consumer bank aggregation) is served by WalletsController via
+    // IFinverseWalletService; this controller keeps the SePay-backed surface only.
 
     /// <summary>List of banks that can be linked (static catalog).</summary>
     [HttpGet("institutions")]

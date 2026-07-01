@@ -13,10 +13,14 @@ namespace FinViet.Api.Controllers;
 public class WalletsController : ControllerBase
 {
     private readonly IWalletService _walletService;
+    private readonly IFinverseWalletService _finverseWalletService;
 
-    public WalletsController(IWalletService walletService)
+    public WalletsController(
+        IWalletService walletService,
+        IFinverseWalletService finverseWalletService)
     {
         _walletService = walletService;
+        _finverseWalletService = finverseWalletService;
     }
 
     [HttpGet]
@@ -159,6 +163,67 @@ public class WalletsController : ControllerBase
         return Ok(ApiResponse<PagedResult<WalletTransactionResponse>>.Ok(
             result,
             "Wallet transactions retrieved successfully"));
+    }
+
+    [HttpPost("finverse/link-token")]
+    public async Task<ActionResult<ApiResponse<FinverseLinkTokenResponse>>> CreateFinverseLinkToken(
+        [FromBody] CreateFinverseLinkRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await _finverseWalletService.CreateLinkTokenAsync(
+            User.GetCustomerId(),
+            request,
+            cancellationToken);
+
+        return Ok(ApiResponse<FinverseLinkTokenResponse>.Ok(
+            result,
+            "Finverse link URL created successfully"));
+    }
+
+    [HttpPost("finverse/complete-link")]
+    public async Task<ActionResult<ApiResponse<FinverseLinkResult>>> CompleteFinverseLink(
+        [FromBody] CompleteFinverseLinkRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await _finverseWalletService.CompleteLinkAsync(
+            User.GetCustomerId(),
+            request,
+            cancellationToken);
+
+        return Ok(ApiResponse<FinverseLinkResult>.Ok(
+            result,
+            "Finverse accounts linked successfully"));
+    }
+
+    [AllowAnonymous]
+    [HttpPost("finverse/callback")]
+    [Consumes("application/x-www-form-urlencoded")]
+    public async Task<ActionResult<ApiResponse<FinverseLinkResult>>> FinverseCallback(
+        [FromForm] CompleteFinverseLinkRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await _finverseWalletService.CompleteLinkCallbackAsync(
+            request,
+            cancellationToken);
+
+        return Ok(ApiResponse<FinverseLinkResult>.Ok(
+            result,
+            "Finverse accounts linked successfully"));
+    }
+
+    [HttpPost("{id:guid}/finverse-sync")]
+    public async Task<ActionResult<ApiResponse<FinverseWalletSyncResponse>>> SyncFinverseWallet(
+        [FromRoute] Guid id,
+        CancellationToken cancellationToken)
+    {
+        var result = await _finverseWalletService.SyncWalletAsync(
+            User.GetCustomerId(),
+            id,
+            cancellationToken);
+
+        return Ok(ApiResponse<FinverseWalletSyncResponse>.Ok(
+            result,
+            "Finverse wallet synchronized successfully"));
     }
 
 }

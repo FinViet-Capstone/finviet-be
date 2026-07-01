@@ -242,6 +242,11 @@ public class TransactionRepository : ITransactionRepository
         if (wallet is null || wallet.CustomerId != customerId || wallet.IsDeleted)
             throw new NotFoundException("Wallet", walletId);
 
+        if (string.Equals(wallet.WalletType, "finverse_linked", StringComparison.OrdinalIgnoreCase))
+            throw new BusinessRuleException(
+                "Finverse-linked wallets are read-only. Transactions are created by synchronization.",
+                "finverse_wallet_read_only");
+
         var normalizedType = NormalizeType(transactionType);
         var transaction = new Transaction
         {
@@ -320,8 +325,13 @@ public class TransactionRepository : ITransactionRepository
         if (target is null)
             return false;
 
-        if (string.Equals(target.EntryMethod, "sepay_sync", StringComparison.OrdinalIgnoreCase))
-            throw new BusinessRuleException("SePay-synced transactions cannot be deleted.", "sepay_transaction_locked");
+        if (string.Equals(target.EntryMethod, "sepay_sync", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(target.EntryMethod, "finverse_sync", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new BusinessRuleException(
+                "Provider-synced transactions cannot be deleted.",
+                "synced_transaction_locked");
+        }
 
         if (target.TransferPairId.HasValue)
         {
