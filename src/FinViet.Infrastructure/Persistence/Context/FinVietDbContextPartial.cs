@@ -23,7 +23,6 @@ public partial class FinVietDbContext
         modelBuilder.HasPostgresEnum<Gender>("public", "gender");
         modelBuilder.HasPostgresEnum<AppLanguage>("public", "app_language");
         modelBuilder.HasPostgresEnum<AppTheme>("public", "app_theme");
-        modelBuilder.HasPostgresEnum<SepaySyncStatus>("public", "sepay_sync_status");
         modelBuilder.HasPostgresEnum<WalletType>("public", "wallet_type");
         modelBuilder.HasPostgresEnum<TransactionType>("public", "transaction_type");
         modelBuilder.HasPostgresEnum<EntryMethod>("public", "entry_method");
@@ -48,18 +47,19 @@ public partial class FinVietDbContext
             entity.Property(e => e.IsLocked).HasDefaultValue(false).HasColumnName("is_locked");
         });
 
-        modelBuilder.Entity<WalletLink>(entity =>
+        modelBuilder.Entity<FinverseLink>(entity =>
         {
-            entity.HasKey(e => e.WalletId).HasName("wallet_links_pkey");
-            entity.ToTable("wallet_links");
+            entity.HasKey(e => e.WalletId).HasName("finverse_links_pkey");
+            entity.ToTable("finverse_links");
 
             entity.Property(e => e.WalletId).HasColumnName("wallet_id");
-            entity.Property(e => e.SepayToken).HasMaxLength(255).HasColumnName("sepay_token");
-            entity.Property(e => e.SepayBankName).HasMaxLength(120).HasColumnName("sepay_bank_name");
-            entity.Property(e => e.SepayAccountId).HasMaxLength(120).HasColumnName("sepay_account_id");
-            entity.Property(e => e.SepayAccountMask).HasMaxLength(8).HasColumnName("sepay_account_mask");
-            entity.Property(e => e.SepayLastSyncAt).HasColumnName("sepay_last_sync_at");
-            entity.Property(e => e.SepaySyncStatus).HasColumnName("sepay_sync_status");
+            entity.Property(e => e.LoginIdentityId).HasColumnType("text").HasColumnName("login_identity_id");
+            entity.Property(e => e.AccessTokenProtected).HasColumnType("text").HasColumnName("access_token");
+            entity.Property(e => e.RefreshTokenProtected).HasColumnType("text").HasColumnName("refresh_token");
+            entity.Property(e => e.FinverseAccountId).HasColumnType("text").HasColumnName("finverse_account_id");
+            entity.Property(e => e.InstitutionName).HasColumnType("text").HasColumnName("institution_name");
+            entity.Property(e => e.AccountMask).HasColumnType("text").HasColumnName("account_mask");
+            entity.Property(e => e.LastSyncedAt).HasColumnName("last_synced_at");
             entity.Property(e => e.CreatedAt).HasDefaultValueSql("now()").HasColumnName("created_at");
             entity.Property(e => e.UpdatedAt).HasDefaultValueSql("now()").HasColumnName("updated_at");
         });

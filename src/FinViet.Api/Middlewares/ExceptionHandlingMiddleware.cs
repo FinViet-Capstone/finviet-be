@@ -36,6 +36,8 @@ public class ExceptionHandlingMiddleware
                 or UnauthorizedException
                 or ForbiddenException
                 or BusinessRuleException
+                or ExternalServiceException
+                or IntegrationUnavailableException
                 or ValidationException
                 or FinViet.Application.Exceptions.NotFoundException
                 or FinViet.Application.Exceptions.ValidationException)
@@ -80,6 +82,10 @@ public class ExceptionHandlingMiddleware
 
             // Business rule violation → 422 + machine-readable code (FE maps to VI message).
             BusinessRuleException bce => (StatusCodes.Status422UnprocessableEntity, bce.Message, null, bce.Code),
+            ExternalServiceException ese =>
+                                         (StatusCodes.Status502BadGateway, ese.Message, null, ese.Code),
+            IntegrationUnavailableException iue =>
+                                         (StatusCodes.Status503ServiceUnavailable, iue.Message, null, iue.Code),
 
             BadRequestException bre   => (StatusCodes.Status400BadRequest,   bre.Message, null, null),
             NotFoundException nfe     => (StatusCodes.Status404NotFound,      nfe.Message, null, null),

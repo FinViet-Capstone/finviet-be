@@ -1,177 +1,237 @@
-using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using FinViet.Application.Common.Exceptions;
+using FinViet.Application.DTOs.Wallets;
 using Microsoft.Extensions.Caching.Memory;
-using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 namespace FinViet.Infrastructure.ExternalServices.Finverse;
 
-/// <summary>
-/// REST wrapper over the Finverse Data API. Finverse JSON is snake_case, mapped via
-/// JsonNamingPolicy.SnakeCaseLower. The backend client-credentials token is cached; per-user
-/// login-identity tokens are passed in by the caller (held encrypted on wallet_links).
-/// </summary>
-public class FinverseClient : IFinverseClient
+internal sealed class FinverseClient : IFinverseClient
 {
-    private const string CustomerTokenCacheKey = "finverse:customer_token";
+    private const string CustomerTokenCacheKey = "finverse:customer-token";
+    private static readonly SemaphoreSlim CustomerTokenLock = new(1, 1);
 
-    private static readonly JsonSerializerOptions JsonOpts = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
-        PropertyNameCaseInsensitive = true,
-    };
-
-    private readonly HttpClient _http;
+    private readonly HttpClient _httpClient;
     private readonly FinverseOptions _options;
     private readonly IMemoryCache _cache;
-    private readonly ILogger<FinverseClient> _logger;
+    private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web);
 
     public FinverseClient(
-        HttpClient http,
+        HttpClient httpClient,
         IOptions<FinverseOptions> options,
-        IMemoryCache cache,
-        ILogger<FinverseClient> logger)
+        IMemoryCache cache)
     {
-        _http = http;
+        _httpClient = httpClient;
         _options = options.Value;
         _cache = cache;
-        _logger = logger;
-
-        _http.BaseAddress = new Uri(_options.BaseUrl.TrimEnd('/') + "/");
-        _http.Timeout = TimeSpan.FromSeconds(_options.TimeoutSeconds);
     }
 
-    public async Task<FinverseTokenResponse> GetCustomerTokenAsync(CancellationToken cancellationToken = default)
+    public async Task<FinverseLinkTokenApiResponse> CreateLinkTokenAsync(
+        Guid customerId,
+        string state,
+        CreateFinverseLinkRequest request,
+        CancellationToken cancellationToken)
     {
-        if (_cache.TryGetValue(CustomerTokenCacheKey, out FinverseTokenResponse? cached) && cached is not null)
+        EnsureConfigured();
+        var customerToken = await GetCustomerTokenAsync(cancellationToken);
+        var payload = new
+        {
+            client_id = _options.ClientId,
+            user_id = customerId.ToString("D"),
+            redirect_uri = _options.RedirectUri,
+            state,
+            grant_type = "client_credentials",
+            response_mode = "form_post",
+            response_type = "code",
+            institution_id = string.IsNullOrWhiteSpace(request.InstitutionId) ? "" : request.InstitutionId.Trim(),
+            language = NormalizeLanguage(request.Language),
+            ui_mode = NormalizeUiMode(request.UiMode),
+            products_requested = new[] { "ACCOUNTS", "TRANSACTIONS" }
+        };
+
+        using var message = CreateJsonRequest(HttpMethod.Post, "link/token", payload, customerToken);
+        return await SendAsync<FinverseLinkTokenApiResponse>(message, cancellationToken);
+    }
+
+    public async Task<FinverseTokenResponse> ExchangeCodeAsync(
+        string code,
+        CancellationToken cancellationToken)
+    {
+        EnsureConfigured();
+        var customerToken = await GetCustomerTokenAsync(cancellationToken);
+        using var message = new HttpRequestMessage(HttpMethod.Post, "auth/token")
+        {
+            Content = new FormUrlEncodedContent(new Dictionary<string, string>
+            {
+                ["client_id"] = _options.ClientId,
+                ["code"] = code,
+                ["redirect_uri"] = _options.RedirectUri,
+                ["grant_type"] = "authorization_code"
+            })
+        };
+        AddHeaders(message, customerToken);
+        return await SendAsync<FinverseTokenResponse>(message, cancellationToken);
+    }
+
+    public async Task<FinverseTokenResponse> RefreshLoginIdentityTokenAsync(
+        string refreshToken,
+        CancellationToken cancellationToken)
+    {
+        EnsureConfigured();
+        var customerToken = await GetCustomerTokenAsync(cancellationToken);
+        // Finverse's auth/token/refresh only accepts application/json; posting
+        // application/x-www-form-urlencoded here returns HTTP 415 and breaks sync.
+        using var message = CreateJsonRequest(HttpMethod.Post, "auth/token/refresh", new
+        {
+            client_id = _options.ClientId,
+            refresh_token = refreshToken,
+            grant_type = "refresh_token"
+        }, customerToken);
+        return await SendAsync<FinverseTokenResponse>(message, cancellationToken);
+    }
+
+    public async Task<FinverseLoginIdentityApiResponse> GetLoginIdentityAsync(
+        string loginIdentityToken,
+        CancellationToken cancellationToken)
+    {
+        using var message = new HttpRequestMessage(HttpMethod.Get, "login_identity");
+        AddHeaders(message, loginIdentityToken);
+        return await SendAsync<FinverseLoginIdentityApiResponse>(message, cancellationToken);
+    }
+
+    public async Task<FinverseAccountsApiResponse> GetAccountsAsync(
+        string loginIdentityToken,
+        CancellationToken cancellationToken)
+    {
+        using var message = new HttpRequestMessage(HttpMethod.Get, "accounts");
+        AddHeaders(message, loginIdentityToken);
+        return await SendAsync<FinverseAccountsApiResponse>(message, cancellationToken);
+    }
+
+    public async Task<FinverseTransactionsApiResponse> GetTransactionsAsync(
+        string loginIdentityToken,
+        string accountId,
+        int offset,
+        int limit,
+        CancellationToken cancellationToken)
+    {
+        var path = $"transactions/{Uri.EscapeDataString(accountId)}?offset={offset}&limit={limit}";
+        using var message = new HttpRequestMessage(HttpMethod.Get, path);
+        AddHeaders(message, loginIdentityToken);
+        return await SendAsync<FinverseTransactionsApiResponse>(message, cancellationToken);
+    }
+
+    private async Task<string> GetCustomerTokenAsync(CancellationToken cancellationToken)
+    {
+        if (_cache.TryGetValue<string>(CustomerTokenCacheKey, out var cached) && !string.IsNullOrWhiteSpace(cached))
             return cached;
 
-        if (string.IsNullOrWhiteSpace(_options.ClientId) || string.IsNullOrWhiteSpace(_options.ClientSecret))
-            throw new BusinessRuleException("Finverse chưa được cấu hình (client id/secret).", "finverse_not_configured");
+        await CustomerTokenLock.WaitAsync(cancellationToken);
+        try
+        {
+            if (_cache.TryGetValue<string>(CustomerTokenCacheKey, out cached) && !string.IsNullOrWhiteSpace(cached))
+                return cached;
 
-        var token = await PostJsonAsync<FinverseTokenResponse>(
-            "auth/customer/token",
-            new
+            using var message = CreateJsonRequest(HttpMethod.Post, "auth/customer/token", new
             {
                 client_id = _options.ClientId,
                 client_secret = _options.ClientSecret,
-                grant_type = "client_credentials",
-            },
-            bearer: null,
-            cancellationToken);
+                grant_type = "client_credentials"
+            });
+            var token = await SendAsync<FinverseTokenResponse>(message, cancellationToken);
+            if (string.IsNullOrWhiteSpace(token.AccessToken))
+                throw new ExternalServiceException("Finverse did not return a customer token.", "finverse_token_missing");
 
-        // Refresh a minute early to avoid edge-of-expiry failures.
-        var ttl = TimeSpan.FromSeconds(Math.Max(60, token.ExpiresIn - 60));
-        _cache.Set(CustomerTokenCacheKey, token, ttl);
-        return token;
-    }
-
-    public Task<FinverseTokenResponse> CreateLinkAsync(
-        string customerToken, string userId, string state, CancellationToken cancellationToken = default)
-        => PostJsonAsync<FinverseTokenResponse>(
-            "link/token",
-            new
-            {
-                client_id = _options.ClientId,
-                user_id = userId,
-                redirect_uri = _options.RedirectUri,
-                state,
-                grant_type = "client_credentials",
-                response_mode = "query",        // mobile WebView reads ?code= from the redirect
-                response_type = "code",
-                // Auto-redirect to redirect_uri after success so the user doesn't have to
-                // tap "Continue" inside the WebView (that button sat under the home indicator).
-                ui_mode = "auto_redirect",
-                link_mode = _options.LinkMode,
-                language = "vi",
-            },
-            bearer: customerToken,
-            cancellationToken);
-
-    public async Task<FinverseExchangeResponse> ExchangeCodeAsync(
-        string customerToken, string code, CancellationToken cancellationToken = default)
-    {
-        var form = new FormUrlEncodedContent(new Dictionary<string, string>
+            var lifetime = TimeSpan.FromSeconds(Math.Max(60, token.ExpiresIn - 120));
+            _cache.Set(CustomerTokenCacheKey, token.AccessToken, lifetime);
+            return token.AccessToken;
+        }
+        finally
         {
-            ["client_id"] = _options.ClientId,
-            ["code"] = code,
-            ["redirect_uri"] = _options.RedirectUri,
-            ["grant_type"] = "authorization_code",
-        });
-        return await SendAsync<FinverseExchangeResponse>(
-            HttpMethod.Post, "auth/token", customerToken, form, cancellationToken);
+            CustomerTokenLock.Release();
+        }
     }
 
-    public async Task<FinverseExchangeResponse> RefreshAsync(
-        string customerToken, string refreshToken, CancellationToken cancellationToken = default)
+    private HttpRequestMessage CreateJsonRequest(HttpMethod method, string path, object payload, string? bearerToken = null)
     {
-        var form = new FormUrlEncodedContent(new Dictionary<string, string>
+        var message = new HttpRequestMessage(method, path)
         {
-            ["client_id"] = _options.ClientId,
-            ["refresh_token"] = refreshToken,
-            ["grant_type"] = "refresh_token",
-        });
-        return await SendAsync<FinverseExchangeResponse>(
-            HttpMethod.Post, "auth/token/refresh", customerToken, form, cancellationToken);
+            Content = JsonContent.Create(payload)
+        };
+        AddHeaders(message, bearerToken);
+        return message;
     }
 
-    public Task<FinverseAccountsResponse> GetAccountsAsync(
-        string loginIdentityToken, CancellationToken cancellationToken = default)
-        => SendAsync<FinverseAccountsResponse>(
-            HttpMethod.Get, "accounts", loginIdentityToken, content: null, cancellationToken);
-
-    public Task<FinverseTransactionsResponse> GetTransactionsAsync(
-        string loginIdentityToken, string accountId, int offset = 0, int limit = 500,
-        CancellationToken cancellationToken = default)
-        => SendAsync<FinverseTransactionsResponse>(
-            HttpMethod.Get,
-            $"transactions/{Uri.EscapeDataString(accountId)}?offset={offset}&limit={limit}",
-            loginIdentityToken, content: null, cancellationToken);
-
-    // ── transport helpers ─────────────────────────────────────────────────────────
-
-    private Task<T> PostJsonAsync<T>(string path, object body, string? bearer, CancellationToken ct)
-        => SendAsync<T>(HttpMethod.Post, path, bearer, JsonContent.Create(body, options: JsonOpts), ct);
-
-    private async Task<T> SendAsync<T>(
-        HttpMethod method, string path, string? bearer, HttpContent? content, CancellationToken ct)
+    private static void AddHeaders(HttpRequestMessage message, string? bearerToken)
     {
-        using var request = new HttpRequestMessage(method, path) { Content = content };
-        if (!string.IsNullOrWhiteSpace(bearer))
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearer);
+        message.Headers.TryAddWithoutValidation("X-Request-Id", Guid.NewGuid().ToString("N"));
+        if (!string.IsNullOrWhiteSpace(bearerToken))
+            message.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearerToken);
+    }
 
-        HttpResponseMessage response;
+    private async Task<T> SendAsync<T>(HttpRequestMessage message, CancellationToken cancellationToken)
+    {
         try
         {
-            response = await _http.SendAsync(request, ct);
-        }
-        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
-        {
-            _logger.LogError(ex, "Finverse request to {Path} failed at transport level.", path);
-            throw new BusinessRuleException("Không kết nối được tới Finverse. Vui lòng thử lại sau.", "finverse_unavailable");
-        }
-
-        if (!response.IsSuccessStatusCode)
-        {
-            var errBody = await response.Content.ReadAsStringAsync(ct);
-            _logger.LogWarning("Finverse {Path} returned {Status}: {Body}", path, (int)response.StatusCode, errBody);
-            throw response.StatusCode switch
+            using var response = await _httpClient.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            if (!response.IsSuccessStatusCode)
             {
-                HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden =>
-                    new BusinessRuleException("Phiên liên kết Finverse không hợp lệ hoặc đã hết hạn.", "finverse_unauthorized"),
-                HttpStatusCode.TooManyRequests =>
-                    new BusinessRuleException("Finverse đang giới hạn tần suất. Vui lòng thử lại sau.", "finverse_rate_limited"),
-                _ => new BusinessRuleException("Finverse gặp lỗi. Vui lòng thử lại sau.", "finverse_error"),
-            };
+                var requestId = response.Headers.TryGetValues("X-Request-Id", out var values)
+                    ? values.FirstOrDefault()
+                    : null;
+                throw new ExternalServiceException(
+                    $"Finverse returned HTTP {(int)response.StatusCode}." +
+                    (string.IsNullOrWhiteSpace(requestId) ? string.Empty : $" Request ID: {requestId}."),
+                    "finverse_api_error");
+            }
+
+            await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+            var result = await JsonSerializer.DeserializeAsync<T>(stream, _jsonOptions, cancellationToken);
+            return result ?? throw new ExternalServiceException(
+                "Finverse returned an empty response.",
+                "finverse_empty_response");
         }
-
-        var result = await response.Content.ReadFromJsonAsync<T>(JsonOpts, ct);
-        if (result is null)
-            throw new BusinessRuleException("Finverse trả về dữ liệu không hợp lệ.", "finverse_bad_payload");
-
-        return result;
+        catch (ExternalServiceException)
+        {
+            throw;
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new ExternalServiceException("Finverse request timed out.", "finverse_timeout");
+        }
+        catch (HttpRequestException ex)
+        {
+            throw new ExternalServiceException("Unable to reach Finverse.", "finverse_unreachable", ex);
+        }
+        catch (JsonException ex)
+        {
+            throw new ExternalServiceException("Finverse returned an invalid response.", "finverse_invalid_response", ex);
+        }
     }
+
+    private void EnsureConfigured()
+    {
+        if (string.IsNullOrWhiteSpace(_options.ClientId)
+            || string.IsNullOrWhiteSpace(_options.ClientSecret)
+            || string.IsNullOrWhiteSpace(_options.RedirectUri))
+        {
+            throw new IntegrationUnavailableException(
+                "Finverse is not configured. Set Finverse:ClientId, Finverse:ClientSecret, and Finverse:RedirectUri.",
+                "finverse_not_configured");
+        }
+    }
+
+    private static string NormalizeLanguage(string? language)
+        => string.IsNullOrWhiteSpace(language) ? "en" : language.Trim().ToLowerInvariant();
+
+    private static string NormalizeUiMode(string? uiMode)
+        => uiMode?.Trim().ToLowerInvariant() switch
+        {
+            "iframe" => "iframe",
+            "auto_redirect" => "auto_redirect",
+            "standalone" => "standalone",
+            _ => "redirect"
+        };
 }
