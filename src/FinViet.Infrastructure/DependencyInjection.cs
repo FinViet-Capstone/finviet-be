@@ -4,7 +4,6 @@ using FinViet.Infrastructure.ExternalServices;
 using FinViet.Infrastructure.ExternalServices.Documents;
 using FinViet.Infrastructure.ExternalServices.Gemini;
 using FinViet.Infrastructure.ExternalServices.Notification;
-using FinViet.Infrastructure.ExternalServices.Sepay;
 using FinViet.Infrastructure.ExternalServices.TransactionImport;
 using FinViet.Infrastructure.ExternalServices.Finverse;
 using FinViet.Infrastructure.Features.Auth.Commands.Login;
@@ -37,7 +36,6 @@ public static class DependencyInjection
         dataSourceBuilder.MapEnum<Gender>("gender");
         dataSourceBuilder.MapEnum<AppLanguage>("app_language");
         dataSourceBuilder.MapEnum<AppTheme>("app_theme");
-        dataSourceBuilder.MapEnum<SepaySyncStatus>("sepay_sync_status");
         dataSourceBuilder.MapEnum<WalletType>("wallet_type");
         dataSourceBuilder.MapEnum<TransactionType>("transaction_type");
         dataSourceBuilder.MapEnum<EntryMethod>("entry_method");
@@ -113,12 +111,6 @@ public static class DependencyInjection
 
         // Merchant auto-categorization rules
         services.AddScoped<IMerchantRuleService, MerchantRuleService>();
-
-        // Linked wallets (SePay): static-token API client + connect/exchange/sync service.
-        services.AddMemoryCache();
-        services.Configure<SepayOptions>(configuration.GetSection(SepayOptions.SectionName));
-        services.AddHttpClient<ISepayClient, SepayClient>();
-        services.AddScoped<ILinkedWalletService, LinkedWalletService>();
 
         // Saving Goals & Notifications
         services.AddScoped<INotificationService, NotificationService>();

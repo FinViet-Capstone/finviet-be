@@ -325,8 +325,7 @@ public class TransactionRepository : ITransactionRepository
         if (target is null)
             return false;
 
-        if (string.Equals(target.EntryMethod, "sepay_sync", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(target.EntryMethod, "finverse_sync", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(target.EntryMethod, "finverse_sync", StringComparison.OrdinalIgnoreCase))
         {
             throw new BusinessRuleException(
                 "Provider-synced transactions cannot be deleted.",

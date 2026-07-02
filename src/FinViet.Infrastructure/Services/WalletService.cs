@@ -14,13 +14,14 @@ namespace FinViet.Infrastructure.Services;
 public class WalletService : IWalletService
 {
     private const string BasicWalletType = "basic";
-    private const string SepayLinkedWalletType = "sepay_linked";
     private const string FinverseLinkedWalletType = "finverse_linked";
     private const int MaximumWalletsPerCustomer = 10;
 
+    // Finverse-linked wallets are created by the Finverse link flow, not manually, so they are not
+    // listed here; manual creation only yields a basic wallet (aliases normalize to basic).
     private static readonly HashSet<string> AllowedWalletTypes = new(StringComparer.OrdinalIgnoreCase)
     {
-        BasicWalletType, SepayLinkedWalletType, "CASH", "BANK_ACCOUNT", "CREDIT_CARD", "E_WALLET", "INVESTMENT"
+        BasicWalletType, "CASH", "BANK_ACCOUNT", "CREDIT_CARD", "E_WALLET", "INVESTMENT"
     };
 
     private readonly FinVietDbContext _dbContext;
@@ -171,6 +172,7 @@ public class WalletService : IWalletService
             "Transfer",
             "wallet-transfer",
             idempotencyKey,
+            allowFinverseSource: false,
             cancellationToken);
     }
 
@@ -183,7 +185,7 @@ public class WalletService : IWalletService
         if (request.Amount <= 0)
             throw new ValidationException("Withdrawal amount must be greater than 0.");
 
-        // Source must be a SePay-linked wallet owned by the customer (rút tiền: sepay_linked → basic).
+        // Source must be a Finverse-linked wallet owned by the customer (rút tiền: finverse_linked → basic).
         var sourceWallet = await _dbContext.Wallets
             .AsNoTracking()
             .FirstOrDefaultAsync(
@@ -193,10 +195,10 @@ public class WalletService : IWalletService
         if (sourceWallet is null)
             throw new NotFoundException("Source wallet not found.");
 
-        if (!NormalizeStoredWalletType(sourceWallet.WalletType).Equals(SepayLinkedWalletType, StringComparison.Ordinal))
+        if (!NormalizeStoredWalletType(sourceWallet.WalletType).Equals(FinverseLinkedWalletType, StringComparison.Ordinal))
             throw new BusinessRuleException(
-                "Withdrawal is only allowed from a SePay-linked wallet.",
-                "withdraw_source_not_sepay");
+                "Withdrawal is only allowed from a Finverse-linked wallet.",
+                "withdraw_source_not_finverse");
 
         // Destination is a basic wallet: auto-pick when there is exactly one, otherwise prompt for a choice.
         var destinationWalletId = await ResolveWithdrawDestinationAsync(
@@ -214,6 +216,7 @@ public class WalletService : IWalletService
             "Withdrawal",
             "wallet-withdraw",
             idempotencyKey,
+            allowFinverseSource: true,
             cancellationToken);
     }
 
@@ -229,6 +232,7 @@ public class WalletService : IWalletService
         string transferLabel,
         string idempotencyOperation,
         string? idempotencyKey,
+        bool allowFinverseSource,
         CancellationToken cancellationToken)
     {
         await using var transaction = await _dbContext.Database.BeginTransactionAsync(
@@ -279,8 +283,13 @@ public class WalletService : IWalletService
         if (toWallet is null)
             throw new NotFoundException("To wallet not found.");
 
-        if (NormalizeStoredWalletType(fromWallet.WalletType).Equals(FinverseLinkedWalletType, StringComparison.Ordinal)
-            || NormalizeStoredWalletType(toWallet.WalletType).Equals(FinverseLinkedWalletType, StringComparison.Ordinal))
+        var fromIsFinverse = NormalizeStoredWalletType(fromWallet.WalletType).Equals(FinverseLinkedWalletType, StringComparison.Ordinal);
+        var toIsFinverse = NormalizeStoredWalletType(toWallet.WalletType).Equals(FinverseLinkedWalletType, StringComparison.Ordinal);
+
+        // Finverse-linked wallets are read-only: they can never receive a manual movement, and can
+        // only be a source for a withdrawal (rút tiền), where the caller opts in via allowFinverseSource.
+        // Note: a withdrawn balance is overwritten by the authoritative bank balance on the next Finverse sync.
+        if (toIsFinverse || (fromIsFinverse && !allowFinverseSource))
         {
             throw new BusinessRuleException(
                 "Finverse-linked wallets are read-only and cannot participate in manual transfers.",
@@ -526,7 +535,7 @@ public class WalletService : IWalletService
     {
         var normalized = walletType.Trim();
         if (!AllowedWalletTypes.Contains(normalized))
-            throw new ValidationException("Wallet type must be one of: basic, sepay_linked.");
+            throw new ValidationException("Wallet type must be one of: basic.");
 
         return normalized.ToUpperInvariant() switch
         {

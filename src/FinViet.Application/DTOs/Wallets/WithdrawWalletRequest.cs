@@ -1,7 +1,7 @@
 namespace FinViet.Application.DTOs.Wallets;
 
 /// <summary>
-/// Rút tiền: move money out of a SePay-linked wallet into a basic wallet.
+/// Rút tiền: move money out of a Finverse-linked wallet into a basic wallet.
 /// <see cref="ToWalletId"/> is optional — when the customer has exactly one basic wallet it is
 /// chosen automatically; with several, the API returns 422 "multiple_basic_wallets" so the client
 /// can prompt for an explicit choice.
