@@ -1,10 +1,10 @@
 namespace FinViet.Application.DTOs.Wallets;
 
 /// <summary>
-/// Rút tiền: move money out of a SePay-linked wallet into a basic wallet.
-/// <see cref="ToWalletId"/> is optional — when the customer has exactly one basic wallet it is
-/// chosen automatically; with several, the API returns 422 "multiple_basic_wallets" so the client
-/// can prompt for an explicit choice.
+/// Rút tiền: money out of a Finverse-linked bank wallet (<see cref="FromWalletId"/>), recorded as
+/// an <c>expense</c> on that wallet. <see cref="ToWalletId"/> is the optional receiving wallet
+/// (ví nhận tiền rút) — when set, the amount is credited to it as income; when null, the withdrawn
+/// cash simply leaves the tracked wallets. The receiving wallet cannot be a Finverse-linked wallet.
 /// </summary>
 public class WithdrawWalletRequest
 {

@@ -139,7 +139,7 @@ public class MerchantRuleService : IMerchantRuleService
     /// Retroactively assign <paramref name="newRule"/>'s category to the customer's matching
     /// transactions. The keyword is matched (substring, case-insensitive) against the
     /// merchant/beneficiary name AND the description — manual entries carry the payee text in
-    /// the description (the create API has no merchant field), while SMS/SePay set the merchant.
+    /// the description (the create API has no merchant field), while SMS/Finverse set the merchant.
     /// Skips transfer legs (TransferPairId != null). When several of the customer's keywords
     /// match a transaction, the longest keyword wins (§8), so a freshly created shorter rule
     /// never overrides a more specific existing one.

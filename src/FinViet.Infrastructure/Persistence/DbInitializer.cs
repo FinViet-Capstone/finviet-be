@@ -97,27 +97,25 @@ CREATE INDEX IF NOT EXISTS ix_rag_chunk_embedding
             return;
         }
 
-        // The v3 schema (Finviet_update) is provisioned externally with plural tables
-        // (customers, wallets, ...) and Postgres enum columns. None of the V2–V13 SQL
-        // migrations apply — they transform the legacy singular schema toward v2.1 and
-        // would fail against v3 (enum vs text casts, customer(customer_id) FKs, ...).
-        // Detect v3 by the plural `customers` table and skip all SQL migrations; seeding
-        // below is idempotent and still runs.
-        if (await IsV3SchemaAppliedAsync(db, cancellationToken))
-        {
-            logger.LogInformation("v3 schema detected (public.customers exists). Skipping SQL migrations.");
-            return;
-        }
-
         var files = Directory.GetFiles(MigrationsFolder, "*.sql")
             .OrderBy(GetMigrationVersion)
             .ThenBy(Path.GetFileName)
             .ToArray();
 
+        // The externally-provisioned v3 database is maintained by explicit SQL scripts.
+        // In particular, PostgreSQL enum additions must be applied before the API starts
+        // and before Npgsql initializes its enum mappings. Never replay those scripts here.
+        if (await IsV3SchemaAppliedAsync(db, cancellationToken))
+        {
+            logger.LogInformation(
+                "v3 schema detected. Skipping startup SQL migrations; apply v3 migration scripts before starting the API.");
+            return;
+        }
+
         // Once the v2.1 rename (V11) has run, the singular `category`/`transaction`
         // tables no longer exist, so migrations V2–V10 (which ALTER them) would fail
         // on every subsequent startup. Skip everything below the rename in that case.
-        if (await IsCategoryTransactionV21AppliedAsync(db, cancellationToken))
+        else if (await IsCategoryTransactionV21AppliedAsync(db, cancellationToken))
         {
             files = files
                 .Where(file => GetMigrationVersion(file) >= 11)
