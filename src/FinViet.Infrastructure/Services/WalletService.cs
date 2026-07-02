@@ -172,11 +172,15 @@ public class WalletService : IWalletService
             "Transfer",
             "wallet-transfer",
             idempotencyKey,
-            allowFinverseSource: false,
             cancellationToken);
     }
 
-    public async Task<TransferWalletResponse> WithdrawAsync(
+    // Withdrawal (rút tiền) is a special money-out: the amount leaves the Finverse-linked bank
+    // wallet as a normal `expense` (counted as spending — NOT a transfer). An optional receiving
+    // wallet (ToWalletId, nullable) is credited the amount as `income`; when null the cash simply
+    // left the tracked wallets. Balance changes on a read-only Finverse wallet are overwritten by
+    // the authoritative bank balance on the next Finverse sync.
+    public async Task<WithdrawWalletResponse> WithdrawAsync(
         Guid customerId,
         WithdrawWalletRequest request,
         string? idempotencyKey,
@@ -185,39 +189,140 @@ public class WalletService : IWalletService
         if (request.Amount <= 0)
             throw new ValidationException("Withdrawal amount must be greater than 0.");
 
-        // Source must be a Finverse-linked wallet owned by the customer (rút tiền: finverse_linked → basic).
-        var sourceWallet = await _dbContext.Wallets
-            .AsNoTracking()
-            .FirstOrDefaultAsync(
-                w => w.CustomerId == customerId && w.WalletId == request.FromWalletId && !w.IsDeleted,
-                cancellationToken);
+        if (request.ToWalletId.HasValue && request.ToWalletId.Value == request.FromWalletId)
+            throw new ValidationException("Receiving wallet must be different from the source wallet.");
 
-        if (sourceWallet is null)
-            throw new NotFoundException("Source wallet not found.");
+        await using var transaction = await _dbContext.Database.BeginTransactionAsync(
+            IsolationLevel.ReadCommitted,
+            cancellationToken);
+
+        var requestHash = IdempotencyStore.ComputeRequestHash(new
+        {
+            request.FromWalletId,
+            request.ToWalletId,
+            request.Amount,
+            request.Description
+        });
+        var idempotency = await IdempotencyStore.ClaimAsync(
+            _dbContext,
+            customerId,
+            "wallet-withdraw",
+            idempotencyKey,
+            requestHash,
+            cancellationToken);
+        if (idempotency.IsReplay)
+        {
+            await transaction.CommitAsync(cancellationToken);
+            return IdempotencyStore.ReadReplay<WithdrawWalletResponse>(idempotency);
+        }
+
+        // Lock the source (and optional receiving) wallet rows to prevent overspending under races.
+        // FromSql must SELECT every mapped column of the Wallet entity (table: wallets).
+        var walletIds = request.ToWalletId.HasValue
+            ? new[] { request.FromWalletId, request.ToWalletId.Value }
+            : new[] { request.FromWalletId };
+        var wallets = await _dbContext.Wallets
+            .FromSqlInterpolated($"""
+                SELECT id, customer_id, name, type, balance, is_deleted, created_at, updated_at
+                FROM wallets
+                WHERE customer_id = {customerId}
+                  AND id = ANY({walletIds})
+                  AND is_deleted = false
+                ORDER BY id
+                FOR UPDATE
+                """)
+            .ToListAsync(cancellationToken);
+
+        var sourceWallet = wallets.FirstOrDefault(w => w.WalletId == request.FromWalletId)
+            ?? throw new NotFoundException("Source wallet not found.");
 
         if (!NormalizeStoredWalletType(sourceWallet.WalletType).Equals(FinverseLinkedWalletType, StringComparison.Ordinal))
             throw new BusinessRuleException(
                 "Withdrawal is only allowed from a Finverse-linked wallet.",
                 "withdraw_source_not_finverse");
 
-        // Destination is a basic wallet: auto-pick when there is exactly one, otherwise prompt for a choice.
-        var destinationWalletId = await ResolveWithdrawDestinationAsync(
-            customerId,
-            request.ToWalletId,
-            request.FromWalletId,
-            cancellationToken);
+        var sourceBalance = GetRequiredBalance(sourceWallet);
+        if (sourceBalance < request.Amount)
+            throw new ValidationException("Source wallet does not have enough balance.");
 
-        return await ExecuteWalletTransferAsync(
+        Wallet? receivingWallet = null;
+        if (request.ToWalletId.HasValue)
+        {
+            receivingWallet = wallets.FirstOrDefault(w => w.WalletId == request.ToWalletId.Value)
+                ?? throw new NotFoundException("Receiving wallet not found.");
+
+            // A read-only Finverse wallet cannot receive the withdrawn money.
+            if (NormalizeStoredWalletType(receivingWallet.WalletType).Equals(FinverseLinkedWalletType, StringComparison.Ordinal))
+                throw new BusinessRuleException(
+                    "A Finverse-linked wallet is read-only and cannot receive a withdrawal.",
+                    "withdraw_target_finverse_read_only");
+        }
+
+        var now = DateTime.UtcNow;
+        var note = string.IsNullOrWhiteSpace(request.Description)
+            ? $"Withdrawal from {sourceWallet.WalletName}"
+            : request.Description.Trim();
+
+        // Money out of the bank wallet: a normal expense (counts toward spending).
+        sourceWallet.Balance = sourceBalance - request.Amount;
+        sourceWallet.UpdatedAt = now;
+        _dbContext.Transactions.Add(new Transaction
+        {
+            TransactionId = Guid.NewGuid(),
+            CustomerId = customerId,
+            WalletId = sourceWallet.WalletId,
+            CategoryId = null,
+            TransactionType = "expense",
+            EntryMethod = "manual",
+            Amount = request.Amount,
+            Merchant = null,
+            Description = note,
+            TransactionDate = now,
+            CreatedAt = now,
+            UpdatedAt = now
+        });
+
+        // Optional receiving wallet: the withdrawn cash lands here as income.
+        if (receivingWallet is not null)
+        {
+            receivingWallet.Balance = GetRequiredBalance(receivingWallet) + request.Amount;
+            receivingWallet.UpdatedAt = now;
+            _dbContext.Transactions.Add(new Transaction
+            {
+                TransactionId = Guid.NewGuid(),
+                CustomerId = customerId,
+                WalletId = receivingWallet.WalletId,
+                CategoryId = null,
+                TransactionType = "income",
+                EntryMethod = "manual",
+                Amount = request.Amount,
+                Merchant = null,
+                Description = note,
+                TransactionDate = now,
+                CreatedAt = now,
+                UpdatedAt = now
+            });
+        }
+
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        var result = new WithdrawWalletResponse
+        {
+            FromWalletId = sourceWallet.WalletId,
+            FromWalletBalance = GetRequiredBalance(sourceWallet),
+            ToWalletId = receivingWallet?.WalletId,
+            ToWalletBalance = receivingWallet is null ? null : GetRequiredBalance(receivingWallet)
+        };
+        await IdempotencyStore.CompleteAsync(
+            _dbContext,
             customerId,
-            request.FromWalletId,
-            destinationWalletId,
-            request.Amount,
-            request.Description,
-            "Withdrawal",
             "wallet-withdraw",
-            idempotencyKey,
-            allowFinverseSource: true,
+            idempotencyKey!,
+            result,
             cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+
+        return result;
     }
 
     // Moves money between two wallets of the same customer as a transfer pair
@@ -232,7 +337,6 @@ public class WalletService : IWalletService
         string transferLabel,
         string idempotencyOperation,
         string? idempotencyKey,
-        bool allowFinverseSource,
         CancellationToken cancellationToken)
     {
         await using var transaction = await _dbContext.Database.BeginTransactionAsync(
@@ -283,13 +387,10 @@ public class WalletService : IWalletService
         if (toWallet is null)
             throw new NotFoundException("To wallet not found.");
 
-        var fromIsFinverse = NormalizeStoredWalletType(fromWallet.WalletType).Equals(FinverseLinkedWalletType, StringComparison.Ordinal);
-        var toIsFinverse = NormalizeStoredWalletType(toWallet.WalletType).Equals(FinverseLinkedWalletType, StringComparison.Ordinal);
-
-        // Finverse-linked wallets are read-only: they can never receive a manual movement, and can
-        // only be a source for a withdrawal (rút tiền), where the caller opts in via allowFinverseSource.
-        // Note: a withdrawn balance is overwritten by the authoritative bank balance on the next Finverse sync.
-        if (toIsFinverse || (fromIsFinverse && !allowFinverseSource))
+        // Finverse-linked wallets are read-only and cannot participate in manual transfers.
+        // (Withdrawal, the one money-out allowed from a Finverse wallet, has its own path.)
+        if (NormalizeStoredWalletType(fromWallet.WalletType).Equals(FinverseLinkedWalletType, StringComparison.Ordinal)
+            || NormalizeStoredWalletType(toWallet.WalletType).Equals(FinverseLinkedWalletType, StringComparison.Ordinal))
         {
             throw new BusinessRuleException(
                 "Finverse-linked wallets are read-only and cannot participate in manual transfers.",
@@ -366,47 +467,6 @@ public class WalletService : IWalletService
         await transaction.CommitAsync(cancellationToken);
 
         return result;
-    }
-
-    // Picks the basic wallet that receives a withdrawal. With one basic wallet it is implicit;
-    // with several the caller must name one (FE prompts on the 422 "multiple_basic_wallets").
-    private async Task<Guid> ResolveWithdrawDestinationAsync(
-        Guid customerId,
-        Guid? requestedWalletId,
-        Guid sourceWalletId,
-        CancellationToken cancellationToken)
-    {
-        var basicWalletIds = (await _dbContext.Wallets
-                .AsNoTracking()
-                .Where(w => w.CustomerId == customerId && !w.IsDeleted)
-                .Select(w => new { w.WalletId, w.WalletType })
-                .ToListAsync(cancellationToken))
-            .Where(w => NormalizeStoredWalletType(w.WalletType).Equals(BasicWalletType, StringComparison.Ordinal))
-            .Select(w => w.WalletId)
-            .ToList();
-
-        if (basicWalletIds.Count == 0)
-            throw new BusinessRuleException(
-                "No basic wallet is available to receive the withdrawal. Create a basic wallet first.",
-                "no_basic_wallet");
-
-        if (requestedWalletId.HasValue)
-        {
-            if (requestedWalletId.Value == sourceWalletId)
-                throw new ValidationException("Destination wallet must be different from the source wallet.");
-
-            if (!basicWalletIds.Contains(requestedWalletId.Value))
-                throw new ValidationException("Destination wallet must be an existing basic wallet.");
-
-            return requestedWalletId.Value;
-        }
-
-        if (basicWalletIds.Count > 1)
-            throw new BusinessRuleException(
-                "Multiple basic wallets found. Specify which wallet should receive the withdrawal.",
-                "multiple_basic_wallets");
-
-        return basicWalletIds[0];
     }
 
     public async Task<PagedResult<WalletTransactionResponse>> GetWalletTransactionsAsync(

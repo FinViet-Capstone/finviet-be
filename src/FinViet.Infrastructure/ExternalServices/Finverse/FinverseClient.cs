@@ -92,6 +92,15 @@ internal sealed class FinverseClient : IFinverseClient
         return await SendAsync<FinverseTokenResponse>(message, cancellationToken);
     }
 
+    public async Task<FinverseLoginIdentityApiResponse> GetLoginIdentityAsync(
+        string loginIdentityToken,
+        CancellationToken cancellationToken)
+    {
+        using var message = new HttpRequestMessage(HttpMethod.Get, "login_identity");
+        AddHeaders(message, loginIdentityToken);
+        return await SendAsync<FinverseLoginIdentityApiResponse>(message, cancellationToken);
+    }
+
     public async Task<FinverseAccountsApiResponse> GetAccountsAsync(
         string loginIdentityToken,
         CancellationToken cancellationToken)

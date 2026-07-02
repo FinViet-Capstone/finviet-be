@@ -21,6 +21,13 @@ internal sealed class FinverseWalletService : IFinverseWalletService
     private const string FinverseWalletType = "finverse_linked";
     private const string FinverseEntryMethod = "finverse_sync";
     private const int MaximumWalletsPerCustomer = 10;
+    private const int DataRetrievalMaxAttempts = 20;
+    private static readonly TimeSpan DataRetrievalPollDelay = TimeSpan.FromSeconds(3);
+    private static readonly HashSet<string> DataRetrievalDoneStatuses = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "DATA_RETRIEVAL_COMPLETE",
+        "DATA_RETRIEVAL_PARTIALLY_SUCCESSFUL"
+    };
     private static readonly TimeZoneInfo BusinessTimeZone = TimeZoneInfo.CreateCustomTimeZone(
         "Asia/Ho_Chi_Minh",
         TimeSpan.FromHours(7),
@@ -126,6 +133,11 @@ internal sealed class FinverseWalletService : IFinverseWalletService
                 "Finverse did not return the complete Login Identity credentials.",
                 "finverse_identity_token_missing");
         }
+
+        // Finverse retrieves bank data asynchronously after linking; poll login_identity until the
+        // retrieval finishes before reading accounts/transactions, otherwise the first read can be
+        // empty/partial on slower banks (Finverse SDK polls ~20× every ~3s). Report §2.4 step 5.
+        await WaitForDataRetrievalAsync(token.AccessToken, cancellationToken);
 
         var accountsResponse = await _client.GetAccountsAsync(token.AccessToken, cancellationToken);
         var accounts = accountsResponse.Accounts
@@ -358,6 +370,44 @@ internal sealed class FinverseWalletService : IFinverseWalletService
             _logger.LogError(ex, "Finverse synchronization failed for wallet {WalletId}.", walletId);
             throw;
         }
+    }
+
+    // Polls GET /login_identity until Finverse finishes retrieving the linked bank's data. Terminal
+    // "done" statuses (complete / partially successful) or an unreadable status → proceed; an ERROR
+    // status → fail the link; still in progress after the budget → proceed with whatever is ready.
+    private async Task WaitForDataRetrievalAsync(string loginIdentityToken, CancellationToken cancellationToken)
+    {
+        for (var attempt = 0; attempt < DataRetrievalMaxAttempts; attempt++)
+        {
+            string? status;
+            try
+            {
+                var identity = await _client.GetLoginIdentityAsync(loginIdentityToken, cancellationToken);
+                status = identity.EffectiveStatus;
+            }
+            catch (ExternalServiceException ex)
+            {
+                // Non-fatal: if the status endpoint is unavailable, fall through and read the data.
+                _logger.LogWarning(ex, "Finverse login_identity status poll failed; proceeding to read data.");
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(status) || DataRetrievalDoneStatuses.Contains(status))
+                return;
+
+            if (status.Contains("ERROR", StringComparison.OrdinalIgnoreCase)
+                || status.Contains("FAILED", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new ExternalServiceException(
+                    "Finverse could not retrieve the bank data for this login. Please link again.",
+                    "finverse_data_retrieval_failed");
+            }
+
+            if (attempt < DataRetrievalMaxAttempts - 1)
+                await Task.Delay(DataRetrievalPollDelay, cancellationToken);
+        }
+
+        _logger.LogWarning("Finverse data retrieval still in progress after polling; proceeding with available data.");
     }
 
     private async Task<string> GetAccessTokenAsync(

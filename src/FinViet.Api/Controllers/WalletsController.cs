@@ -130,7 +130,7 @@ public class WalletsController : ControllerBase
     }
 
     [HttpPost("withdraw")]
-    public async Task<ActionResult<ApiResponse<TransferWalletResponse>>> Withdraw(
+    public async Task<ActionResult<ApiResponse<WithdrawWalletResponse>>> Withdraw(
         [FromBody] WithdrawWalletRequest request,
         [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey,
         CancellationToken cancellationToken)
@@ -142,7 +142,7 @@ public class WalletsController : ControllerBase
             idempotencyKey,
             cancellationToken);
 
-        return Ok(ApiResponse<TransferWalletResponse>.Ok(
+        return Ok(ApiResponse<WithdrawWalletResponse>.Ok(
             result,
             "Withdrawal completed successfully"));
     }

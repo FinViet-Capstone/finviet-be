@@ -36,7 +36,7 @@ public interface IWalletService
         string? idempotencyKey,
         CancellationToken cancellationToken = default);
 
-    Task<TransferWalletResponse> WithdrawAsync(
+    Task<WithdrawWalletResponse> WithdrawAsync(
         Guid customerId,
         WithdrawWalletRequest request,
         string? idempotencyKey,

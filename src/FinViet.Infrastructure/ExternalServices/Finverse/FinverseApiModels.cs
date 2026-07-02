@@ -23,6 +23,27 @@ internal sealed class FinverseLinkTokenApiResponse : FinverseTokenResponse
     public string LinkUrl { get; set; } = string.Empty;
 }
 
+internal sealed class FinverseLoginIdentityApiResponse
+{
+    // Finverse nests the object under "login_identity"; be tolerant of a flat "status" too.
+    [JsonPropertyName("login_identity")]
+    public FinverseLoginIdentity? LoginIdentity { get; set; }
+
+    [JsonPropertyName("status")]
+    public string? Status { get; set; }
+
+    public string? EffectiveStatus => LoginIdentity?.Status ?? Status;
+}
+
+internal sealed class FinverseLoginIdentity
+{
+    [JsonPropertyName("login_identity_id")]
+    public string? LoginIdentityId { get; set; }
+
+    [JsonPropertyName("status")]
+    public string? Status { get; set; }
+}
+
 internal sealed class FinverseAccountsApiResponse
 {
     [JsonPropertyName("accounts")]

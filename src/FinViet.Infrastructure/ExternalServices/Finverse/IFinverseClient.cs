@@ -16,6 +16,10 @@ internal interface IFinverseClient
         string refreshToken,
         CancellationToken cancellationToken);
 
+    Task<FinverseLoginIdentityApiResponse> GetLoginIdentityAsync(
+        string loginIdentityToken,
+        CancellationToken cancellationToken);
+
     Task<FinverseAccountsApiResponse> GetAccountsAsync(
         string loginIdentityToken,
         CancellationToken cancellationToken);
