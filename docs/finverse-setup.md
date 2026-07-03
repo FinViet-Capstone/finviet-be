@@ -59,7 +59,11 @@ test and live teams.
    it may forward both values with the user's JWT to
    `POST /api/wallets/finverse/complete-link`.
 5. FinViet exchanges the code, fetches Accounts, and creates or restores one
-   read-only wallet per non-parent account.
+   read-only wallet per non-parent account. `complete-link` accepts an optional
+   `accounts` array to link a subset instead of every account — each entry may be
+   a Finverse account id, the account name (case-insensitive, e.g. "Bitcoin"),
+   or the masked number (account ids are minted per login identity, so name/mask
+   is the practical selector for a client that only holds code+state).
 6. Call `POST /api/wallets/{walletId}/finverse-sync` to import the account's
    posted transactions and refresh its authoritative balance. Newly imported
    expense transactions are sent through the existing merchant-based AI

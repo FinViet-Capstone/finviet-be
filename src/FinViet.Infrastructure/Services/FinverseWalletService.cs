@@ -148,6 +148,39 @@ internal sealed class FinverseWalletService : IFinverseWalletService
         if (accounts.Count == 0)
             throw new BusinessRuleException("Finverse did not return any usable accounts.", "finverse_accounts_empty");
 
+        // Optional client-side selection: link only the requested accounts (e.g. a single one)
+        // instead of every account on the login identity. Entries match the account id, the
+        // account name (case-insensitive), or the masked number — ids are minted per login
+        // identity, so a client that only holds code+state selects by name/mask.
+        var requestedAccounts = request.Accounts?
+            .Where(entry => !string.IsNullOrWhiteSpace(entry))
+            .Select(entry => entry.Trim())
+            .ToList();
+        if (requestedAccounts is { Count: > 0 })
+        {
+            bool Matches(FinverseAccount account) => requestedAccounts.Any(entry =>
+                string.Equals(entry, account.AccountId, StringComparison.Ordinal)
+                || string.Equals(entry, account.AccountName, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(entry, account.AccountNickname, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(entry, account.AccountNumberMasked, StringComparison.OrdinalIgnoreCase));
+
+            var selected = accounts.Where(Matches).ToList();
+            if (selected.Count == 0)
+            {
+                var available = string.Join(", ", accounts.Select(a =>
+                {
+                    var label = !string.IsNullOrWhiteSpace(a.AccountName) ? a.AccountName
+                        : a.AccountNumberMasked ?? "?";
+                    return $"{a.AccountId} ({label})";
+                }));
+                throw new BusinessRuleException(
+                    $"None of the requested accounts matched. Available accounts: {available}.",
+                    "finverse_accounts_not_matched");
+            }
+
+            accounts = selected;
+        }
+
         var now = DateTime.UtcNow;
         await using var databaseTransaction = await _db.Database.BeginTransactionAsync(
             IsolationLevel.Serializable,
