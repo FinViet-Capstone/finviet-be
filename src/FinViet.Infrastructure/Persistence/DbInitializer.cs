@@ -236,6 +236,7 @@ CREATE INDEX IF NOT EXISTS ix_rag_chunk_embedding
         // theo email. Local trước đây cố ý KHÔNG seed (tránh demo account vào mọi env); bật lại để
         // khớp origin/dev và dữ liệu dev hiện có. Tắt dòng này nếu deploy production.
         await SeedCustomersAsync(db, logger, cancellationToken);
+        await SeedWalletsAndTransactionsAsync(db, logger, cancellationToken);
         await db.SaveChangesAsync(cancellationToken);
     }
 
@@ -341,5 +342,194 @@ CREATE INDEX IF NOT EXISTS ix_rag_chunk_embedding
 
             logger.LogInformation("Seeded customer: {Email}", email);
         }
+    }
+    
+    private static async Task SeedWalletsAndTransactionsAsync(FinVietDbContext db, ILogger logger, CancellationToken ct)
+    {
+        var emails = new[] { "demo@finviet.local", "alice@finviet.local", "bob@finviet.local" };
+        var customers = await db.Customers
+            .Where(c => emails.Contains(c.Email))
+            .ToListAsync(ct);
+
+        if (!customers.Any()) return;
+
+        var rand = new Random(42); // fixed seed for reproducible data
+
+        foreach (var customer in customers)
+        {
+            // Check if user already has a wallet
+            var existingWallet = await db.Wallets.FirstOrDefaultAsync(w => w.CustomerId == customer.CustomerId, ct);
+            if (existingWallet != null && await db.Transactions.AnyAsync(t => t.WalletId == existingWallet.WalletId, ct))
+            {
+                continue; // Already seeded
+            }
+
+            var wallet = existingWallet ?? new Wallet
+            {
+                WalletId = Guid.NewGuid(),
+                CustomerId = customer.CustomerId,
+                WalletName = "Ví Chính",
+                WalletType = "basic",
+                Balance = 0,
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            };
+
+            if (existingWallet == null)
+            {
+                db.Wallets.Add(wallet);
+            }
+
+            // Generate 60 days of transactions
+            var startDate = DateTime.UtcNow.Date.AddDays(-60);
+            var transactions = new List<Transaction>();
+            decimal currentBalance = 10_000_000m; // Initial balance
+            
+            // Generate some initial balance transaction
+            transactions.Add(new Transaction
+            {
+                TransactionId = Guid.NewGuid(),
+                CustomerId = customer.CustomerId,
+                WalletId = wallet.WalletId,
+                CategoryId = "cat_salary",
+                Amount = currentBalance,
+                TransactionType = "income",
+                Description = "Số dư ban đầu",
+                TransactionDate = startDate.AddDays(-1),
+                EntryMethod = "manual",
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow,
+                IsAiClassified = true,
+                AiConfidence = 0.99m,
+                AiCategoryGuess = "cat_salary"
+            });
+
+            for (int i = 0; i <= 60; i++)
+            {
+                var currentDate = startDate.AddDays(i);
+                
+                // Add salary on the 1st of each month
+                if (currentDate.Day == 1)
+                {
+                    decimal salary = customer.MonthlyIncomeExpected ?? 15_000_000m;
+                    transactions.Add(new Transaction
+                    {
+                        TransactionId = Guid.NewGuid(),
+                        CustomerId = customer.CustomerId,
+                        WalletId = wallet.WalletId,
+                        CategoryId = "cat_salary",
+                        Amount = salary,
+                        TransactionType = "income",
+                        Description = "Lương tháng " + currentDate.Month,
+                        Merchant = "Công ty TNHH ABC",
+                        TransactionDate = currentDate.AddHours(9),
+                        EntryMethod = "manual",
+                        CreatedAt = DateTime.UtcNow,
+                        UpdatedAt = DateTime.UtcNow,
+                        IsAiClassified = true,
+                        AiConfidence = 0.95m,
+                        AiCategoryGuess = "cat_salary"
+                    });
+                    currentBalance += salary;
+                }
+
+                int numTxPerDay = 0;
+                
+                if (customer.Email == "demo@finviet.local")
+                {
+                    // Balanced spending (1-3 tx per day)
+                    numTxPerDay = rand.Next(1, 4);
+                    for (int j = 0; j < numTxPerDay; j++)
+                    {
+                        var isNeed = rand.NextDouble() < 0.6; // 60% needs, 30% wants, 10% savings
+                        var isWant = !isNeed && rand.NextDouble() < 0.75;
+                        
+                        string cat = isNeed ? (rand.NextDouble() < 0.7 ? "cat_food" : "cat_transport") 
+                            : (isWant ? "cat_dining" : "cat_savings");
+                        
+                        decimal amount = isNeed ? rand.Next(30, 200) * 1000m : (isWant ? rand.Next(50, 300) * 1000m : rand.Next(500, 2000) * 1000m);
+                        
+                        transactions.Add(CreateExpense(customer.CustomerId, wallet.WalletId, cat, amount, currentDate.AddHours(rand.Next(8, 22)), rand));
+                        currentBalance -= amount;
+                    }
+                }
+                else if (customer.Email == "alice@finviet.local")
+                {
+                    // High spending, lots of wants (2-5 tx per day)
+                    numTxPerDay = rand.Next(2, 6);
+                    for (int j = 0; j < numTxPerDay; j++)
+                    {
+                        var isWant = rand.NextDouble() < 0.7; // 70% wants
+                        
+                        string cat = isWant ? 
+                            (rand.NextDouble() < 0.4 ? "cat_shopping" : (rand.NextDouble() < 0.5 ? "cat_beauty" : "cat_dining")) : 
+                            (rand.NextDouble() < 0.8 ? "cat_food" : "cat_transport");
+                            
+                        decimal amount = isWant ? rand.Next(200, 1500) * 1000m : rand.Next(50, 300) * 1000m;
+                        
+                        transactions.Add(CreateExpense(customer.CustomerId, wallet.WalletId, cat, amount, currentDate.AddHours(rand.Next(9, 23)), rand));
+                        currentBalance -= amount;
+                    }
+                }
+                else if (customer.Email == "bob@finviet.local")
+                {
+                    // Frugal (0-2 tx per day, mostly needs)
+                    numTxPerDay = rand.Next(0, 3);
+                    for (int j = 0; j < numTxPerDay; j++)
+                    {
+                        var isNeed = rand.NextDouble() < 0.85; // 85% needs
+                        
+                        string cat = isNeed ? (rand.NextDouble() < 0.8 ? "cat_food" : "cat_housing") : "cat_invest";
+                        
+                        decimal amount = isNeed ? rand.Next(20, 100) * 1000m : rand.Next(1000, 3000) * 1000m;
+                        
+                        transactions.Add(CreateExpense(customer.CustomerId, wallet.WalletId, cat, amount, currentDate.AddHours(rand.Next(7, 20)), rand));
+                        currentBalance -= amount;
+                    }
+                }
+            }
+
+            wallet.Balance = currentBalance;
+            db.Transactions.AddRange(transactions);
+            logger.LogInformation("Seeded wallet and {Count} transactions for customer {Email}", transactions.Count, customer.Email);
+        }
+    }
+
+    private static Transaction CreateExpense(Guid customerId, Guid walletId, string categoryId, decimal amount, DateTime date, Random rand)
+    {
+        var merchants = new System.Collections.Generic.Dictionary<string, string[]>
+        {
+            { "cat_food", new[] { "VinMart", "Bách Hóa Xanh", "CoopMart", "Chợ", "Circle K" } },
+            { "cat_transport", new[] { "GrabBike", "Be", "Gojek", "Đổ xăng", "Taxi Mai Linh" } },
+            { "cat_housing", new[] { "Điện lực EVN", "Tiền nước", "Tiền mạng VNPT", "Tiền rác" } },
+            { "cat_dining", new[] { "Highlands Coffee", "The Coffee House", "Phúc Long", "Haidilao", "Golden Gate" } },
+            { "cat_shopping", new[] { "Shopee", "Lazada", "Tiki", "Zara", "Uniqlo" } },
+            { "cat_beauty", new[] { "Hasaki", "Guardian", "Hair Salon", "Spa" } },
+            { "cat_savings", new[] { "Gửi tiết kiệm online", "Heo đất" } },
+            { "cat_invest", new[] { "VNDirect", "TCBS", "Mua vàng" } }
+        };
+
+        string merchant = merchants.ContainsKey(categoryId) 
+            ? merchants[categoryId][rand.Next(merchants[categoryId].Length)] 
+            : "Chi tiêu";
+
+        return new Transaction
+        {
+            TransactionId = Guid.NewGuid(),
+            CustomerId = customerId,
+            WalletId = walletId,
+            CategoryId = categoryId,
+            Amount = amount,
+            TransactionType = "expense",
+            Description = merchant,
+            Merchant = merchant,
+            TransactionDate = date,
+            EntryMethod = "manual",
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow,
+            IsAiClassified = true,
+            AiConfidence = 0.9m,
+            AiCategoryGuess = categoryId
+        };
     }
 }
