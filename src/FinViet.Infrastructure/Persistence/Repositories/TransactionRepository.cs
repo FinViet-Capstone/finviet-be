@@ -258,7 +258,9 @@ public class TransactionRepository : ITransactionRepository
             TransactionType = normalizedType,
             EntryMethod = "manual",
             Amount = amount,
-            TransactionDate = transactionDate,
+            TransactionDate = transactionDate.Kind == DateTimeKind.Unspecified 
+                ? DateTime.SpecifyKind(transactionDate, DateTimeKind.Utc) 
+                : transactionDate.ToUniversalTime(),
             Description = note,
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow
@@ -294,7 +296,9 @@ public class TransactionRepository : ITransactionRepository
         transaction.CategoryId = categoryId;
         transaction.TransactionType = NormalizeType(transactionType);
         transaction.Amount = amount;
-        transaction.TransactionDate = transactionDate;
+        transaction.TransactionDate = transactionDate.Kind == DateTimeKind.Unspecified 
+            ? DateTime.SpecifyKind(transactionDate, DateTimeKind.Utc) 
+            : transactionDate.ToUniversalTime();
         transaction.Description = note;
         transaction.UpdatedAt = DateTime.UtcNow;
 
