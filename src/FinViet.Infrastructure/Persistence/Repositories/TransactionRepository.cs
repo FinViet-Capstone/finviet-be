@@ -212,6 +212,7 @@ public class TransactionRepository : ITransactionRepository
         DateTime transactionDate,
         string? note,
         string? idempotencyKey,
+        string? entryMethod = null,
         CancellationToken cancellationToken = default)
     {
         await using var databaseTransaction = await _context.Database.BeginTransactionAsync(cancellationToken);
@@ -256,7 +257,7 @@ public class TransactionRepository : ITransactionRepository
             WalletId = walletId,
             CategoryId = categoryId,
             TransactionType = normalizedType,
-            EntryMethod = "manual",
+            EntryMethod = string.IsNullOrWhiteSpace(entryMethod) ? "manual" : entryMethod,
             Amount = amount,
             TransactionDate = transactionDate.Kind == DateTimeKind.Unspecified 
                 ? DateTime.SpecifyKind(transactionDate, DateTimeKind.Utc) 

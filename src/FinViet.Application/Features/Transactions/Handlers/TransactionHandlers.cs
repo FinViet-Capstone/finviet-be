@@ -23,6 +23,17 @@ internal static class TransactionRules
             var other => other
         };
 
+    public static string NormalizeEntryMethod(string? entryMethod)
+        => (entryMethod ?? string.Empty).Trim().ToLowerInvariant() switch
+        {
+            "csv" or "csv_import" => "csv_import",
+            "sms" or "sms_paste" => "sms_paste",
+            "sepay_sync" => "sepay_sync",
+            "finverse_sync" => "finverse_sync",
+            "photo" => "photo",
+            _ => "manual"
+        };
+
     public static string ValidateManualInput(string transactionType, decimal amount)
     {
         var normalized = Normalize(transactionType);
@@ -101,6 +112,9 @@ public class CreateTransactionHandler : IRequestHandler<CreateTransactionCommand
         // the user's choice; uncategorized expenses get the matching rule's category — §2b). A rule
         // pointing at an incompatible category type is ignored so it never blocks the create.
         var categoryId = request.CategoryId;
+        if (categoryId == "cat_income")
+            categoryId = "cat_income_other";
+
         RuleMatch? match = null;
         if (string.IsNullOrWhiteSpace(categoryId) && normalizedType == "expense")
         {
@@ -130,6 +144,7 @@ public class CreateTransactionHandler : IRequestHandler<CreateTransactionCommand
             request.TransactionDate,
             request.Note,
             request.IdempotencyKey,
+            TransactionRules.NormalizeEntryMethod(request.EntryMethod),
             cancellationToken);
 
         if (match is not null)
