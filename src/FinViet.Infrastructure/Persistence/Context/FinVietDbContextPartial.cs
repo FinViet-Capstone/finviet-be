@@ -64,6 +64,25 @@ public partial class FinVietDbContext
             entity.Property(e => e.UpdatedAt).HasDefaultValueSql("now()").HasColumnName("updated_at");
         });
 
+        modelBuilder.Entity<SepayLink>(entity =>
+        {
+            entity.HasKey(e => e.WalletId).HasName("sepay_links_pkey");
+            entity.ToTable("sepay_links");
+
+            entity.Property(e => e.WalletId).HasColumnName("wallet_id");
+            entity.Property(e => e.AuthMode).HasColumnType("text").HasColumnName("auth_mode").HasDefaultValue("oauth");
+            entity.Property(e => e.SepayUserId).HasColumnType("text").HasColumnName("sepay_user_id");
+            entity.Property(e => e.SepayBankAccountId).HasColumnName("sepay_bank_account_id");
+            entity.Property(e => e.AccountNumber).HasColumnType("text").HasColumnName("account_number");
+            entity.Property(e => e.AccountHolderName).HasColumnType("text").HasColumnName("account_holder_name");
+            entity.Property(e => e.BankShortName).HasColumnType("text").HasColumnName("bank_short_name");
+            entity.Property(e => e.AccessTokenProtected).HasColumnType("text").HasColumnName("access_token");
+            entity.Property(e => e.RefreshTokenProtected).HasColumnType("text").HasColumnName("refresh_token");
+            entity.Property(e => e.LastSyncedAt).HasColumnName("last_synced_at");
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql("now()").HasColumnName("created_at");
+            entity.Property(e => e.UpdatedAt).HasDefaultValueSql("now()").HasColumnName("updated_at");
+        });
+
         modelBuilder.Entity<Budget>(entity =>
         {
             entity.HasKey(e => e.BudgetId).HasName("budgets_pkey");

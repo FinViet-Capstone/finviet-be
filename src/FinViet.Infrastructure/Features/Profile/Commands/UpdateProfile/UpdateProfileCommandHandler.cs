@@ -20,9 +20,10 @@ public class UpdateProfileCommandHandler : IRequestHandler<UpdateProfileCommand,
         if (c is null) throw new NotFoundException("Customer", request.CustomerId);
 
         c.FullName              = request.FullName.Trim();
-        c.MonthlyIncomeExpected = request.MonthlyIncomeExpected;
+        if (request.MonthlyIncomeExpected.HasValue) c.MonthlyIncomeExpected = request.MonthlyIncomeExpected;
         if (request.Gender.HasValue)      c.Gender      = request.Gender;
         if (request.DateOfBirth.HasValue) c.DateOfBirth = request.DateOfBirth;
+        if (request.OnboardingDone.HasValue) c.OnboardingDone = request.OnboardingDone.Value;
 
         await _db.SaveChangesAsync(cancellationToken);
 

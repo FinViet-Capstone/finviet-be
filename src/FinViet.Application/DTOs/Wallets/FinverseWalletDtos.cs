@@ -14,6 +14,15 @@ public sealed class CompleteFinverseLinkRequest
     public string Code { get; set; } = string.Empty;
 
     public string State { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Optional subset of accounts to link. When null/empty every usable account returned by
+    /// Finverse becomes (or restores) a wallet; when set, only matching accounts do — so a client
+    /// can link a single account instead of all of them. Each entry may be a Finverse account id,
+    /// the account name (case-insensitive, e.g. "Bitcoin"), or the masked account number —
+    /// account ids are minted per login identity, so name/mask is the practical selector.
+    /// </summary>
+    public List<string>? Accounts { get; set; }
 }
 
 public sealed class FinverseLinkTokenResponse

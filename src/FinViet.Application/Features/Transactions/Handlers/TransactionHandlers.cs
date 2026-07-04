@@ -79,15 +79,18 @@ public class CreateTransactionHandler : IRequestHandler<CreateTransactionCommand
     private readonly ITransactionRepository _transactionRepository;
     private readonly ICategoryService _categoryService;
     private readonly IMerchantRuleService _ruleService;
+    private readonly IBudgetService _budgetService;
 
     public CreateTransactionHandler(
         ITransactionRepository transactionRepository,
         ICategoryService categoryService,
-        IMerchantRuleService ruleService)
+        IMerchantRuleService ruleService,
+        IBudgetService budgetService)
     {
         _transactionRepository = transactionRepository;
         _categoryService = categoryService;
         _ruleService = ruleService;
+        _budgetService = budgetService;
     }
 
     public async Task<TransactionResponseDto> Handle(CreateTransactionCommand request, CancellationToken cancellationToken)
@@ -132,6 +135,14 @@ public class CreateTransactionHandler : IRequestHandler<CreateTransactionCommand
         if (match is not null)
             await _ruleService.IncrementAppliedAsync(match.RuleId, 1, cancellationToken);
 
+        // Re-evaluate budgets for the affected month so a crossed threshold raises an alert
+        // notification. Only expenses can push a category over budget. Swallows its own errors.
+        if (normalizedType == "expense")
+            await _budgetService.SyncBudgetOnTransactionChangeAsync(
+                request.CustomerId,
+                DateOnly.FromDateTime(request.TransactionDate),
+                cancellationToken);
+
         return result;
     }
 }
@@ -140,13 +151,16 @@ public class UpdateTransactionHandler : IRequestHandler<UpdateTransactionCommand
 {
     private readonly ITransactionRepository _transactionRepository;
     private readonly ICategoryService _categoryService;
+    private readonly IBudgetService _budgetService;
 
     public UpdateTransactionHandler(
         ITransactionRepository transactionRepository,
-        ICategoryService categoryService)
+        ICategoryService categoryService,
+        IBudgetService budgetService)
     {
         _transactionRepository = transactionRepository;
         _categoryService = categoryService;
+        _budgetService = budgetService;
     }
 
     public async Task<TransactionResponseDto> Handle(UpdateTransactionCommand request, CancellationToken cancellationToken)
@@ -162,10 +176,19 @@ public class UpdateTransactionHandler : IRequestHandler<UpdateTransactionCommand
         TransactionRules.EnsureNotTransfer(type);
         await TransactionRules.ValidateCategoryAsync(_categoryService, request.CategoryId, type, cancellationToken);
 
-        return (await _transactionRepository.ClassifyAsync(
+        var result = (await _transactionRepository.ClassifyAsync(
             request.TransactionId,
             request.CategoryId,
             cancellationToken))!;
+
+        // Recategorizing an expense may push a category over its budget → re-evaluate alerts.
+        if (type == "expense")
+            await _budgetService.SyncBudgetOnTransactionChangeAsync(
+                request.CustomerId,
+                DateOnly.FromDateTime(result.TransactionDate),
+                cancellationToken);
+
+        return result;
     }
 }
 
@@ -193,13 +216,16 @@ public class ClassifyTransactionHandler : IRequestHandler<ClassifyTransactionCom
 {
     private readonly ITransactionRepository _transactionRepository;
     private readonly ICategoryService _categoryService;
+    private readonly IBudgetService _budgetService;
 
     public ClassifyTransactionHandler(
         ITransactionRepository transactionRepository,
-        ICategoryService categoryService)
+        ICategoryService categoryService,
+        IBudgetService budgetService)
     {
         _transactionRepository = transactionRepository;
         _categoryService = categoryService;
+        _budgetService = budgetService;
     }
 
     public async Task<TransactionResponseDto> Handle(ClassifyTransactionCommand request, CancellationToken cancellationToken)
@@ -215,9 +241,17 @@ public class ClassifyTransactionHandler : IRequestHandler<ClassifyTransactionCom
         TransactionRules.EnsureNotTransfer(type);
         await TransactionRules.ValidateCategoryAsync(_categoryService, request.CategoryId, type, cancellationToken);
 
-        return (await _transactionRepository.ClassifyAsync(
+        var result = (await _transactionRepository.ClassifyAsync(
             request.TransactionId,
             request.CategoryId,
             cancellationToken))!;
+
+        if (type == "expense")
+            await _budgetService.SyncBudgetOnTransactionChangeAsync(
+                request.CustomerId,
+                DateOnly.FromDateTime(result.TransactionDate),
+                cancellationToken);
+
+        return result;
     }
 }

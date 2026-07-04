@@ -12,7 +12,7 @@ public partial class Wallet
     /// <summary>Maps to column <c>name</c> in the v3 schema.</summary>
     public string WalletName { get; set; } = null!;
 
-    /// <summary>Maps to column <c>type</c> (basic / finverse_linked).</summary>
+    /// <summary>Maps to column <c>type</c> (basic / sepay_linked / finverse_linked).</summary>
     public string WalletType { get; set; } = null!;
 
     public decimal? Balance { get; set; }
@@ -26,6 +26,8 @@ public partial class Wallet
     public virtual Customer? Customer { get; set; }
 
     public virtual FinverseLink? FinverseLink { get; set; }
+
+    public virtual SepayLink? SepayLink { get; set; }
 
     public virtual ICollection<Budget> Budgets { get; set; } = new List<Budget>();
 

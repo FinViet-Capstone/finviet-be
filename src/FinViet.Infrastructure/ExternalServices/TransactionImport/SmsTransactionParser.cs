@@ -33,23 +33,7 @@ public class SmsTransactionParser : ISmsTransactionParser
                 continue;
             }
 
-            var lowered = message.ToLowerInvariant();
-            var isIncome = lowered.Contains("cong")
-                || lowered.Contains("cộng")
-                || lowered.Contains("credited")
-                || lowered.Contains("nhan")
-                || lowered.Contains("nhận")
-                || lowered.Contains("+");
-            var isExpense = lowered.Contains("tru")
-                || lowered.Contains("trừ")
-                || lowered.Contains("debited")
-                || lowered.Contains("thanh toan")
-                || lowered.Contains("thanh toán")
-                || lowered.Contains("chuyen tien")
-                || lowered.Contains("chuyển tiền")
-                || lowered.Contains("-");
-
-            var transactionType = isIncome && !isExpense ? "INCOME" : "EXPENSE";
+            var transactionType = ClassifyDirection(message);
             var transactionDate = ExtractDateTime(message) ?? DateTime.UtcNow;
 
             result.Rows.Add(new ParsedTransactionDto
@@ -57,12 +41,61 @@ public class SmsTransactionParser : ISmsTransactionParser
                 TransactionType = transactionType,
                 Amount = amount,
                 TransactionDate = transactionDate,
-                Note = TrimNote(message),
+                Note = ExtractNote(message),
                 RawText = message
             });
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Decide income vs expense from the account's perspective. Explicit credit/debit
+    /// markers ("ghi có" / "ghi nợ" / credited / debited) win; then the +/- sign right
+    /// before the amount. Words like "chuyển tiền" describe the counterparty and are NOT
+    /// used — they appear in incoming-transfer descriptions too and would misclassify.
+    /// </summary>
+    private static string ClassifyDirection(string message)
+    {
+        var lowered = message.ToLowerInvariant();
+
+        // Strong, unambiguous credit/debit indicators.
+        if (Regex.IsMatch(lowered, @"ghi\s*co|ghi\s*có|credited|\bcong\b|\bcộng\b|\bnhận\s*tiền\b|\bbáo\s*có\b"))
+            return "INCOME";
+        if (Regex.IsMatch(lowered, @"ghi\s*no|ghi\s*nợ|debited|\btru\b|\btrừ\b|\bbáo\s*nợ\b"))
+            return "EXPENSE";
+
+        // Sign immediately before a number (e.g. "+2.000.000", "-350,000").
+        if (Regex.IsMatch(message, @"\+\s*\d"))
+            return "INCOME";
+        if (Regex.IsMatch(message, @"-\s*\d"))
+            return "EXPENSE";
+
+        // Fall back to weaker payment keywords, else default to expense.
+        if (Regex.IsMatch(lowered, @"thanh\s*toan|thanh\s*toán"))
+            return "EXPENSE";
+
+        return "EXPENSE";
+    }
+
+    /// <summary>
+    /// Prefer the transaction content after a "Nội dung:" / "ND:" / "Content:" marker;
+    /// fall back to the whole (trimmed) message when no marker is present.
+    /// </summary>
+    private static string ExtractNote(string message)
+    {
+        var match = Regex.Match(
+            message,
+            @"(?:nội\s*dung|noi\s*dung|nd|content|description|mô\s*tả|mo\s*ta)\s*[:\-]\s*(.+)$",
+            RegexOptions.IgnoreCase | RegexOptions.Singleline);
+        if (match.Success)
+        {
+            var content = match.Groups[1].Value.Trim().TrimEnd('.').Trim();
+            if (!string.IsNullOrWhiteSpace(content))
+                return TrimNote(content);
+        }
+
+        return TrimNote(message);
     }
 
     private static decimal ExtractAmount(string text)

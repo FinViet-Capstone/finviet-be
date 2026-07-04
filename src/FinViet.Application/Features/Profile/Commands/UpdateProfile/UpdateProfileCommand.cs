@@ -9,5 +9,6 @@ public record UpdateProfileCommand(
     string FullName,
     decimal? MonthlyIncomeExpected,
     Gender? Gender = null,
-    DateOnly? DateOfBirth = null
+    DateOnly? DateOfBirth = null,
+    bool? OnboardingDone = null
 ) : IRequest<ProfileDto>;

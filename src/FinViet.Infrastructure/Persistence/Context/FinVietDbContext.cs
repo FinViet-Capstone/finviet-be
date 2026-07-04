@@ -64,6 +64,8 @@ public partial class FinVietDbContext : DbContext
 
     public virtual DbSet<FinverseLink> FinverseLinks { get; set; }
 
+    public virtual DbSet<SepayLink> SepayLinks { get; set; }
+
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
     {
         // Connection string is configured via DI in Infrastructure.DependencyInjection.
@@ -643,6 +645,11 @@ public partial class FinVietDbContext : DbContext
                 .HasForeignKey<FinverseLink>(l => l.WalletId)
                 .OnDelete(DeleteBehavior.Cascade)
                 .HasConstraintName("finverse_links_wallet_id_fkey");
+
+            entity.HasOne(d => d.SepayLink).WithOne(p => p.Wallet)
+                .HasForeignKey<SepayLink>(l => l.WalletId)
+                .OnDelete(DeleteBehavior.Cascade)
+                .HasConstraintName("sepay_links_wallet_id_fkey");
         });
 
         modelBuilder.Entity<AiSpendingScore>(entity =>

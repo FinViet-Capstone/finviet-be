@@ -242,10 +242,11 @@ public class TransactionRepository : ITransactionRepository
         if (wallet is null || wallet.CustomerId != customerId || wallet.IsDeleted)
             throw new NotFoundException("Wallet", walletId);
 
-        if (string.Equals(wallet.WalletType, "finverse_linked", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(wallet.WalletType, "finverse_linked", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(wallet.WalletType, "sepay_linked", StringComparison.OrdinalIgnoreCase))
             throw new BusinessRuleException(
-                "Finverse-linked wallets are read-only. Transactions are created by synchronization.",
-                "finverse_wallet_read_only");
+                "Bank-linked wallets are read-only. Transactions are created by synchronization.",
+                "linked_wallet_read_only");
 
         var normalizedType = NormalizeType(transactionType);
         var transaction = new Transaction
@@ -257,7 +258,9 @@ public class TransactionRepository : ITransactionRepository
             TransactionType = normalizedType,
             EntryMethod = "manual",
             Amount = amount,
-            TransactionDate = transactionDate,
+            TransactionDate = transactionDate.Kind == DateTimeKind.Unspecified 
+                ? DateTime.SpecifyKind(transactionDate, DateTimeKind.Utc) 
+                : transactionDate.ToUniversalTime(),
             Description = note,
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow
@@ -293,7 +296,9 @@ public class TransactionRepository : ITransactionRepository
         transaction.CategoryId = categoryId;
         transaction.TransactionType = NormalizeType(transactionType);
         transaction.Amount = amount;
-        transaction.TransactionDate = transactionDate;
+        transaction.TransactionDate = transactionDate.Kind == DateTimeKind.Unspecified 
+            ? DateTime.SpecifyKind(transactionDate, DateTimeKind.Utc) 
+            : transactionDate.ToUniversalTime();
         transaction.Description = note;
         transaction.UpdatedAt = DateTime.UtcNow;
 
@@ -325,7 +330,8 @@ public class TransactionRepository : ITransactionRepository
         if (target is null)
             return false;
 
-        if (string.Equals(target.EntryMethod, "finverse_sync", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(target.EntryMethod, "finverse_sync", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(target.EntryMethod, "sepay_sync", StringComparison.OrdinalIgnoreCase))
         {
             throw new BusinessRuleException(
                 "Provider-synced transactions cannot be deleted.",
