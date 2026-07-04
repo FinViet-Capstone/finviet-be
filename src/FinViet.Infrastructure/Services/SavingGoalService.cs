@@ -217,7 +217,7 @@ public class SavingGoalService : ISavingGoalService
             throw new ValidationException("Contribution amount must be greater than zero.");
 
         await using var databaseTransaction = await _dbContext.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted, cancellationToken);
-        var requestHash = IdempotencyStore.ComputeRequestHash(new { goalId, request.Amount });
+        var requestHash = IdempotencyStore.ComputeRequestHash(new { goalId, request.Amount, request.FundingWalletId });
         var idempotency = await IdempotencyStore.ClaimAsync(
             _dbContext, customerId, $"saving-goal-contribute:{goalId}", idempotencyKey, requestHash, cancellationToken);
         if (idempotency.IsReplay)
@@ -234,7 +234,7 @@ public class SavingGoalService : ISavingGoalService
         if (request.Amount > goal.TargetAmount - previousAmount)
             throw new BusinessRuleException("Contribution amount exceeds the remaining goal amount.", "goal_remaining_exceeded");
 
-        await ApplyContributionAsync(goal, customerId, request.Amount, cancellationToken);
+        await ApplyContributionAsync(goal, customerId, request.Amount, cancellationToken, request.FundingWalletId);
         await _dbContext.SaveChangesAsync(cancellationToken);
 
         var response = ToResponse(goal);
@@ -246,16 +246,24 @@ public class SavingGoalService : ISavingGoalService
         return response;
     }
 
-    private async Task ApplyContributionAsync(SavingGoal goal, Guid customerId, decimal amount, CancellationToken cancellationToken)
+    private async Task ApplyContributionAsync(
+        SavingGoal goal,
+        Guid customerId,
+        decimal amount,
+        CancellationToken cancellationToken,
+        Guid? overrideWalletId = null)
     {
         var previousAmount = goal.CurrentAmount ?? 0m;
         if (amount > goal.TargetAmount - previousAmount)
             throw new BusinessRuleException("Contribution amount exceeds the remaining goal amount.", "goal_remaining_exceeded");
 
+        // Prefer the wallet chosen for this contribution; fall back to the goal's funding wallet.
+        var sourceWalletId = overrideWalletId ?? goal.FundingWalletId;
+
         Guid? transactionId = null;
-        if (goal.FundingWalletId.HasValue)
+        if (sourceWalletId.HasValue)
         {
-            var wallet = (await LockWalletsAsync(new[] { goal.FundingWalletId.Value }, cancellationToken)).SingleOrDefault();
+            var wallet = (await LockWalletsAsync(new[] { sourceWalletId.Value }, cancellationToken)).SingleOrDefault();
             if (wallet is null || wallet.CustomerId != customerId || wallet.IsDeleted)
                 throw new NotFoundException("Funding wallet not found.");
             if ((wallet.Balance ?? 0m) < amount)

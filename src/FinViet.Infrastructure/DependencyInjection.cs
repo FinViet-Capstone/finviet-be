@@ -6,6 +6,7 @@ using FinViet.Infrastructure.ExternalServices.Gemini;
 using FinViet.Infrastructure.ExternalServices.Notification;
 using FinViet.Infrastructure.ExternalServices.TransactionImport;
 using FinViet.Infrastructure.ExternalServices.Finverse;
+using FinViet.Infrastructure.ExternalServices.SePay;
 using FinViet.Infrastructure.Features.Auth.Commands.Login;
 using FinViet.Infrastructure.Identity;
 using FinViet.Infrastructure.Persistence.Context;
@@ -76,6 +77,20 @@ public static class DependencyInjection
             http.Timeout = TimeSpan.FromSeconds(Math.Clamp(options.TimeoutSeconds, 5, 120));
         });
 
+        // SePay OAuth2 API. Credentials stay in server-side configuration/user-secrets;
+        // OAuth tokens are encrypted before database persistence.
+        services.Configure<SepayOptions>(configuration.GetSection(SepayOptions.SectionName));
+        services.AddSingleton<ISepayTokenProtector, SepayTokenProtector>();
+        services.AddHttpClient<ISepayClient, SepayClient>((sp, http) =>
+        {
+            var options = sp.GetRequiredService<IOptions<SepayOptions>>().Value;
+            var baseUrl = string.IsNullOrWhiteSpace(options.BaseUrl)
+                ? "https://my.sepay.vn"
+                : options.BaseUrl;
+            http.BaseAddress = new Uri(baseUrl.EndsWith('/') ? baseUrl : $"{baseUrl}/");
+            http.Timeout = TimeSpan.FromSeconds(Math.Clamp(options.TimeoutSeconds, 5, 120));
+        });
+
         // JWT
         services.AddScoped<IJwtTokenService, JwtTokenService>();
 
@@ -103,6 +118,7 @@ public static class DependencyInjection
         // Wallet Service
         services.AddScoped<IWalletService, WalletService>();
         services.AddScoped<IFinverseWalletService, FinverseWalletService>();
+        services.AddScoped<ISepayWalletService, SepayWalletService>();
         services.AddScoped<IBudgetService, BudgetService>();
 
         // Category & Category Request Services

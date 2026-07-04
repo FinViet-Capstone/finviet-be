@@ -1,0 +1,355 @@
+# FinViet Backend API Reference
+
+Extracted from `src/FinViet.Api/Controllers` and `src/FinViet.Application/DTOs` (+ Features).
+Live Swagger/OpenAPI JSON is also available at `/swagger/v1/swagger.json` when the API is running.
+
+## Conventions
+
+- All routes are prefixed `api/...`.
+- Auth: Bearer JWT (`Authorization: Bearer <accessToken>`) unless marked **Anonymous**.
+- Standard envelope (unless noted otherwise):
+  ```ts
+  ApiResponse<T> = { success: boolean, message?: string, data?: T }
+  ```
+  `TransactionsController` returns raw objects/`PagedResult<T>` without this envelope.
+- Paged envelope:
+  ```ts
+  PagedResult<T> = { page: number, pageSize: number, totalItems: number, totalPages: number, items: T[] }
+  ```
+- `Idempotency-Key` header supported (optional) on: create transaction, create/contribute saving goal, wallet transfer/withdraw.
+
+---
+
+## Auth — `api/auth` (anonymous)
+
+| Method | Path | Request | Response |
+|---|---|---|---|
+| POST | `/register` | `{ fullName, email, password }` | `ApiResponse<string>` (201) |
+| POST | `/verify-email` | `{ token }` | `ApiResponse<string>` |
+| GET | `/verify-email?token=` | query `token` | HTML page (not JSON) |
+| POST | `/resend-verification` | `{ email }` | `ApiResponse<string>` |
+| POST | `/login` | `{ email, password }` | `ApiResponse<AuthResponseDto>` |
+| POST | `/admin-login` | `{ username, password }` | `ApiResponse<AuthResponseDto>` |
+| POST | `/google-login` | `{ idToken }` | `ApiResponse<AuthResponseDto>` |
+| POST | `/refresh-token` | `{ refreshToken }` | `ApiResponse<AuthResponseDto>` |
+| POST | `/logout` | `{ refreshToken }` | 204 No Content |
+| POST | `/forgot-password` | `{ email }` | `ApiResponse<string>` |
+| POST | `/reset-password` | `{ token, newPassword, confirmPassword }` | `ApiResponse<string>` |
+
+**AuthResponseDto**
+```ts
+{ accessToken: string, refreshToken: string, accessTokenExpiry: DateTime, profile: ProfileDto }
+```
+**ProfileDto**
+```ts
+{
+  customerId: Guid, fullName: string, email: string, avatarUrl?: string,
+  gender?: "Male"|"Female"|..., dateOfBirth?: DateOnly, monthlyIncomeExpected?: number,
+  isEmailVerified: bool, isActive: bool, onboardingDone: bool, createdAt?: DateTime
+}
+```
+
+---
+
+## Account — `api/account` (auth required)
+
+| Method | Path | Role | Request | Response |
+|---|---|---|---|---|
+| DELETE | `/` | Customer | — | `ApiResponse<string>` — self soft-delete, revokes refresh tokens |
+| PUT | `/deactivate/{customerId:guid}` | Admin | — | `ApiResponse<string>` (404 if not found) |
+
+---
+
+## Profile — `api/profile` (role: Customer)
+
+| Method | Path | Request | Response |
+|---|---|---|---|
+| GET | `/` | — | `ApiResponse<ProfileDto>` |
+| PUT | `/` | `UpdateProfileRequest` | `ApiResponse<ProfileDto>` |
+| POST | `/avatar` | multipart file (`file`, ≤5MB JPEG/PNG/WebP) | `ApiResponse<string>` (avatar URL) |
+
+**UpdateProfileRequest**
+```ts
+{ fullName: string, monthlyIncomeExpected?: number, gender?: Gender, dateOfBirth?: DateOnly }
+```
+
+---
+
+## Categories — `api/categories`
+
+| Method | Path | Role | Request | Response |
+|---|---|---|---|---|
+| GET | `/?type=` | any authenticated | query `type?` | `ApiResponse<CategoryResponse[]>` |
+| GET | `/{id}` | any authenticated | — | `ApiResponse<CategoryResponse>` (404) |
+| POST | `/` | Admin | `CreateCategoryRequest` | `ApiResponse<CategoryResponse>` (201) |
+| PATCH | `/{id}` | Admin | `UpdateCategoryRequest` | `ApiResponse<CategoryResponse>` (404) |
+| DELETE | `/{id}` | Admin | — | `ApiResponse<object?>` (404) |
+
+**CategoryResponse**
+```ts
+{
+  categoryId: string, categoryName: string, nameVi?: string, nameEn?: string,
+  type: string, isMandatory: bool, expenseClass?: string, icon?: string,
+  color?: string, sortOrder?: number
+}
+```
+**CreateCategoryRequest**: `{ categoryId?, categoryName?, nameVi?, nameEn?, type, isMandatory, expenseClass?, icon?, color?, sortOrder? }`
+**UpdateCategoryRequest**: all fields optional versions of the above (no `categoryId`).
+
+---
+
+## Category Requests — `api/category-requests` (auth required)
+
+| Method | Path | Role | Request | Response |
+|---|---|---|---|---|
+| POST | `/` | Customer | `CreateCategoryRequestRequest` | `ApiResponse<CategoryRequestResponse>` |
+| GET | `/mine` | Customer | — | `ApiResponse<CategoryRequestResponse[]>` |
+| GET | `/?status=` | Admin | query `status?` | `ApiResponse<CategoryRequestResponse[]>` |
+| POST | `/{id:guid}/approve` | Admin | `ReviewCategoryRequestRequest` | `ApiResponse<CategoryRequestResponse>` (404) |
+| POST | `/{id:guid}/reject` | Admin | `ReviewCategoryRequestRequest` | `ApiResponse<CategoryRequestResponse>` (404) |
+
+**CreateCategoryRequestRequest**: `{ categoryName, type, expenseClass?, note? }`
+**ReviewCategoryRequestRequest**: `{ reviewNote? }`
+**CategoryRequestResponse**
+```ts
+{
+  requestId: Guid, customerId: Guid, categoryName: string, type: string,
+  expenseClass?: string, note?: string, status: string, reviewNote?: string,
+  createdCategoryId?: string, createdAt: DateTime, reviewedAt?: DateTime
+}
+```
+
+---
+
+## Transactions — `api/transactions` (role: Customer)
+
+> Note: This controller returns raw objects (not wrapped in `ApiResponse`).
+
+| Method | Path | Request | Response |
+|---|---|---|---|
+| GET | `/?page&pageSize&walletId&type&categoryId&from&to&q&uncategorizedOnly` | `TransactionQueryDto` (query) | `PagedResult<TransactionResponseDto>` |
+| GET | `/summary?year=&month=` | query | `TransactionSummaryResponseDto` |
+| GET | `/{id:guid}` | — | `TransactionResponseDto` |
+| POST | `/` | `CreateTransactionDto` + header `Idempotency-Key?` | `TransactionResponseDto` (201) |
+| PUT | `/{id}` | `UpdateTransactionDto` | `TransactionResponseDto` |
+| DELETE | `/{id}` | — | `bool` |
+| PATCH | `/{id}/classify` | `ClassifyTransactionDto` | `TransactionResponseDto` |
+
+**CreateTransactionDto**
+```ts
+{ walletId: Guid, categoryId?: string, transactionType: string, amount: number,
+  transactionDate: DateTime, note?: string, description?: string, merchant?: string, entryMethod?: string }
+```
+**UpdateTransactionDto**: `{ categoryId?: string }`
+**ClassifyTransactionDto**: `{ categoryId?: string }`
+**TransactionResponseDto**
+```ts
+{
+  transactionId: Guid, customerId: Guid, walletId: Guid, categoryId?: string,
+  transactionType: string, sourceChannel: string, entryMethod: string, amount: number,
+  transactionDate: DateTime, note?: string, description?: string, merchant?: string,
+  transferPairId?: Guid, externalId?: string, createdAt: DateTime, updatedAt?: DateTime
+}
+```
+**TransactionSummaryResponseDto**
+```ts
+{
+  income: number, expense: number, net: number,
+  byCategory: { categoryId?, categoryName?, total: number }[],
+  byDay: { date: DateOnly, income: number, expense: number, net: number }[],
+  topBeneficiaries: { beneficiary: string, total: number }[]
+}
+```
+
+---
+
+## Wallets — `api/wallets` (role: Customer, some Finverse endpoints anonymous)
+
+| Method | Path | Request | Response |
+|---|---|---|---|
+| GET | `/` | — | `ApiResponse<WalletListResponse>` |
+| POST | `/` | `CreateWalletRequest` | `ApiResponse<WalletResponse>` (201) |
+| GET | `/{id:guid}` | — | `ApiResponse<WalletResponse>` (404) |
+| PATCH | `/{id:guid}` | `UpdateWalletRequest` | `ApiResponse<WalletResponse>` (404) |
+| DELETE | `/{id:guid}` | — | 204 (404 if missing) |
+| POST | `/transfer` | `TransferWalletRequest` + `Idempotency-Key?` | `ApiResponse<TransferWalletResponse>` |
+| POST | `/withdraw` | `WithdrawWalletRequest` + `Idempotency-Key?` | `ApiResponse<WithdrawWalletResponse>` |
+| GET | `/{id:guid}/transactions?page&pageSize&fromDate&toDate&categoryId&transactionType&sortOrder` | `WalletTransactionQuery` (query) | `ApiResponse<PagedResult<WalletTransactionResponse>>` |
+| POST | `/finverse/link-token` | `CreateFinverseLinkRequest` | `ApiResponse<FinverseLinkTokenResponse>` |
+| POST | `/finverse/complete-link` | `CompleteFinverseLinkRequest` | `ApiResponse<FinverseLinkResult>` |
+| POST | `/finverse/callback` **(Anonymous, form-urlencoded)** | `CompleteFinverseLinkRequest` (form) | `ApiResponse<FinverseLinkResult>` |
+| POST | `/{id:guid}/finverse-sync` | — | `ApiResponse<FinverseWalletSyncResponse>` |
+
+**CreateWalletRequest**: `{ walletName, walletType, initialBalance }`
+**UpdateWalletRequest**: `{ walletName?, walletType? }`
+**WalletResponse**
+```ts
+{
+  walletId: Guid, customerId: Guid, walletName: string, walletType: string, balance: number,
+  finverseAccountId?: string, institutionName?: string, accountMask?: string, lastSyncedAt?: DateTime
+}
+```
+**WalletListResponse**: `{ totalBalance: number, wallets: WalletResponse[] }`
+**TransferWalletRequest**: `{ fromWalletId: Guid, toWalletId: Guid, amount: number, description?: string }`
+**TransferWalletResponse**: `{ fromWalletId, toWalletId, fromWalletBalance, toWalletBalance }`
+**WithdrawWalletRequest**: `{ fromWalletId: Guid, toWalletId?: Guid, amount: number, description?: string }`
+**WithdrawWalletResponse**: `{ fromWalletId, fromWalletBalance, toWalletId?, toWalletBalance? }`
+**WalletTransactionQuery**: `{ page=1, pageSize=10, fromDate?, toDate?, categoryId?, transactionType?, sortOrder="desc" }`
+**WalletTransactionResponse**: `{ transactionId, walletId, categoryId?, transactionType, amount, transactionDate, note? }`
+
+**Finverse (bank-linking) DTOs**
+```ts
+CreateFinverseLinkRequest: { institutionId?: string, language: string = "en", uiMode: string = "redirect" }
+CompleteFinverseLinkRequest: { code: string, state: string, accounts?: string[] }  // link a subset of accounts
+FinverseLinkTokenResponse: { linkUrl: string, state: string, expiresAt: DateTime }
+FinverseLinkResult: { loginIdentityId: string, wallets: WalletResponse[] }
+FinverseWalletSyncResponse: { walletId, balance, transactionsCreated, transactionsUpdated, pendingTransactionsSkipped, syncedAt }
+```
+
+---
+
+## Budgets — `api/budgets` (role: Customer)
+
+| Method | Path | Request | Response |
+|---|---|---|---|
+| GET | `/?month=` | query `month?` | `ApiResponse<BudgetResponse[]>` |
+| GET | `/buckets?month=` | query `month?` | `ApiResponse<BucketSummaryListResponse>` |
+| POST | `/` | `UpsertBudgetRequest` | `ApiResponse<BudgetResponse>` |
+| PATCH | `/{id:guid}` | `UpdateBudgetRequest` | `ApiResponse<BudgetResponse>` |
+| DELETE | `/{id:guid}` | — | 204 |
+
+**BudgetResponse**
+```ts
+{ id: Guid, categoryId: string, categoryName: string, walletId?: Guid, monthlyLimit: number,
+  spent: number, remaining: number, percentage: number, status: string, bucket: string }
+```
+**UpsertBudgetRequest**: `{ categoryId, walletId?, monthlyLimit }`
+**UpdateBudgetRequest**: `{ monthlyLimit }`
+**BucketSummaryListResponse**
+```ts
+{ month: string, monthlyIncome: number, budgetAdherenceScore: number, uncategorizedRatio: number,
+  uncategorizedWarning: bool, buckets: BucketSummaryResponse[] }
+```
+**BucketSummaryResponse**
+```ts
+{ bucket: string, allocationPct: number, allocationCap: number, categoryLimitTotal: number,
+  spent: number, remaining: number, percentage: number, overAllocated: bool,
+  expectedSpent: number, paceDeviation: number, paceStatus: string }
+```
+
+---
+
+## Saving Goals — `api/saving-goals` (role: Customer)
+
+| Method | Path | Request | Response |
+|---|---|---|---|
+| GET | `/` | — | `ApiResponse<SavingGoalResponse[]>` |
+| GET | `/{id:guid}` | — | `ApiResponse<SavingGoalResponse>` (404) |
+| POST | `/` | `CreateSavingGoalRequest` + `Idempotency-Key?` | `ApiResponse<SavingGoalResponse>` (201) |
+| PATCH | `/{id:guid}` | `UpdateSavingGoalRequest` | `ApiResponse<SavingGoalResponse>` (404) |
+| DELETE | `/{id:guid}` | — | `ApiResponse<object?>` (404) |
+| POST | `/{id:guid}/contribute` | `ContributeSavingGoalRequest` + `Idempotency-Key?` | `ApiResponse<SavingGoalResponse>` (404) |
+
+**CreateSavingGoalRequest**: `{ goalName, targetAmount, deadline?, initialAmount?, fundingWalletId? }`
+**UpdateSavingGoalRequest**: `{ goalName?, targetAmount?, deadline? }`
+**ContributeSavingGoalRequest**: `{ amount }`
+**SavingGoalResponse**
+```ts
+{
+  goalId, customerId, goalName, targetAmount, currentAmount, deadline?, fundingWalletId?,
+  remainingAmount, progressPercent, daysRemaining?, isCompleted,
+  monthlySavingNeeded?, monthsRemaining?
+}
+```
+
+---
+
+## Rules — `api/rules` (role: Customer) — merchant-keyword auto-categorization
+
+| Method | Path | Request | Response |
+|---|---|---|---|
+| GET | `/` | — | `ApiResponse<RuleResponse[]>` |
+| POST | `/` | `CreateRuleRequest` | `ApiResponse<CreateRuleResponse>` (201, 409 on conflict) |
+| DELETE | `/{id:guid}` | — | `ApiResponse<object?>` (404) |
+
+**CreateRuleRequest**: `{ merchantKeyword, categoryId }`
+**RuleResponse**: `{ ruleId, merchantKeyword, categoryId, categoryName?, appliedCount, createdAt }`
+**CreateRuleResponse**: `{ rule: RuleResponse, appliedCount }` — appliedCount = # transactions retro-tagged
+
+---
+
+## Notifications — `api/notifications` (role: Customer)
+
+| Method | Path | Request | Response |
+|---|---|---|---|
+| GET | `/?unread=` | query `unread: bool` | `ApiResponse<NotificationResponse[]>` |
+| PATCH | `/{id:guid}/read` | — | `ApiResponse<object?>` (404) |
+| POST | `/read-all` | — | `ApiResponse<{ count: number }>` |
+
+**NotificationResponse**
+```ts
+{ notificationId, type, title, message?, entityType?, entityId?, isRead, sentAt? }
+```
+
+---
+
+## Extract — `api/extract` (role: Customer) — parse-only, nothing persisted
+
+| Method | Path | Request | Response |
+|---|---|---|---|
+| POST | `/sms` | `{ text: string }` (≤20,000 chars) | `ApiResponse<ExtractResponse>` |
+| POST | `/csv` | multipart: `file` (.csv/.xlsx/.xls, ≤5MB) + `maxRows?` | `ApiResponse<ExtractResponse>` |
+
+**ExtractResponse**
+```ts
+{
+  rows: ExtractedTransactionItem[], totalScanned: number, skipped: number, errors: string[]
+}
+```
+**ExtractedTransactionItem**
+```ts
+{ amount, type, merchant?, description?, transactionDate, categoryId?, categoryName?, confidence? }
+```
+
+---
+
+## AI — `api/ai` (auth required)
+
+| Method | Path | Role | Request | Response |
+|---|---|---|---|---|
+| POST | `/categorize/preview` | any | `{ input: string }` | `ApiResponse<AiClassificationResult>` |
+| POST | `/categorize/{transactionId:guid}` | any | — | `ApiResponse<CategorizationOutcome>` |
+| POST | `/transactions/{transactionId:guid}/override` | any | `{ categoryId: string }` | `ApiResponse<CategorizationOutcome>` |
+| GET | `/score?period=WEEKLY\|MONTHLY` | any | query | `ApiResponse<SpendingScoreResult>` |
+| GET | `/reports` | any | — | `ApiResponse<WeeklyReportResponse[]>` |
+| GET | `/reports/{reportId:guid}` | any | — | `ApiResponse<WeeklyReportResponse>` (404) |
+| POST | `/reports/generate` | any | — | `ApiResponse<WeeklyReportResponse>` — manually generates last completed week's report |
+| POST | `/chat` | any | `{ question: string }` | `ApiResponse<ChatMessageResponse>` |
+| GET | `/chat/history?limit=50` | any | query | `ApiResponse<ChatMessageResponse[]>` |
+| POST | `/documents` | Admin | multipart: `file` (PDF, ≤20MB) + `title?` (form) | `ApiResponse<Guid>` (documentId) |
+
+**AiClassificationResult**: `{ categoryName?: string, confidence: number }` (0–1)
+**CategorizationOutcome**
+```ts
+{ transactionId, categoryId?, categoryName?, confidence?, isAiClassified: bool, queued: bool, source: "RULE"|"AI"|"FALLBACK" }
+```
+**SpendingScoreResult**
+```ts
+{
+  periodType: "WEEKLY"|"MONTHLY", periodStart: DateOnly, periodEnd: DateOnly,
+  finalScore: number, spikeScore?: number, budgetScore?: number, savingsScore?: number,
+  weights: Record<string, number>, colorBadge: "GREEN"|"YELLOW"|"RED", comment?: string
+}
+```
+**WeeklyReportResponse**: `{ reportId, periodStart, periodEnd, narrative, finalScore?, colorBadge?, generatedAt }`
+**ChatAskRequest**: `{ question }`
+**ChatMessageResponse**: `{ messageId, senderType: "USER"|"AI", content, timestamp? }`
+
+---
+
+## Common envelope types
+
+```ts
+ApiResponse<T> = { success: bool, message?: string, data?: T }
+PagedResult<T> = { page: number, pageSize: number, totalItems: number, totalPages: number, items: T[] }
+```

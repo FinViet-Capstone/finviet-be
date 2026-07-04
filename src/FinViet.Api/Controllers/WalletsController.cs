@@ -14,13 +14,16 @@ public class WalletsController : ControllerBase
 {
     private readonly IWalletService _walletService;
     private readonly IFinverseWalletService _finverseWalletService;
+    private readonly ISepayWalletService _sepayWalletService;
 
     public WalletsController(
         IWalletService walletService,
-        IFinverseWalletService finverseWalletService)
+        IFinverseWalletService finverseWalletService,
+        ISepayWalletService sepayWalletService)
     {
         _walletService = walletService;
         _finverseWalletService = finverseWalletService;
+        _sepayWalletService = sepayWalletService;
     }
 
     [HttpGet]
@@ -224,6 +227,68 @@ public class WalletsController : ControllerBase
         return Ok(ApiResponse<FinverseWalletSyncResponse>.Ok(
             result,
             "Finverse wallet synchronized successfully"));
+    }
+
+    // ── SePay OAuth2 ────────────────────────────────────────────────────────────
+
+    [HttpPost("sepay/link")]
+    public async Task<ActionResult<ApiResponse<SepayLinkResult>>> LinkSepayAccount(
+        [FromBody] LinkSepayAccountRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await _sepayWalletService.LinkAccountAsync(
+            User.GetCustomerId(),
+            request,
+            cancellationToken);
+
+        return Ok(ApiResponse<SepayLinkResult>.Ok(
+            result,
+            "SePay bank account linked successfully"));
+    }
+
+    [HttpPost("sepay/link-token")]
+    public async Task<ActionResult<ApiResponse<SepayLinkResult>>> LinkSepayWithToken(
+        [FromBody] LinkSepayTokenRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await _sepayWalletService.LinkWithTokenAsync(
+            User.GetCustomerId(),
+            request,
+            cancellationToken);
+
+        return Ok(ApiResponse<SepayLinkResult>.Ok(
+            result,
+            "SePay bank account linked successfully"));
+    }
+
+    [HttpPost("sepay/bank-accounts")]
+    public async Task<ActionResult<ApiResponse<IReadOnlyList<SepayBankAccountResponse>>>> GetSepayBankAccounts(
+        [FromBody] SepayBankAccountsRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await _sepayWalletService.GetBankAccountsAsync(
+            User.GetCustomerId(),
+            request.Code,
+            cancellationToken);
+
+        return Ok(ApiResponse<IReadOnlyList<SepayBankAccountResponse>>.Ok(
+            result,
+            "SePay bank accounts retrieved successfully"));
+    }
+
+    [HttpPost("{id:guid}/sepay-sync")]
+    public async Task<ActionResult<ApiResponse<SepayWalletSyncResponse>>> SyncSepayWallet(
+        [FromRoute] Guid id,
+        CancellationToken cancellationToken)
+    {
+        var result = await _sepayWalletService.SyncWalletAsync(
+            User.GetCustomerId(),
+            id,
+            cancellationToken);
+
+        return Ok(ApiResponse<SepayWalletSyncResponse>.Ok(
+            result,
+            "SePay wallet synchronized successfully"));
     }
 
 }
