@@ -242,10 +242,11 @@ public class TransactionRepository : ITransactionRepository
         if (wallet is null || wallet.CustomerId != customerId || wallet.IsDeleted)
             throw new NotFoundException("Wallet", walletId);
 
-        if (string.Equals(wallet.WalletType, "finverse_linked", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(wallet.WalletType, "finverse_linked", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(wallet.WalletType, "sepay_linked", StringComparison.OrdinalIgnoreCase))
             throw new BusinessRuleException(
-                "Finverse-linked wallets are read-only. Transactions are created by synchronization.",
-                "finverse_wallet_read_only");
+                "Bank-linked wallets are read-only. Transactions are created by synchronization.",
+                "linked_wallet_read_only");
 
         var normalizedType = NormalizeType(transactionType);
         var transaction = new Transaction

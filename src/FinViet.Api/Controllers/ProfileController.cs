@@ -38,7 +38,7 @@ public class ProfileController : ControllerBase
         var customerId = User.GetCustomerId();
         var result     = await _mediator.Send(
             new UpdateProfileCommand(customerId, request.FullName, request.MonthlyIncomeExpected,
-                request.Gender, request.DateOfBirth), ct);
+                request.Gender, request.DateOfBirth, request.OnboardingDone), ct);
 
         return Ok(ApiResponse<object>.Ok(result));
     }
@@ -68,4 +68,5 @@ public record UpdateProfileRequest(
     string FullName,
     decimal? MonthlyIncomeExpected,
     Gender? Gender = null,
-    DateOnly? DateOfBirth = null);
+    DateOnly? DateOfBirth = null,
+    bool? OnboardingDone = null);
