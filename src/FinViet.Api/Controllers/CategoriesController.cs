@@ -1,3 +1,4 @@
+using FinViet.Api.Common;
 using FinViet.Application.Common;
 using FinViet.Application.DTOs.Categories;
 using FinViet.Application.Interfaces;
@@ -23,7 +24,7 @@ public class CategoriesController : ControllerBase
         [FromQuery] string? type,
         CancellationToken cancellationToken)
     {
-        var categories = await _categoryService.GetCategoriesAsync(type, cancellationToken);
+        var categories = await _categoryService.GetCategoriesAsync(type, CurrentCustomerIdOrNull(), cancellationToken);
 
         return Ok(ApiResponse<IReadOnlyList<CategoryResponse>>.Ok(
             categories,
@@ -35,7 +36,7 @@ public class CategoriesController : ControllerBase
         [FromRoute] string id,
         CancellationToken cancellationToken)
     {
-        var category = await _categoryService.GetCategoryByIdAsync(id, cancellationToken);
+        var category = await _categoryService.GetCategoryByIdAsync(id, CurrentCustomerIdOrNull(), cancellationToken);
 
         if (category is null)
             return NotFound(ApiResponse<CategoryResponse>.Fail("Category not found."));
@@ -44,6 +45,40 @@ public class CategoriesController : ControllerBase
             category,
             "Category retrieved successfully"));
     }
+
+    // ── Customer bucket self-service (no admin approval needed) ─────────
+
+    [HttpPut("{id}/bucket")]
+    [Authorize(Roles = "Customer")]
+    public async Task<ActionResult<ApiResponse<CategoryResponse>>> SetBucket(
+        [FromRoute] string id,
+        [FromBody] SetCategoryBucketRequest request,
+        CancellationToken cancellationToken)
+    {
+        var customerId = User.GetCustomerId();
+        var category = await _categoryService.SetCustomerBucketAsync(customerId, id, request.BucketId, cancellationToken);
+
+        return Ok(ApiResponse<CategoryResponse>.Ok(
+            category,
+            "Category bucket updated successfully"));
+    }
+
+    [HttpDelete("{id}/bucket")]
+    [Authorize(Roles = "Customer")]
+    public async Task<ActionResult<ApiResponse<CategoryResponse>>> ResetBucket(
+        [FromRoute] string id,
+        CancellationToken cancellationToken)
+    {
+        var customerId = User.GetCustomerId();
+        var category = await _categoryService.ResetCustomerBucketAsync(customerId, id, cancellationToken);
+
+        return Ok(ApiResponse<CategoryResponse>.Ok(
+            category,
+            "Category bucket reset to default successfully"));
+    }
+
+    private Guid? CurrentCustomerIdOrNull()
+        => User.IsInRole("Customer") ? User.GetCustomerId() : null;
 
     [HttpPost]
     [Authorize(Roles = "Admin")]

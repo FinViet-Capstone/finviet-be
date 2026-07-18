@@ -306,7 +306,7 @@ graph LR
 | Profile | `ProfileController`, `AccountController` | `IAvatarService`, `ISpendingScoreService` | `Profile/*`, `Account/*` |
 | Wallet | `WalletsController` | `IWalletService` | — |
 | Transaction | `TransactionsController`, `ExtractController` | `ITransactionRepository`, `ITransactionExtractService`, `ITransactionImportParser` | `Transactions/*` |
-| Category | `CategoriesController`, `CategoryRequestsController` | `ICategoryService`, `ICategoryRequestService` | — |
+| Category | `CategoriesController` | `ICategoryService` | — |
 | Budget | `BudgetsController` | `IBudgetService`, `IBudgetAlertNotifier` | — |
 | Saving Goal | `SavingGoalsController` | `ISavingGoalService` | — |
 | Linked Wallet | `LinkedWalletsController` | `ILinkedWalletService` | — |
