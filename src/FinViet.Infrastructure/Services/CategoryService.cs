@@ -12,6 +12,8 @@ namespace FinViet.Infrastructure.Services;
 
 public class CategoryService : ICategoryService
 {
+    private const string SavingsGoalCategoryId = "cat_savings_goal";
+
     private static readonly HashSet<string> AllowedTypes = new(StringComparer.OrdinalIgnoreCase)
     {
         "income", "expense"
@@ -31,6 +33,7 @@ public class CategoryService : ICategoryService
 
     public async Task<IReadOnlyList<CategoryResponse>> GetCategoriesAsync(
         string? type,
+        Guid? customerId = null,
         CancellationToken cancellationToken = default)
     {
         var query = _dbContext.Categories.AsNoTracking();
@@ -48,18 +51,114 @@ public class CategoryService : ICategoryService
             .ThenBy(c => c.CategoryName)
             .ToListAsync(cancellationToken);
 
-        return categories.Select(ToResponse).ToList();
+        var overrides = await GetCustomerBucketOverridesAsync(customerId, cancellationToken);
+        return categories.Select(c => ToResponse(c, overrides.GetValueOrDefault(c.CategoryId))).ToList();
     }
 
     public async Task<CategoryResponse?> GetCategoryByIdAsync(
         string categoryId,
+        Guid? customerId = null,
         CancellationToken cancellationToken = default)
     {
         var category = await _dbContext.Categories
             .AsNoTracking()
             .FirstOrDefaultAsync(c => c.CategoryId == categoryId, cancellationToken);
 
-        return category is null ? null : ToResponse(category);
+        if (category is null)
+            return null;
+
+        var overrides = await GetCustomerBucketOverridesAsync(customerId, cancellationToken);
+        return ToResponse(category, overrides.GetValueOrDefault(categoryId));
+    }
+
+    public async Task<CategoryResponse> SetCustomerBucketAsync(
+        Guid customerId,
+        string categoryId,
+        string bucketId,
+        CancellationToken cancellationToken = default)
+    {
+        var category = await _dbContext.Categories
+            .FirstOrDefaultAsync(c => c.CategoryId == categoryId, cancellationToken);
+
+        if (category is null)
+            throw new NotFoundException("Category not found.");
+
+        if (!string.Equals(category.Type, "expense", StringComparison.OrdinalIgnoreCase))
+            throw new ValidationException("Only expense categories can be assigned to a bucket.");
+
+        if (string.Equals(category.CategoryId, SavingsGoalCategoryId, StringComparison.OrdinalIgnoreCase))
+            throw new ValidationException("Saving goal contributions cannot be reassigned to a different bucket.");
+
+        var normalizedBucket = bucketId?.Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(normalizedBucket) || !AllowedExpenseClasses.Contains(normalizedBucket))
+            throw new ValidationException("Bucket must be one of: needs, wants, savings.");
+
+        var customerCategory = await _dbContext.CustomerCategories
+            .FirstOrDefaultAsync(x => x.CustomerId == customerId && x.CategoryId == categoryId, cancellationToken);
+
+        if (customerCategory is null)
+        {
+            _dbContext.CustomerCategories.Add(new CustomerCategory
+            {
+                Id = Guid.NewGuid(),
+                CustomerId = customerId,
+                CategoryId = categoryId,
+                BucketId = normalizedBucket,
+                // "request" now simply means "customer-set override" — the admin
+                // category-request approval flow that this label used to imply was removed.
+                Source = "request",
+                IsActive = true,
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            });
+        }
+        else
+        {
+            customerCategory.BucketId = normalizedBucket;
+            customerCategory.IsActive = true;
+            customerCategory.Source = "request";
+            customerCategory.UpdatedAt = DateTime.UtcNow;
+        }
+
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        return ToResponse(category, normalizedBucket);
+    }
+
+    public async Task<CategoryResponse> ResetCustomerBucketAsync(
+        Guid customerId,
+        string categoryId,
+        CancellationToken cancellationToken = default)
+    {
+        var category = await _dbContext.Categories
+            .FirstOrDefaultAsync(c => c.CategoryId == categoryId, cancellationToken);
+
+        if (category is null)
+            throw new NotFoundException("Category not found.");
+
+        var customerCategory = await _dbContext.CustomerCategories
+            .FirstOrDefaultAsync(x => x.CustomerId == customerId && x.CategoryId == categoryId, cancellationToken);
+
+        if (customerCategory is not null && customerCategory.IsActive)
+        {
+            customerCategory.IsActive = false;
+            customerCategory.UpdatedAt = DateTime.UtcNow;
+            await _dbContext.SaveChangesAsync(cancellationToken);
+        }
+
+        return ToResponse(category, null);
+    }
+
+    private async Task<Dictionary<string, string>> GetCustomerBucketOverridesAsync(
+        Guid? customerId,
+        CancellationToken cancellationToken)
+    {
+        if (customerId is null)
+            return new Dictionary<string, string>();
+
+        return await _dbContext.CustomerCategories
+            .AsNoTracking()
+            .Where(x => x.CustomerId == customerId.Value && x.IsActive)
+            .ToDictionaryAsync(x => x.CategoryId, x => x.BucketId, cancellationToken);
     }
 
     public async Task<CategoryResponse> CreateCategoryAsync(
@@ -253,7 +352,7 @@ public class CategoryService : ICategoryService
     private static string? FirstNonEmpty(params string?[] values)
         => values.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v));
 
-    private static CategoryResponse ToResponse(Category category)
+    private static CategoryResponse ToResponse(Category category, string? customerBucketOverride = null)
         => new()
         {
             CategoryId = category.CategoryId,
@@ -263,7 +362,9 @@ public class CategoryService : ICategoryService
             NameEn = category.NameEn,
             Type = category.Type,
             IsMandatory = category.IsMandatory ?? false,
-            ExpenseClass = category.DefaultBucket,
+            // The customer's own bucket override (customer_categories) wins over the
+            // category's global default when the caller is an authenticated customer.
+            ExpenseClass = customerBucketOverride ?? category.DefaultBucket,
             Icon = category.Icon,
             Color = category.Color,
             SortOrder = category.SortOrder

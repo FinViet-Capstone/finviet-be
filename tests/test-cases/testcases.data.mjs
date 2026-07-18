@@ -68,13 +68,13 @@ export const cases = [
   ['TC-AI-06','Chatbot','Logged-in','POST /api/ai/chat question','200 answer','BUG #A','500: relation chat_message missing'],
   ['TC-AI-07','Chatbot','Logged-in','GET /api/ai/chat/history','200','BUG #A','500: chat_message missing'],
 
-  ['TC-REQ-01','Cat request','Customer','POST /api/category-requests then GET /mine','200/201 + visible','Pass',''],
-  ['TC-REQ-02','Cat request','Admin + pending','POST /api/category-requests/{id}/approve','200, global category created','Pass',''],
-  ['TC-REQ-03','Cat request','Admin + pending','POST /api/category-requests/{id}/reject','200','Pass',''],
+  ['TC-BKT-01','Cat bucket','Customer','PUT /api/categories/{id}/bucket then GET /api/categories, then DELETE /bucket','200, override reflected, reset to default','Pass',''],
+  ['TC-BKT-02','Cat bucket','Customer','PUT /api/categories/{id}/bucket invalid bucketId','400/422','Pass',''],
+  ['TC-BKT-03','Cat bucket','Customer','PUT /api/categories/{id}/bucket on income category','400/422','Pass',''],
   ['TC-ADM-01','Admin Category','Admin','POST->PATCH->DELETE /api/categories','201/200/200','Pass',''],
   ['TC-ADM-02','Admin Account','Admin','PUT /api/account/deactivate/{unknown}','404','Pass',''],
 
-  ['TC-AUTHZ-01','RBAC','Customer token','GET /api/category-requests (admin-only)','403','Pass',''],
+  ['TC-AUTHZ-01','RBAC','Admin token','PUT /api/categories/{id}/bucket (customer-only)','403','Pass',''],
   ['TC-AUTHZ-02','RBAC','Customer token','POST /api/categories (admin-only)','403','Pass',''],
   ['TC-AUTHZ-03','RBAC','Admin token','GET /api/wallets (customer-only)','403','Pass',''],
   ['TC-AUTHZ-04','RBAC','No token','GET /api/wallets','401','Pass',''],

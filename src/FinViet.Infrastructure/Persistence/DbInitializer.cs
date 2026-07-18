@@ -54,6 +54,12 @@ DROP TABLE IF EXISTS ai_classification_queue;
 DROP TABLE IF EXISTS ai_usage_log;
 DROP TABLE IF EXISTS user_category_buckets;
 
+-- Category-request admin-approval flow removed: customers now reassign a category's
+-- bucket directly (PUT /api/categories/{id}/bucket), writing straight to
+-- customer_categories with no admin review step needed.
+DROP TABLE IF EXISTS category_requests;
+DROP TYPE IF EXISTS category_request_status;
+
 -- pgvector extension must be installed on the Postgres server image.
 CREATE EXTENSION IF NOT EXISTS vector;
 
@@ -83,7 +89,7 @@ CREATE INDEX IF NOT EXISTS ix_rag_chunk_embedding
     ON rag_chunk USING hnsw (embedding vector_cosine_ops);";
 
         await db.Database.ExecuteSqlRawAsync(sql, cancellationToken);
-        logger.LogInformation("Ensured additive tables (merchant_rules, rag_document, rag_chunk) and dropped redundant AI tables.");
+        logger.LogInformation("Ensured additive tables (merchant_rules, rag_document, rag_chunk), dropped redundant AI tables, and dropped category_requests.");
     }
 
     private static async Task ApplyMigrationsAsync(

@@ -100,13 +100,16 @@ Status legend: ✅ Pass · ⏭️ Skipped-Known-Bug · 🚫 Not-Implemented · �
 | TC-AI-06 | Chatbot | Logged-in | POST `/api/ai/chat` question | **Expected** 200 answer | ⏭️ **BUG #A**: 500, relation `chat_message` missing |
 | TC-AI-07 | Chatbot | Logged-in | GET `/api/ai/chat/history` | **Expected** 200 | ⏭️ **BUG #A**: 500, `chat_message` missing |
 
-## 10. Category Requests & Admin
+## 10. Category Bucket Self-Service & Admin
+
+`category_requests` (admin-approval flow) was removed — customers now reassign a category's
+bucket directly, no admin review step.
 
 | ID | Module | Precondition | Steps | Expected | Status |
 |----|--------|--------------|-------|----------|--------|
-| TC-REQ-01 | Cat request | Customer | POST `/api/category-requests` then GET `/mine` | 200/201 + visible in mine | ✅ |
-| TC-REQ-02 | Cat request | Admin + pending | POST `/api/category-requests/{id}/approve` | 200, global category created | ✅ |
-| TC-REQ-03 | Cat request | Admin + pending | POST `/api/category-requests/{id}/reject` | 200 | ✅ |
+| TC-BKT-01 | Cat bucket | Customer | PUT `/api/categories/{id}/bucket` then GET `/api/categories`, then DELETE `/bucket` | 200, override reflected, reset to default | ✅ |
+| TC-BKT-02 | Cat bucket | Customer | PUT `/api/categories/{id}/bucket` with invalid bucketId | 400/422 | ✅ |
+| TC-BKT-03 | Cat bucket | Customer | PUT `/api/categories/{id}/bucket` on an income category | 400/422 | ✅ |
 | TC-ADM-01 | Admin Category | Admin | POST → PATCH → DELETE `/api/categories` | 201/200/200 | ✅ |
 | TC-ADM-02 | Admin Account | Admin | PUT `/api/account/deactivate/{unknown-guid}` | 404 | ✅ |
 
@@ -114,7 +117,7 @@ Status legend: ✅ Pass · ⏭️ Skipped-Known-Bug · 🚫 Not-Implemented · �
 
 | ID | Module | Precondition | Steps | Expected | Status |
 |----|--------|--------------|-------|----------|--------|
-| TC-AUTHZ-01 | RBAC | Customer token | GET `/api/category-requests` (admin-only) | 403 | ✅ |
+| TC-AUTHZ-01 | RBAC | Admin token | PUT `/api/categories/{id}/bucket` (customer-only) | 403 | ✅ |
 | TC-AUTHZ-02 | RBAC | Customer token | POST `/api/categories` (admin-only) | 403 | ✅ |
 | TC-AUTHZ-03 | RBAC | Admin token | GET `/api/wallets` (customer-only) | 403 | ✅ |
 | TC-AUTHZ-04 | RBAC | No token | GET `/api/wallets` | 401 | ✅ |

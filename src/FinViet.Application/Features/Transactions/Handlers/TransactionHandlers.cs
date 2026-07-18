@@ -53,7 +53,7 @@ internal static class TransactionRules
                 "cat_savings_goal is reserved for savings-goal contributions and cannot be set manually.",
                 "goal_transaction_locked");
 
-        var category = await categoryService.GetCategoryByIdAsync(categoryId, cancellationToken);
+        var category = await categoryService.GetCategoryByIdAsync(categoryId, cancellationToken: cancellationToken);
         if (category is null)
             throw new NotFoundException("Category", categoryId);
 
