@@ -42,7 +42,6 @@ public static class DependencyInjection
         dataSourceBuilder.MapEnum<EntryMethod>("entry_method");
         dataSourceBuilder.MapEnum<CategoryType>("category_type");
         dataSourceBuilder.MapEnum<CategorySource>("category_source");
-        dataSourceBuilder.MapEnum<CategoryRequestStatus>("category_request_status");
         dataSourceBuilder.MapEnum<NotificationType>("notification_type");
         dataSourceBuilder.MapEnum<NotificationEntityType>("notification_entity_type");
         dataSourceBuilder.MapEnum<SubscriptionStatus>("subscription_status");
@@ -121,9 +120,8 @@ public static class DependencyInjection
         services.AddScoped<ISepayWalletService, SepayWalletService>();
         services.AddScoped<IBudgetService, BudgetService>();
 
-        // Category & Category Request Services
+        // Category Services
         services.AddScoped<ICategoryService, CategoryService>();
-        services.AddScoped<ICategoryRequestService, CategoryRequestService>();
 
         // Merchant auto-categorization rules
         services.AddScoped<IMerchantRuleService, MerchantRuleService>();
