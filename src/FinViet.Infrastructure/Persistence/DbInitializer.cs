@@ -55,7 +55,7 @@ DROP TABLE IF EXISTS ai_usage_log;
 DROP TABLE IF EXISTS user_category_buckets;
 
 -- Category-request admin-approval flow removed: customers now reassign a category's
--- bucket directly (PUT /api/categories/{id}/bucket), writing straight to
+-- bucket directly (PUT /api/categories/:id/bucket), writing straight to
 -- customer_categories with no admin review step needed.
 DROP TABLE IF EXISTS category_requests;
 DROP TYPE IF EXISTS category_request_status;
