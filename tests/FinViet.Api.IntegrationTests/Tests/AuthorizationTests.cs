@@ -7,12 +7,14 @@ public class AuthorizationTests : ApiTestBase
 {
     public AuthorizationTests(ApiTestFixture fx) : base(fx) { }
 
-    // TC-AUTHZ-01 — customer cannot list category requests (admin-only)
+    // TC-AUTHZ-01 — admin cannot use the customer-only bucket self-service endpoint
     [SkippableFact]
-    public async Task Customer_ListingCategoryRequests_Returns403()
+    public async Task Admin_SettingCategoryBucket_Returns403()
     {
         RequireServer();
-        var r = await CustGet("/api/category-requests");
+        Skip.If(string.IsNullOrEmpty(Admin), "Admin token unavailable.");
+        var r = await Fx.SendAsync(HttpMethod.Put, "/api/categories/cat_food/bucket", token: Admin,
+            body: new { bucketId = "wants" });
         Assert.Equal(403, r.Code);
     }
 

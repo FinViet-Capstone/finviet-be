@@ -13,7 +13,6 @@ public partial class FinVietDbContext
     // ── Auth entity DbSets ────────────────────────────────────
     public virtual DbSet<RefreshToken> RefreshTokens { get; set; }
     public virtual DbSet<EmailVerificationToken> EmailVerificationTokens { get; set; }
-    public virtual DbSet<CategoryRequest> CategoryRequests { get; set; }
     public virtual DbSet<CustomerSetting> CustomerSettings { get; set; }
 
     partial void OnModelCreatingPartial(ModelBuilder modelBuilder)
@@ -28,7 +27,6 @@ public partial class FinVietDbContext
         modelBuilder.HasPostgresEnum<EntryMethod>("public", "entry_method");
         modelBuilder.HasPostgresEnum<CategoryType>("public", "category_type");
         modelBuilder.HasPostgresEnum<CategorySource>("public", "category_source");
-        modelBuilder.HasPostgresEnum<CategoryRequestStatus>("public", "category_request_status");
         modelBuilder.HasPostgresEnum<NotificationType>("public", "notification_type");
         modelBuilder.HasPostgresEnum<NotificationEntityType>("public", "notification_entity_type");
         modelBuilder.HasPostgresEnum<SubscriptionStatus>("public", "subscription_status");
@@ -226,39 +224,5 @@ public partial class FinVietDbContext
                 .HasConstraintName("email_verification_tokens_customer_id_fkey");
         });
 
-        // ── CategoryRequest entity ───────────────────────────────
-        modelBuilder.Entity<CategoryRequest>(entity =>
-        {
-            entity.HasKey(e => e.RequestId).HasName("category_requests_pkey");
-            entity.ToTable("category_requests");
-
-            entity.Property(e => e.RequestId)
-                .HasDefaultValueSql("gen_random_uuid()")
-                .HasColumnName("id");
-            entity.Property(e => e.CustomerId).HasColumnName("customer_id");
-            entity.Property(e => e.CategoryName).HasMaxLength(100).HasColumnName("requested_name");
-            entity.Property(e => e.Type)
-                .HasColumnName("type")
-                .HasConversion(PgEnumStringConverter.Create<CategoryType>());
-            entity.Property(e => e.SuggestedBucketId).HasMaxLength(20).HasColumnName("suggested_bucket_id");
-            entity.Property(e => e.Note).HasMaxLength(500).HasColumnName("note");
-            entity.Property(e => e.Status)
-                .HasDefaultValue("pending")
-                .HasColumnName("status")
-                .HasConversion(PgEnumStringConverter.Create<CategoryRequestStatus>());
-            entity.Property(e => e.ReviewedBy).HasColumnName("reviewed_by_admin_id");
-            entity.Property(e => e.ReviewNote).HasMaxLength(500).HasColumnName("review_note");
-            entity.Property(e => e.CreatedCategoryId).HasColumnName("created_category_id");
-            entity.Property(e => e.CreatedAt)
-                .HasDefaultValueSql("CURRENT_TIMESTAMP")
-                .HasColumnName("created_at");
-            entity.Property(e => e.ReviewedAt).HasColumnName("reviewed_at");
-
-            entity.HasOne(d => d.Customer)
-                .WithMany()
-                .HasForeignKey(d => d.CustomerId)
-                .OnDelete(DeleteBehavior.Cascade)
-                .HasConstraintName("category_requests_customer_id_fkey");
-        });
     }
 }

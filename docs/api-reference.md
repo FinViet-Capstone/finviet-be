@@ -79,11 +79,13 @@ Live Swagger/OpenAPI JSON is also available at `/swagger/v1/swagger.json` when t
 
 | Method | Path | Role | Request | Response |
 |---|---|---|---|---|
-| GET | `/?type=` | any authenticated | query `type?` | `ApiResponse<CategoryResponse[]>` |
+| GET | `/?type=` | any authenticated | query `type?` | `ApiResponse<CategoryResponse[]>` (customer's own bucket override, if any, wins over the global default) |
 | GET | `/{id}` | any authenticated | — | `ApiResponse<CategoryResponse>` (404) |
 | POST | `/` | Admin | `CreateCategoryRequest` | `ApiResponse<CategoryResponse>` (201) |
 | PATCH | `/{id}` | Admin | `UpdateCategoryRequest` | `ApiResponse<CategoryResponse>` (404) |
 | DELETE | `/{id}` | Admin | — | `ApiResponse<object?>` (404) |
+| PUT | `/{id}/bucket` | Customer | `SetCategoryBucketRequest` | `ApiResponse<CategoryResponse>` — reassign which bucket this expense category counts against, for the caller only. No admin approval needed. |
+| DELETE | `/{id}/bucket` | Customer | — | `ApiResponse<CategoryResponse>` — clears the caller's override, reverting to the category's global default. |
 
 **CategoryResponse**
 ```ts
@@ -95,29 +97,12 @@ Live Swagger/OpenAPI JSON is also available at `/swagger/v1/swagger.json` when t
 ```
 **CreateCategoryRequest**: `{ categoryId?, categoryName?, nameVi?, nameEn?, type, isMandatory, expenseClass?, icon?, color?, sortOrder? }`
 **UpdateCategoryRequest**: all fields optional versions of the above (no `categoryId`).
+**SetCategoryBucketRequest**: `{ bucketId: "needs" | "wants" | "savings" }` — expense categories only; `cat_savings_goal` is reserved and cannot be reassigned.
 
----
-
-## Category Requests — `api/category-requests` (auth required)
-
-| Method | Path | Role | Request | Response |
-|---|---|---|---|---|
-| POST | `/` | Customer | `CreateCategoryRequestRequest` | `ApiResponse<CategoryRequestResponse>` |
-| GET | `/mine` | Customer | — | `ApiResponse<CategoryRequestResponse[]>` |
-| GET | `/?status=` | Admin | query `status?` | `ApiResponse<CategoryRequestResponse[]>` |
-| POST | `/{id:guid}/approve` | Admin | `ReviewCategoryRequestRequest` | `ApiResponse<CategoryRequestResponse>` (404) |
-| POST | `/{id:guid}/reject` | Admin | `ReviewCategoryRequestRequest` | `ApiResponse<CategoryRequestResponse>` (404) |
-
-**CreateCategoryRequestRequest**: `{ categoryName, type, expenseClass?, note? }`
-**ReviewCategoryRequestRequest**: `{ reviewNote? }`
-**CategoryRequestResponse**
-```ts
-{
-  requestId: Guid, customerId: Guid, categoryName: string, type: string,
-  expenseClass?: string, note?: string, status: string, reviewNote?: string,
-  createdCategoryId?: string, createdAt: DateTime, reviewedAt?: DateTime
-}
-```
+> The former `category-requests` admin-approval flow (submit → admin approve/reject → category
+> created) was removed. Users already have the code-level right to change a category's bucket
+> assignment, so bucket reassignment is now a direct, non-approved customer action via the two
+> endpoints above, backed by the `customer_categories` table.
 
 ---
 
