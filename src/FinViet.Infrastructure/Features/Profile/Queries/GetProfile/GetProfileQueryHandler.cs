@@ -1,6 +1,7 @@
 using FinViet.Application.Common.Exceptions;
 using FinViet.Application.DTOs;
 using FinViet.Application.Features.Profile.Queries.GetProfile;
+using FinViet.Infrastructure.Features.Profile;
 using FinViet.Infrastructure.Persistence.Context;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
@@ -19,19 +20,6 @@ public class GetProfileQueryHandler : IRequestHandler<GetProfileQuery, ProfileDt
 
         if (c is null) throw new NotFoundException("Customer", request.CustomerId);
 
-        return new ProfileDto
-        {
-            CustomerId            = c.CustomerId,
-            FullName              = c.FullName,
-            Email                 = c.Email,
-            AvatarUrl             = c.AvatarUrl,
-            Gender                = c.Gender,
-            DateOfBirth           = c.DateOfBirth,
-            MonthlyIncomeExpected = c.MonthlyIncomeExpected,
-            IsEmailVerified       = c.IsEmailVerified,
-            IsActive              = c.IsActive,
-            OnboardingDone        = c.OnboardingDone,
-            CreatedAt             = c.CreatedAt
-        };
+        return c.ToProfileDto();
     }
 }

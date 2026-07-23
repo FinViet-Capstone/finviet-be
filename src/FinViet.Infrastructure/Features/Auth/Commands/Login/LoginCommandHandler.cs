@@ -1,8 +1,8 @@
 using FinViet.Application.Common.Exceptions;
-using FinViet.Application.DTOs;
 using FinViet.Application.DTOs.Auth;
 using FinViet.Application.Features.Auth.Commands.Login;
 using FinViet.Application.Interfaces;
+using FinViet.Infrastructure.Features.Profile;
 using FinViet.Infrastructure.Persistence.Context;
 using FinViet.Infrastructure.Persistence.Entities;
 using MediatR;
@@ -63,20 +63,7 @@ public class LoginCommandHandler : IRequestHandler<LoginCommand, AuthResponseDto
             AccessToken       = accessToken,
             RefreshToken      = refreshToken,
             AccessTokenExpiry = DateTime.UtcNow.AddMinutes(expiryMinutes),
-            Profile = new ProfileDto
-            {
-                CustomerId            = customer.CustomerId,
-                FullName              = customer.FullName,
-                Email                 = customer.Email,
-                AvatarUrl             = customer.AvatarUrl,
-                Gender                = customer.Gender,
-                DateOfBirth           = customer.DateOfBirth,
-                MonthlyIncomeExpected = customer.MonthlyIncomeExpected,
-                IsEmailVerified       = customer.IsEmailVerified,
-                IsActive              = customer.IsActive,
-                OnboardingDone        = customer.OnboardingDone,
-                CreatedAt             = customer.CreatedAt
-            }
+            Profile = customer.ToProfileDto()
         };
     }
 }

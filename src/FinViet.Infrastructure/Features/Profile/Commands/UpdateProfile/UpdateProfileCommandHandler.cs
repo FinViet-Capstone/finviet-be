@@ -1,6 +1,7 @@
 using FinViet.Application.Common.Exceptions;
 using FinViet.Application.DTOs;
 using FinViet.Application.Features.Profile.Commands.UpdateProfile;
+using FinViet.Infrastructure.Features.Profile;
 using FinViet.Infrastructure.Persistence.Context;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
@@ -25,21 +26,16 @@ public class UpdateProfileCommandHandler : IRequestHandler<UpdateProfileCommand,
         if (request.DateOfBirth.HasValue) c.DateOfBirth = request.DateOfBirth;
         if (request.OnboardingDone.HasValue) c.OnboardingDone = request.OnboardingDone.Value;
 
+        // Validator enforces all-or-nothing + sum-to-100, so it's safe to assign as a trio.
+        if (request.NeedsPct.HasValue && request.WantsPct.HasValue && request.SavingsPct.HasValue)
+        {
+            c.NeedsPct = request.NeedsPct.Value;
+            c.WantsPct = request.WantsPct.Value;
+            c.SavingsPct = request.SavingsPct.Value;
+        }
+
         await _db.SaveChangesAsync(cancellationToken);
 
-        return new ProfileDto
-        {
-            CustomerId            = c.CustomerId,
-            FullName              = c.FullName,
-            Email                 = c.Email,
-            AvatarUrl             = c.AvatarUrl,
-            Gender                = c.Gender,
-            DateOfBirth           = c.DateOfBirth,
-            MonthlyIncomeExpected = c.MonthlyIncomeExpected,
-            IsEmailVerified       = c.IsEmailVerified,
-            IsActive              = c.IsActive,
-            OnboardingDone        = c.OnboardingDone,
-            CreatedAt             = c.CreatedAt
-        };
+        return c.ToProfileDto();
     }
 }

@@ -1,8 +1,8 @@
 using FinViet.Application.Common.Exceptions;
-using FinViet.Application.DTOs;
 using FinViet.Application.DTOs.Auth;
 using FinViet.Application.Features.Auth.Commands.RefreshToken;
 using FinViet.Application.Interfaces;
+using FinViet.Infrastructure.Features.Profile;
 using FinViet.Infrastructure.Persistence.Context;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
@@ -60,20 +60,7 @@ public class RefreshTokenCommandHandler : IRequestHandler<RefreshTokenCommand, A
             AccessToken       = newAccess,
             RefreshToken      = newRefresh,
             AccessTokenExpiry = DateTime.UtcNow.AddMinutes(mins),
-            Profile = new ProfileDto
-            {
-                CustomerId            = customer.CustomerId,
-                FullName              = customer.FullName,
-                Email                 = customer.Email,
-                AvatarUrl             = customer.AvatarUrl,
-                Gender                = customer.Gender,
-                DateOfBirth           = customer.DateOfBirth,
-                MonthlyIncomeExpected = customer.MonthlyIncomeExpected,
-                IsEmailVerified       = customer.IsEmailVerified,
-                IsActive              = customer.IsActive,
-                OnboardingDone        = customer.OnboardingDone,
-                CreatedAt             = customer.CreatedAt
-            }
+            Profile = customer.ToProfileDto()
         };
     }
 }
