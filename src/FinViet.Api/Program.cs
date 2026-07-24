@@ -1,5 +1,6 @@
 using FinViet.Api.Middlewares;
 using FinViet.Application;
+using FinViet.Application.Interfaces;
 using FinViet.Infrastructure;
 using FinViet.Infrastructure.Persistence;
 using FinViet.Infrastructure.Persistence.Context;
@@ -111,6 +112,14 @@ builder.Services.AddCors(options =>
 // ── App Pipeline ──────────────────────────────────────────────────────────────
 var app = builder.Build();
 
+var reindexRequested = args.Contains("--reindex-rag", StringComparer.OrdinalIgnoreCase);
+if (reindexRequested && !args.Contains("--confirm-reindex", StringComparer.OrdinalIgnoreCase))
+{
+    app.Logger.LogError(
+        "RAG re-index was not started. Back up PostgreSQL, keep Ai:RagEnabled=false, then run with --reindex-rag --confirm-reindex.");
+    return;
+}
+
 // Run migrations + seed data (idempotent)
 using (var scope = app.Services.CreateScope())
 {
@@ -124,6 +133,23 @@ using (var scope = app.Services.CreateScope())
     {
         logger.LogError(ex, "Database initialization failed: {Message}", ex.Message);
     }
+}
+
+if (reindexRequested)
+{
+    if (builder.Configuration.GetValue<bool>("Ai:RagEnabled"))
+    {
+        app.Logger.LogError("Set Ai:RagEnabled=false before re-indexing to prevent mixed-vector retrieval.");
+        return;
+    }
+
+    using var reindexScope = app.Services.CreateScope();
+    var reindexer = reindexScope.ServiceProvider.GetRequiredService<IRagEmbeddingReindexService>();
+    var processed = await reindexer.ReindexAsync();
+    app.Logger.LogInformation(
+        "Re-indexed {Processed} RAG chunks. Validate retrieval before setting Ai:RagEnabled=true.",
+        processed);
+    return;
 }
 
 // Global exception handling (must be first)

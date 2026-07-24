@@ -1,7 +1,7 @@
 namespace FinViet.Application.DTOs.Ai;
 
 /// <summary>Result of an AI categorization call. Null result is signaled by the caller treating
-/// a thrown <see cref="GeminiUnavailableException"/> as "service down".</summary>
+/// a thrown <see cref="AiProviderUnavailableException"/> as "service down".</summary>
 public class AiClassificationResult
 {
     /// <summary>Exact category name chosen from the supplied closed set, or null if unresolved.</summary>

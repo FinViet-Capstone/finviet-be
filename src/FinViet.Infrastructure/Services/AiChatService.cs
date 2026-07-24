@@ -24,20 +24,20 @@ public class AiChatService : IAiChatService
         "Xin lỗi, trợ lý AI hiện chưa sẵn sàng. Bạn vui lòng thử lại sau ít phút.";
 
     private readonly FinVietDbContext _db;
-    private readonly IGeminiClient _gemini;
+    private readonly IAiModelClient _aiModel;
     private readonly ISpendingScoreService _scoreService;
     private readonly IRagRetriever _retriever;
     private readonly IAiRateLimiter _rateLimiter;
 
     public AiChatService(
         FinVietDbContext db,
-        IGeminiClient gemini,
+        IAiModelClient aiModel,
         ISpendingScoreService scoreService,
         IRagRetriever retriever,
         IAiRateLimiter rateLimiter)
     {
         _db = db;
-        _gemini = gemini;
+        _aiModel = aiModel;
         _scoreService = scoreService;
         _retriever = retriever;
         _rateLimiter = rateLimiter;
@@ -82,9 +82,9 @@ public class AiChatService : IAiChatService
         string answer;
         try
         {
-            answer = await _gemini.ChatAsync(contextBlock, recentTurns, question.Trim(), cancellationToken);
+            answer = await _aiModel.ChatAsync(contextBlock, recentTurns, question.Trim(), cancellationToken);
         }
-        catch (GeminiUnavailableException)
+        catch (AiProviderUnavailableException)
         {
             answer = UnavailableReply;
         }
@@ -132,7 +132,7 @@ public class AiChatService : IAiChatService
                 sb.AppendLine($"- ({hit.Title}) {hit.Content}");
             return sb.ToString();
         }
-        catch (GeminiUnavailableException)
+        catch (AiProviderUnavailableException)
         {
             return string.Empty;
         }

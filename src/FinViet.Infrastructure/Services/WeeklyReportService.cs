@@ -16,7 +16,7 @@ public class WeeklyReportService : IWeeklyReportService
 
     private readonly FinVietDbContext _db;
     private readonly ISpendingScoreService _scoreService;
-    private readonly IGeminiClient _gemini;
+    private readonly IAiModelClient _aiModel;
     private readonly IAiReportNotifier _notifier;
     private readonly IDocumentIngestionService _ingestion;
     private readonly ILogger<WeeklyReportService> _logger;
@@ -24,14 +24,14 @@ public class WeeklyReportService : IWeeklyReportService
     public WeeklyReportService(
         FinVietDbContext db,
         ISpendingScoreService scoreService,
-        IGeminiClient gemini,
+        IAiModelClient aiModel,
         IAiReportNotifier notifier,
         IDocumentIngestionService ingestion,
         ILogger<WeeklyReportService> logger)
     {
         _db = db;
         _scoreService = scoreService;
-        _gemini = gemini;
+        _aiModel = aiModel;
         _notifier = notifier;
         _ingestion = ingestion;
         _logger = logger;
@@ -55,9 +55,9 @@ public class WeeklyReportService : IWeeklyReportService
         string narrative;
         try
         {
-            narrative = await _gemini.GenerateReportAsync(context, cancellationToken);
+            narrative = await _aiModel.GenerateReportAsync(context, cancellationToken);
         }
-        catch (GeminiUnavailableException ex)
+        catch (AiProviderUnavailableException ex)
         {
             _logger.LogWarning(ex, "Weekly report narrative generation failed for {CustomerId}.", customerId);
             // Fallback narrative so a report still exists; the snapshot score remains valid.

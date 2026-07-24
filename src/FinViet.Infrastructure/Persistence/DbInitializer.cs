@@ -74,7 +74,7 @@ CREATE TABLE IF NOT EXISTS rag_document (
     created_at  timestamptz  NOT NULL DEFAULT now()
 );
 
--- Gemini text-embedding-004 produces 768-dim vectors.
+-- The configured embedding model must produce 768-dimensional vectors.
 CREATE TABLE IF NOT EXISTS rag_chunk (
     id          uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
     document_id uuid        NOT NULL REFERENCES rag_document(id) ON DELETE CASCADE,

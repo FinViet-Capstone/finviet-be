@@ -1,7 +1,9 @@
 using FinViet.Application.DTOs.Ai;
 using FinViet.Application.Interfaces;
+using FinViet.Infrastructure.ExternalServices.OpenAiCompatible;
 using FinViet.Infrastructure.Persistence.Context;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using Pgvector;
 using Pgvector.EntityFrameworkCore;
 
@@ -16,16 +18,24 @@ public class PgVectorRagRetriever : IRagRetriever
 {
     private readonly FinVietDbContext _db;
     private readonly IEmbeddingService _embeddings;
+    private readonly AiOptions _options;
 
-    public PgVectorRagRetriever(FinVietDbContext db, IEmbeddingService embeddings)
+    public PgVectorRagRetriever(
+        FinVietDbContext db,
+        IEmbeddingService embeddings,
+        IOptions<AiOptions> options)
     {
         _db = db;
         _embeddings = embeddings;
+        _options = options.Value;
     }
 
     public async Task<IReadOnlyList<RagHit>> RetrieveAsync(
         Guid customerId, string query, int k = 5, CancellationToken cancellationToken = default)
     {
+        if (!_options.RagEnabled)
+            return Array.Empty<RagHit>();
+
         var values = await _embeddings.EmbedAsync(query, cancellationToken);
         var queryVector = new Vector(values);
 

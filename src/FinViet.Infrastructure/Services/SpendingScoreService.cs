@@ -20,13 +20,13 @@ public class SpendingScoreService : ISpendingScoreService
     private const string Uncategorized = "Chưa phân loại";
 
     private readonly FinVietDbContext _db;
-    private readonly IGeminiClient _gemini;
+    private readonly IAiModelClient _aiModel;
     private readonly ILogger<SpendingScoreService> _logger;
 
-    public SpendingScoreService(FinVietDbContext db, IGeminiClient gemini, ILogger<SpendingScoreService> logger)
+    public SpendingScoreService(FinVietDbContext db, IAiModelClient aiModel, ILogger<SpendingScoreService> logger)
     {
         _db = db;
-        _gemini = gemini;
+        _aiModel = aiModel;
         _logger = logger;
     }
 
@@ -350,11 +350,11 @@ public class SpendingScoreService : ISpendingScoreService
                 $"Điểm tổng: {r.FinalScore}/100 (xếp loại {r.ColorBadge}). " +
                 $"Spike: {Fmt(r.SpikeScore)}, Budget: {Fmt(r.BudgetScore)}, Savings: {Fmt(r.SavingsScore)}. " +
                 $"Kỳ: {r.PeriodType}.";
-            return await _gemini.GenerateScoreCommentAsync(ctx, ct);
+            return await _aiModel.GenerateScoreCommentAsync(ctx, ct);
         }
-        catch (GeminiUnavailableException ex)
+        catch (AiProviderUnavailableException ex)
         {
-            _logger.LogWarning(ex, "Score comment generation skipped (Gemini unavailable).");
+            _logger.LogWarning(ex, "Score comment generation skipped (AI provider unavailable).");
             return null;
         }
 

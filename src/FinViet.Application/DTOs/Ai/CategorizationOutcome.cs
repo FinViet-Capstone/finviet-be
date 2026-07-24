@@ -14,7 +14,7 @@ public class CategorizationOutcome
 
     public bool IsAiClassified { get; set; }
 
-    /// <summary>True when Gemini was unavailable and the transaction was queued for re-processing.</summary>
+    /// <summary>True when the AI provider was unavailable and the transaction was queued for re-processing.</summary>
     public bool Queued { get; set; }
 
     /// <summary>Source of the decision: RULE, AI, or FALLBACK.</summary>

@@ -2,7 +2,7 @@ using FinViet.Application.Interfaces;
 using FinViet.Domain.Enums;
 using FinViet.Infrastructure.ExternalServices;
 using FinViet.Infrastructure.ExternalServices.Documents;
-using FinViet.Infrastructure.ExternalServices.Gemini;
+using FinViet.Infrastructure.ExternalServices.OpenAiCompatible;
 using FinViet.Infrastructure.ExternalServices.Notification;
 using FinViet.Infrastructure.ExternalServices.TransactionImport;
 using FinViet.Infrastructure.ExternalServices.Finverse;
@@ -134,14 +134,26 @@ public static class DependencyInjection
         services.AddScoped<LoginCommandHandler>();
 
         // ── AI feature suite ──────────────────────────────────────────────────────
-        services.Configure<GeminiOptions>(configuration.GetSection(GeminiOptions.SectionName));
+        services.AddOptions<AiOptions>()
+            .Bind(configuration.GetSection(AiOptions.SectionName))
+            .Validate(options => Uri.TryCreate(options.BaseUrl, UriKind.Absolute, out _),
+                "Ai:BaseUrl must be an absolute URL.")
+            .Validate(options => !string.IsNullOrWhiteSpace(options.ClassificationModel),
+                "Ai:ClassificationModel is required.")
+            .Validate(options => !string.IsNullOrWhiteSpace(options.GenerationModel),
+                "Ai:GenerationModel is required.")
+            .Validate(options => !string.IsNullOrWhiteSpace(options.EmbeddingModel),
+                "Ai:EmbeddingModel is required.")
+            .Validate(options => options.EmbeddingDimensions == AiOptions.RequiredEmbeddingDimensions,
+                $"Ai:EmbeddingDimensions must be {AiOptions.RequiredEmbeddingDimensions} to match rag_chunk.embedding.")
+            .Validate(options => options.TimeoutSeconds is >= 5 and <= 600,
+                "Ai:TimeoutSeconds must be between 5 and 600.")
+            .ValidateOnStart();
         services.Configure<AiLimitsOptions>(configuration.GetSection(AiLimitsOptions.SectionName));
 
-        services.AddHttpClient<IGeminiClient, GeminiClient>((sp, http) =>
+        services.AddHttpClient<IAiModelClient, OpenAiCompatibleAiModelClient>((sp, http) =>
         {
-            var cfg = configuration.GetSection(GeminiOptions.SectionName);
-            var timeout = int.TryParse(cfg["TimeoutSeconds"], out var t) ? t : 30;
-            http.Timeout = TimeSpan.FromSeconds(timeout);
+            ConfigureAiHttpClient(http, sp.GetRequiredService<IOptions<AiOptions>>().Value);
         });
 
         services.AddScoped<IAiCategorizationService, AiCategorizationService>();
@@ -151,19 +163,24 @@ public static class DependencyInjection
         services.AddScoped<IAiChatService, AiChatService>();
         services.AddScoped<IAiReportNotifier, FirebaseAiReportNotifier>();
 
-        // ── RAG layer (pgvector + Gemini embeddings) ──────────────────────────────
-        services.AddHttpClient<IEmbeddingService, GeminiEmbeddingService>((sp, http) =>
+        // ── RAG layer (pgvector + configured 768-dimensional embeddings) ──────────
+        services.AddHttpClient<IEmbeddingService, OpenAiCompatibleEmbeddingService>((sp, http) =>
         {
-            var cfg = configuration.GetSection(GeminiOptions.SectionName);
-            var timeout = int.TryParse(cfg["TimeoutSeconds"], out var t) ? t : 30;
-            http.Timeout = TimeSpan.FromSeconds(timeout);
+            ConfigureAiHttpClient(http, sp.GetRequiredService<IOptions<AiOptions>>().Value);
         });
         services.AddSingleton<IAiRateLimiter, InMemoryAiRateLimiter>();
         services.AddScoped<IRagRetriever, PgVectorRagRetriever>();
+        services.AddScoped<IRagEmbeddingReindexService, RagEmbeddingReindexService>();
         services.AddScoped<IDocumentIngestionService, PdfDocumentIngestionService>();
 
         services.AddHostedService<WeeklyReportScheduler>();
 
         return services;
+    }
+
+    private static void ConfigureAiHttpClient(HttpClient http, AiOptions options)
+    {
+        http.BaseAddress = new Uri($"{options.BaseUrl.TrimEnd('/')}/");
+        http.Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds);
     }
 }

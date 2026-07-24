@@ -66,17 +66,13 @@ public class ExtractAndAiTests : ApiTestBase
         Assert.NotNull(ApiTestFixture.Data(r)?["finalScore"]);
     }
 
-    // TC-AI-03 — AI category suggestion preview.
-    // KNOWN ISSUE: requires a configured Gemini API key; returns 500 otherwise.
+    // TC-AI-03 — AI category suggestion preview. Requires the configured local provider.
     [SkippableFact]
     public async Task CategorizePreview_SuggestsCategory()
     {
         RequireServer();
         var r = await Fx.SendAsync(HttpMethod.Post, "/api/ai/categorize/preview", token: Cust,
             body: new { input = "Grab 4.7km" });
-
-        Skip.If(r.Code == 500 && (r.Raw.Contains("Gemini") || r.Raw.Contains("API key")),
-            "KNOWN ISSUE #B: AI categorization needs a configured Gemini API key (500 when unset).");
 
         Assert.Equal(200, r.Code);
     }
