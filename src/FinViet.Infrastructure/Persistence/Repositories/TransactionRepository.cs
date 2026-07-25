@@ -242,8 +242,7 @@ public class TransactionRepository : ITransactionRepository
         if (wallet is null || wallet.CustomerId != customerId || wallet.IsDeleted)
             throw new NotFoundException("Wallet", walletId);
 
-        if (string.Equals(wallet.WalletType, "finverse_linked", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(wallet.WalletType, "sepay_linked", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(wallet.WalletType, "sepay_linked", StringComparison.OrdinalIgnoreCase))
             throw new BusinessRuleException(
                 "Bank-linked wallets are read-only. Transactions are created by synchronization.",
                 "linked_wallet_read_only");
@@ -330,8 +329,7 @@ public class TransactionRepository : ITransactionRepository
         if (target is null)
             return false;
 
-        if (string.Equals(target.EntryMethod, "finverse_sync", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(target.EntryMethod, "sepay_sync", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(target.EntryMethod, "sepay_sync", StringComparison.OrdinalIgnoreCase))
         {
             throw new BusinessRuleException(
                 "Provider-synced transactions cannot be deleted.",

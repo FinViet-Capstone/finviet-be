@@ -62,8 +62,6 @@ public partial class FinVietDbContext : DbContext
 
     public virtual DbSet<RagChunk> RagChunks { get; set; }
 
-    public virtual DbSet<FinverseLink> FinverseLinks { get; set; }
-
     public virtual DbSet<SepayLink> SepayLinks { get; set; }
 
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
@@ -618,7 +616,7 @@ public partial class FinVietDbContext : DbContext
                 .IsRequired()
                 .HasColumnName("name");
             // The `type` column is the Postgres enum `wallet_type` (mapped via MapEnum<WalletType>).
-            // The entity keeps WalletType as a normalized string ("basic"/"finverse_linked"); this
+            // The entity keeps WalletType as a normalized string ("basic"/"sepay_linked"); this
             // converter sends/receives it as the mapped CLR enum so Npgsql binds the parameter as
             // the enum type rather than text (text would fail: "column type is of type wallet_type
             // but expression is of type text").
@@ -640,11 +638,6 @@ public partial class FinVietDbContext : DbContext
                 .HasForeignKey(d => d.CustomerId)
                 .OnDelete(DeleteBehavior.Cascade)
                 .HasConstraintName("wallets_customer_id_fkey");
-
-            entity.HasOne(d => d.FinverseLink).WithOne(p => p.Wallet)
-                .HasForeignKey<FinverseLink>(l => l.WalletId)
-                .OnDelete(DeleteBehavior.Cascade)
-                .HasConstraintName("finverse_links_wallet_id_fkey");
 
             entity.HasOne(d => d.SepayLink).WithOne(p => p.Wallet)
                 .HasForeignKey<SepayLink>(l => l.WalletId)

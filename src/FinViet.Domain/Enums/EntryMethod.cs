@@ -8,5 +8,11 @@ public enum EntryMethod
     SmsPaste,
     CsvImport,
     SepaySync,
+
+    /// <summary>
+    /// Legacy label from the removed Finverse integration. Postgres cannot drop an enum value, so
+    /// the member is retained purely so Npgsql can still read any row written before V20; nothing
+    /// in the application produces it.
+    /// </summary>
     FinverseSync
 }

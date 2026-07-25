@@ -5,7 +5,6 @@ using FinViet.Infrastructure.ExternalServices.Documents;
 using FinViet.Infrastructure.ExternalServices.OpenAiCompatible;
 using FinViet.Infrastructure.ExternalServices.Notification;
 using FinViet.Infrastructure.ExternalServices.TransactionImport;
-using FinViet.Infrastructure.ExternalServices.Finverse;
 using FinViet.Infrastructure.ExternalServices.SePay;
 using FinViet.Infrastructure.Features.Auth.Commands.Login;
 using FinViet.Infrastructure.Identity;
@@ -59,27 +58,14 @@ public static class DependencyInjection
         services.AddDbContext<FinVietDbContext>(options =>
             options.UseNpgsql(dataSource, o => o.UseVector()));
 
-        // Finverse Data API. Credentials stay in server-side configuration/user-secrets;
-        // Login Identity tokens are encrypted before database persistence.
-        services.Configure<FinverseOptions>(configuration.GetSection(FinverseOptions.SectionName));
         services.AddMemoryCache();
         services.AddDataProtection().SetApplicationName("FinViet");
-        services.AddSingleton<IFinverseTokenProtector, FinverseTokenProtector>();
-        services.AddSingleton<IFinverseLinkStateProtector, FinverseLinkStateProtector>();
-        services.AddHttpClient<IFinverseClient, FinverseClient>((sp, http) =>
-        {
-            var options = sp.GetRequiredService<IOptions<FinverseOptions>>().Value;
-            var baseUrl = string.IsNullOrWhiteSpace(options.BaseUrl)
-                ? "https://api.prod.finverse.net/"
-                : options.BaseUrl;
-            http.BaseAddress = new Uri(baseUrl.EndsWith('/') ? baseUrl : $"{baseUrl}/");
-            http.Timeout = TimeSpan.FromSeconds(Math.Clamp(options.TimeoutSeconds, 5, 120));
-        });
 
-        // SePay OAuth2 API. Credentials stay in server-side configuration/user-secrets;
-        // OAuth tokens are encrypted before database persistence.
+        // SePay API (OAuth2 + static User API token). Credentials stay in server-side
+        // configuration/user-secrets; tokens are encrypted before database persistence.
         services.Configure<SepayOptions>(configuration.GetSection(SepayOptions.SectionName));
         services.AddSingleton<ISepayTokenProtector, SepayTokenProtector>();
+        services.AddSingleton<ISepayLinkStateProtector, SepayLinkStateProtector>();
         services.AddHttpClient<ISepayClient, SepayClient>((sp, http) =>
         {
             var options = sp.GetRequiredService<IOptions<SepayOptions>>().Value;
@@ -116,7 +102,6 @@ public static class DependencyInjection
 
         // Wallet Service
         services.AddScoped<IWalletService, WalletService>();
-        services.AddScoped<IFinverseWalletService, FinverseWalletService>();
         services.AddScoped<ISepayWalletService, SepayWalletService>();
         services.AddScoped<IBudgetService, BudgetService>();
 

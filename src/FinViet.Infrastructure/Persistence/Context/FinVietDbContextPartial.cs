@@ -45,23 +45,6 @@ public partial class FinVietDbContext
             entity.Property(e => e.IsLocked).HasDefaultValue(false).HasColumnName("is_locked");
         });
 
-        modelBuilder.Entity<FinverseLink>(entity =>
-        {
-            entity.HasKey(e => e.WalletId).HasName("finverse_links_pkey");
-            entity.ToTable("finverse_links");
-
-            entity.Property(e => e.WalletId).HasColumnName("wallet_id");
-            entity.Property(e => e.LoginIdentityId).HasColumnType("text").HasColumnName("login_identity_id");
-            entity.Property(e => e.AccessTokenProtected).HasColumnType("text").HasColumnName("access_token");
-            entity.Property(e => e.RefreshTokenProtected).HasColumnType("text").HasColumnName("refresh_token");
-            entity.Property(e => e.FinverseAccountId).HasColumnType("text").HasColumnName("finverse_account_id");
-            entity.Property(e => e.InstitutionName).HasColumnType("text").HasColumnName("institution_name");
-            entity.Property(e => e.AccountMask).HasColumnType("text").HasColumnName("account_mask");
-            entity.Property(e => e.LastSyncedAt).HasColumnName("last_synced_at");
-            entity.Property(e => e.CreatedAt).HasDefaultValueSql("now()").HasColumnName("created_at");
-            entity.Property(e => e.UpdatedAt).HasDefaultValueSql("now()").HasColumnName("updated_at");
-        });
-
         modelBuilder.Entity<SepayLink>(entity =>
         {
             entity.HasKey(e => e.WalletId).HasName("sepay_links_pkey");
@@ -76,6 +59,7 @@ public partial class FinVietDbContext
             entity.Property(e => e.BankShortName).HasColumnType("text").HasColumnName("bank_short_name");
             entity.Property(e => e.AccessTokenProtected).HasColumnType("text").HasColumnName("access_token");
             entity.Property(e => e.RefreshTokenProtected).HasColumnType("text").HasColumnName("refresh_token");
+            entity.Property(e => e.AccessTokenExpiresAt).HasColumnName("access_token_expires_at");
             entity.Property(e => e.LastSyncedAt).HasColumnName("last_synced_at");
             entity.Property(e => e.CreatedAt).HasDefaultValueSql("now()").HasColumnName("created_at");
             entity.Property(e => e.UpdatedAt).HasDefaultValueSql("now()").HasColumnName("updated_at");
