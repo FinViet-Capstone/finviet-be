@@ -25,6 +25,7 @@ public class RefreshTokenCommandHandler : IRequestHandler<RefreshTokenCommand, A
     {
         var stored = await _db.RefreshTokens
             .Include(t => t.Customer)
+            .ThenInclude(c => c.Setting)
             .FirstOrDefaultAsync(t => t.Token == request.RefreshToken, cancellationToken);
 
         if (stored is null)          throw new UnauthorizedException("Invalid refresh token.");

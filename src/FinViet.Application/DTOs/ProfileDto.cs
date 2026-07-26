@@ -23,4 +23,9 @@ public class ProfileDto
     public int NeedsPct { get; set; } = 50;
     public int WantsPct { get; set; } = 30;
     public int SavingsPct { get; set; } = 20;
+
+    // Per-customer preferences (customer_settings) — default when the customer has no
+    // settings row yet (nothing writes one until UpdateProfileSettingsCommand is first called).
+    public AppTheme Theme { get; set; } = AppTheme.System;
+    public int[] NotifBudgetThresholds { get; set; } = { 80, 100 };
 }

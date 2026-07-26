@@ -45,7 +45,9 @@ Live Swagger/OpenAPI JSON is also available at `/swagger/v1/swagger.json` when t
 {
   customerId: Guid, fullName: string, email: string, avatarUrl?: string,
   gender?: "Male"|"Female"|..., dateOfBirth?: DateOnly, monthlyIncomeExpected?: number,
-  isEmailVerified: bool, isActive: bool, onboardingDone: bool, createdAt?: DateTime
+  isEmailVerified: bool, isActive: bool, onboardingDone: bool, createdAt?: DateTime,
+  needsPct: number, wantsPct: number, savingsPct: number,
+  theme: "Light"|"Dark"|"System", notifBudgetThresholds: number[] /* [warning, exceeded], e.g. [80,100] */
 }
 ```
 

@@ -16,6 +16,7 @@ public class GetProfileQueryHandler : IRequestHandler<GetProfileQuery, ProfileDt
     public async Task<ProfileDto> Handle(GetProfileQuery request, CancellationToken cancellationToken)
     {
         var c = await _db.Customers
+            .Include(x => x.Setting)
             .FirstOrDefaultAsync(x => x.CustomerId == request.CustomerId && x.IsActive, cancellationToken);
 
         if (c is null) throw new NotFoundException("Customer", request.CustomerId);

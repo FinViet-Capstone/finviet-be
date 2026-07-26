@@ -16,6 +16,7 @@ public class UpdateProfileCommandHandler : IRequestHandler<UpdateProfileCommand,
     public async Task<ProfileDto> Handle(UpdateProfileCommand request, CancellationToken cancellationToken)
     {
         var c = await _db.Customers
+            .Include(x => x.Setting)
             .FirstOrDefaultAsync(x => x.CustomerId == request.CustomerId && x.IsActive, cancellationToken);
 
         if (c is null) throw new NotFoundException("Customer", request.CustomerId);

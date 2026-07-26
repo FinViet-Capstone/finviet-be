@@ -2,6 +2,7 @@ using FinViet.Api.Common;
 using FinViet.Application.Common;
 using FinViet.Application.Features.Profile.Commands.ScheduleIncomeAllocationChange;
 using FinViet.Application.Features.Profile.Commands.UpdateProfile;
+using FinViet.Application.Features.Profile.Commands.UpdateProfileSettings;
 using FinViet.Application.Features.Profile.Commands.UploadAvatar;
 using FinViet.Application.Features.Profile.Queries.GetIncomeAllocation;
 using FinViet.Application.Features.Profile.Queries.GetProfile;
@@ -70,6 +71,19 @@ public class ProfileController : ControllerBase
         return Ok(ApiResponse<object>.Ok(result));
     }
 
+    /// <summary>Cập nhật giao diện (theme) và ngưỡng cảnh báo ngân sách.</summary>
+    [HttpPatch("settings")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> UpdateProfileSettings(
+        [FromBody] UpdateProfileSettingsRequest request, CancellationToken ct)
+    {
+        var customerId = User.GetCustomerId();
+        var result     = await _mediator.Send(
+            new UpdateProfileSettingsCommand(customerId, request.Theme, request.NotifBudgetThresholds), ct);
+
+        return Ok(ApiResponse<object>.Ok(result));
+    }
+
     /// <summary>Upload ảnh đại diện (JPEG/PNG/WebP, tối đa 5MB).</summary>
     [HttpPost("avatar")]
     [ProducesResponseType(typeof(ApiResponse<string>), StatusCodes.Status200OK)]
@@ -106,3 +120,7 @@ public record ScheduleIncomeAllocationRequest(
     int NeedsPct,
     int WantsPct,
     int SavingsPct);
+
+public record UpdateProfileSettingsRequest(
+    AppTheme? Theme = null,
+    int[]? NotifBudgetThresholds = null);

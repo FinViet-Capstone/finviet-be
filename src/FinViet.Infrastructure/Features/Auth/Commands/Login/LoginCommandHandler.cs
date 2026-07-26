@@ -27,6 +27,7 @@ public class LoginCommandHandler : IRequestHandler<LoginCommand, AuthResponseDto
     public async Task<AuthResponseDto> Handle(LoginCommand request, CancellationToken cancellationToken)
     {
         var customer = await _db.Customers
+            .Include(c => c.Setting)
             .FirstOrDefaultAsync(c => c.Email == request.Email.ToLower() && c.IsActive, cancellationToken);
 
         if (customer is null || !BCrypt.Net.BCrypt.Verify(request.Password, customer.PasswordHash))

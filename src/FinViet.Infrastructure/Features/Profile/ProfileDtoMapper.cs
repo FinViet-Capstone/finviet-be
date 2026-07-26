@@ -1,4 +1,5 @@
 using FinViet.Application.DTOs;
+using FinViet.Domain.Enums;
 using FinViet.Infrastructure.Persistence.Entities;
 
 namespace FinViet.Infrastructure.Features.Profile;
@@ -8,6 +9,10 @@ namespace FinViet.Infrastructure.Features.Profile;
 /// every handler that returns a profile (login, refresh-token, get/update profile). Keeping
 /// this in one place avoids a field silently going missing from one of the response sites —
 /// exactly what happened to NeedsPct/WantsPct/SavingsPct before this mapper existed.
+///
+/// Reads <see cref="Customer.Setting"/> for Theme/NotifBudgetThresholds — callers must
+/// `.Include(x => x.Setting)` (or `.ThenInclude` via Customer) when fetching, or those two
+/// fields will just fall back to their DTO defaults instead of the customer's saved values.
 /// </summary>
 internal static class ProfileDtoMapper
 {
@@ -26,6 +31,8 @@ internal static class ProfileDtoMapper
         CreatedAt = c.CreatedAt,
         NeedsPct = c.NeedsPct,
         WantsPct = c.WantsPct,
-        SavingsPct = c.SavingsPct
+        SavingsPct = c.SavingsPct,
+        Theme = c.Setting?.Theme ?? AppTheme.System,
+        NotifBudgetThresholds = c.Setting?.NotifBudgetThresholds is { Length: 2 } t ? t : new[] { 80, 100 }
     };
 }
