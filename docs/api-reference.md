@@ -148,7 +148,7 @@ Live Swagger/OpenAPI JSON is also available at `/swagger/v1/swagger.json` when t
 
 ---
 
-## Wallets — `api/wallets` (role: Customer, some Finverse endpoints anonymous)
+## Wallets — `api/wallets` (role: Customer; the SePay webhook is anonymous)
 
 | Method | Path | Request | Response |
 |---|---|---|---|
@@ -160,10 +160,17 @@ Live Swagger/OpenAPI JSON is also available at `/swagger/v1/swagger.json` when t
 | POST | `/transfer` | `TransferWalletRequest` + `Idempotency-Key?` | `ApiResponse<TransferWalletResponse>` |
 | POST | `/withdraw` | `WithdrawWalletRequest` + `Idempotency-Key?` | `ApiResponse<WithdrawWalletResponse>` |
 | GET | `/{id:guid}/transactions?page&pageSize&fromDate&toDate&categoryId&transactionType&sortOrder` | `WalletTransactionQuery` (query) | `ApiResponse<PagedResult<WalletTransactionResponse>>` |
-| POST | `/finverse/link-token` | `CreateFinverseLinkRequest` | `ApiResponse<FinverseLinkTokenResponse>` |
-| POST | `/finverse/complete-link` | `CompleteFinverseLinkRequest` | `ApiResponse<FinverseLinkResult>` |
-| POST | `/finverse/callback` **(Anonymous, form-urlencoded)** | `CompleteFinverseLinkRequest` (form) | `ApiResponse<FinverseLinkResult>` |
-| POST | `/{id:guid}/finverse-sync` | — | `ApiResponse<FinverseWalletSyncResponse>` |
+| GET | `/sepay/authorize-url` | — | `ApiResponse<SepayAuthorizeUrlResponse>` |
+| POST | `/sepay/bank-accounts` | `SepayBankAccountsRequest` | `ApiResponse<SepayBankAccountResponse[]>` |
+| POST | `/sepay/link` | `LinkSepayAccountRequest` | `ApiResponse<SepayLinkResult>` |
+| POST | `/sepay/link-token` | `LinkSepayTokenRequest` | `ApiResponse<SepayLinkResult>` |
+| GET | `/sepay/links` | — | `ApiResponse<SepayLinkStatusResponse[]>` |
+| POST | `/{id:guid}/sepay-sync` | — | `ApiResponse<SepayWalletSyncResponse>` |
+| POST | `/sepay/sync-all` | — | `ApiResponse<SepaySyncAllResponse>` |
+| POST | `/{id:guid}/sepay-webhook` | — | `ApiResponse<SepayWebhookRegistrationResponse>` |
+| DELETE | `/{id:guid}/sepay-webhook` | — | `ApiResponse<SepayWebhookRegistrationResponse>` |
+| DELETE | `/{id:guid}/sepay-link` | — | `ApiResponse<SepayUnlinkResponse>` |
+| POST | `/sepay/webhook` **(Anonymous, `Authorization: Apikey <SePay:WebhookApiKey>`)** | `SepayWebhookRequest` | `ApiResponse<SepayWebhookResult>` |
 
 **CreateWalletRequest**: `{ walletName, walletType, initialBalance }`
 **UpdateWalletRequest**: `{ walletName?, walletType? }`
@@ -171,7 +178,8 @@ Live Swagger/OpenAPI JSON is also available at `/swagger/v1/swagger.json` when t
 ```ts
 {
   walletId: Guid, customerId: Guid, walletName: string, walletType: string, balance: number,
-  finverseAccountId?: string, institutionName?: string, accountMask?: string, lastSyncedAt?: DateTime
+  sepayBankAccountId?: number, institutionName?: string, accountMask?: string,
+  authMode?: "oauth" | "static", lastSyncedAt?: DateTime
 }
 ```
 **WalletListResponse**: `{ totalBalance: number, wallets: WalletResponse[] }`
@@ -182,14 +190,52 @@ Live Swagger/OpenAPI JSON is also available at `/swagger/v1/swagger.json` when t
 **WalletTransactionQuery**: `{ page=1, pageSize=10, fromDate?, toDate?, categoryId?, transactionType?, sortOrder="desc" }`
 **WalletTransactionResponse**: `{ transactionId, walletId, categoryId?, transactionType, amount, transactionDate, note? }`
 
-**Finverse (bank-linking) DTOs**
+**SePay (bank-linking) DTOs**
 ```ts
-CreateFinverseLinkRequest: { institutionId?: string, language: string = "en", uiMode: string = "redirect" }
-CompleteFinverseLinkRequest: { code: string, state: string, accounts?: string[] }  // link a subset of accounts
-FinverseLinkTokenResponse: { linkUrl: string, state: string, expiresAt: DateTime }
-FinverseLinkResult: { loginIdentityId: string, wallets: WalletResponse[] }
-FinverseWalletSyncResponse: { walletId, balance, transactionsCreated, transactionsUpdated, pendingTransactionsSkipped, syncedAt }
+SepayAuthorizeUrlResponse: { authorizeUrl: string, state: string, expiresAt: DateTime }
+SepayBankAccountsRequest:  { code: string, state?: string }
+SepayBankAccountResponse:  { id, label, accountNumber /* masked */, accountHolderName, balance,
+                             bankShortName, bankCode, bankIconUrl?, alreadyLinked: boolean }
+LinkSepayAccountRequest:   { code: string, state?: string, bankAccountId?: number }
+LinkSepayTokenRequest:     { apiToken: string, accountNumber?: string }
+SepayLinkResult:           { wallets: WalletResponse[], transactionsSynced: number }
+SepayLinkStatusResponse:   { walletId, walletName, balance, authMode: "oauth" | "static",
+                             sepayBankAccountId?, bankShortName?, accountMask?, accountHolderName?,
+                             lastSyncedAt?, relinkRequired: boolean,
+                             webhookId?: number, webhookRegistered: boolean }
+SepayWebhookRegistrationResponse:
+                           { walletId, webhookId: number, webhookUrl: string,
+                             eventType: "All", alreadyExisted: boolean }
+SepayWalletSyncResponse:   { walletId, balance, transactionsCreated, transactionsUpdated, syncedAt }
+SepaySyncAllResponse:      { wallets: SepayWalletSyncResponse[], transactionsCreated,
+                             transactionsUpdated, failures: Record<Guid, string> }
+SepayUnlinkResponse:       { walletId, walletType: "basic", transactionsRetained: number }
+SepayWebhookRequest:       { id: number, gateway?, transactionDate?, accountNumber?, code?, content?,
+                             transferType?: "in" | "out", transferAmount, accumulated, subAccount?,
+                             referenceCode?, description? }
+SepayWebhookResult:        { success: boolean, outcome: "created" | "updated" | "ignored", walletId? }
 ```
+
+**Linking flow (OAuth2)** — `GET /sepay/authorize-url` → open `authorizeUrl` in a WebView →
+`POST /sepay/bank-accounts` with the returned `code` + `state` to let the user pick an account →
+`POST /sepay/link` with the *same* `code`, `state` and the chosen `bankAccountId`. The exchanged
+token is cached server-side for 5 minutes so the single-use code works across both calls.
+
+**Real-time delivery** — when `SePay:WebhookUrl` and `SePay:WebhookApiKey` are configured, linking
+also registers this API's receiver as a webhook on SePay (`event_type=All`, `authen_type=Api_Key`),
+so transactions arrive without waiting for a sync. A failure there never fails the link — the
+wallet just falls back to manual sync. `POST /{id}/sepay-webhook` registers it explicitly and is
+idempotent (an existing webhook for the same account + URL is adopted, never duplicated);
+`DELETE /{id}/sepay-webhook` removes it, and unlinking removes it best-effort. Needs the
+`webhook:read` / `webhook:write` / `webhook:delete` scopes and a **public** URL — SePay refuses
+loopback hosts, so local testing requires a tunnel. OAuth links only: a static User API token
+cannot reach the webhook management API (`sepay_webhook_requires_oauth`).
+
+**Business rules** — a `sepay_linked` wallet is read-only: it cannot take manual transactions
+(`linked_wallet_read_only`) or take part in a transfer (`sepay_wallet_read_only`), and its synced
+transactions cannot be deleted (`synced_transaction_locked`). `POST /withdraw` is the one money-out
+path and requires a SePay-linked source (`withdraw_source_not_sepay`). Unlinking turns the wallet
+back into `basic` and keeps its history.
 
 ---
 

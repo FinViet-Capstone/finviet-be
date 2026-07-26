@@ -5,7 +5,7 @@ namespace FinViet.Infrastructure.Persistence.Entities;
 
 /// <summary>
 /// One embedded text chunk of a <see cref="RagDocument"/>. <see cref="Embedding"/> is a
-/// 768-dim Gemini text-embedding-004 vector queried via pgvector cosine distance.
+/// 768-dimensional vector from the configured embedding model, queried via pgvector cosine distance.
 /// <see cref="CustomerId"/> is denormalized from the parent document for fast per-user
 /// filtering (null = global chunk).
 /// </summary>

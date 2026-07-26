@@ -32,6 +32,20 @@ public sealed class SepayLink
     /// <summary>OAuth refresh token — encrypted by Data Protection.</summary>
     public string? RefreshTokenProtected { get; set; }
 
+    /// <summary>
+    /// When <see cref="AccessTokenProtected"/> stops being valid, derived from the token
+    /// response's <c>expires_in</c>. Null for static links (their token never expires) and for
+    /// OAuth links created before this was tracked — both fall back to refreshing on demand.
+    /// </summary>
+    public DateTime? AccessTokenExpiresAt { get; set; }
+
+    /// <summary>
+    /// Id of the webhook FinViet registered on SePay for this bank account, so it can be removed
+    /// again on unlink. Null when nothing is registered, or when the webhook was created by hand
+    /// in the SePay dashboard.
+    /// </summary>
+    public int? SepayWebhookId { get; set; }
+
     public DateTime? LastSyncedAt { get; set; }
 
     public DateTime CreatedAt { get; set; }

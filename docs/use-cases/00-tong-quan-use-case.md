@@ -15,7 +15,7 @@
 | **Quản trị viên (Admin)** | Primary | Quản trị hệ thống, duyệt yêu cầu danh mục, quản lý người dùng |
 | **Hệ thống Sepay** | Secondary | Hệ thống bên thứ ba gửi webhook khi có giao dịch ngân hàng |
 | **Google Firebase** | Secondary | Hệ thống xác thực bên thứ ba (đăng nhập Google) |
-| **Google Gemini AI** | Secondary | Dịch vụ AI phân tích chi tiêu, trích xuất giao dịch, trò chuyện tài chính |
+| **Ollama Local AI** | Secondary | Dịch vụ AI local phân tích chi tiêu, tạo embedding và trò chuyện tài chính |
 | **Hệ thống Email** | Secondary | Dịch vụ gửi email xác thực, đặt lại mật khẩu |
 | **Hệ thống nền (Scheduler)** | Secondary | Background job chạy định kỳ (báo cáo tuần, cảnh báo ngân sách) |
 
@@ -54,7 +54,7 @@ graph TB
         Admin["👨‍💼 Quản trị viên (Admin)"]
         Sepay["🏦 Hệ thống Sepay"]
         Firebase["🔥 Google Firebase"]
-        GeminiAI["🤖 Google Gemini AI"]
+        LocalAI["🤖 Ollama Local AI"]
         EmailSys["📧 Hệ thống Email"]
         Scheduler["⏰ Scheduler"]
     end
@@ -108,9 +108,9 @@ graph TB
     Admin --> UC_ApproveCat
     Sepay --> UC_ManageTx
     Firebase --> UC_GoogleLogin
-    GeminiAI --> UC_AiChat
-    GeminiAI --> UC_AiAnalysis
-    GeminiAI --> UC_ExtractTx
+    LocalAI --> UC_AiChat
+    LocalAI --> UC_AiAnalysis
+    LocalAI --> UC_ExtractTx
     EmailSys --> UC_ForgotPwd
     Scheduler --> UC_ManageBudget
 ```
@@ -310,7 +310,7 @@ graph LR
 | Budget | `BudgetsController` | `IBudgetService`, `IBudgetAlertNotifier` | — |
 | Saving Goal | `SavingGoalsController` | `ISavingGoalService` | — |
 | Linked Wallet | `LinkedWalletsController` | `ILinkedWalletService` | — |
-| AI | `AiController` | `IAiChatService`, `IAiCategorizationService`, `IGeminiClient`, `IWeeklyReportService` | — |
+| AI | `AiController` | `IAiChatService`, `IAiCategorizationService`, `IAiModelClient`, `IWeeklyReportService` | — |
 | Notification | `NotificationsController` | `INotificationService` | — |
 | Rule | `RulesController` | `IMerchantRuleService`, `IBeneficiaryRuleService` | — |
 | Background | — | `IAiReportNotifier`, `IBudgetAlertNotifier` | `WeeklyReportJob`, `BudgetAlertJob` |

@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
@@ -7,25 +8,24 @@ using FinViet.Application.Interfaces;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
-namespace FinViet.Infrastructure.ExternalServices.Gemini;
+namespace FinViet.Infrastructure.ExternalServices.OpenAiCompatible;
 
 /// <summary>
-/// REST wrapper over the Gemini generateContent endpoint. Owns prompt assembly and defensive
-/// JSON parsing. Any transport, status, or parse failure surfaces as
-/// <see cref="GeminiUnavailableException"/> so callers can fall back gracefully.
+/// REST client for an OpenAI-compatible chat-completions endpoint. Ollama exposes this contract
+/// locally under /v1. Prompts and defensive classification parsing remain owned by FinViet.
 /// </summary>
-public class GeminiClient : IGeminiClient
+public class OpenAiCompatibleAiModelClient : IAiModelClient
 {
     private static readonly JsonSerializerOptions JsonOpts = new(JsonSerializerDefaults.Web);
 
     private readonly HttpClient _http;
-    private readonly GeminiOptions _options;
-    private readonly ILogger<GeminiClient> _logger;
+    private readonly AiOptions _options;
+    private readonly ILogger<OpenAiCompatibleAiModelClient> _logger;
 
-    public GeminiClient(
+    public OpenAiCompatibleAiModelClient(
         HttpClient http,
-        IOptions<GeminiOptions> options,
-        ILogger<GeminiClient> logger)
+        IOptions<AiOptions> options,
+        ILogger<OpenAiCompatibleAiModelClient> logger)
     {
         _http = http;
         _options = options.Value;
@@ -53,7 +53,12 @@ public class GeminiClient : IGeminiClient
             "Trả lời DUY NHẤT bằng JSON đúng định dạng sau, không thêm chữ nào khác:\n" +
             "{\"category\": \"<tên danh mục chính xác từ danh sách>\", \"confidence\": <số thực 0..1>}";
 
-        var raw = await GenerateAsync(_options.ClassifyModel, prompt, expectJson: true, cancellationToken);
+        var raw = await GenerateAsync(
+            _options.ClassificationModel,
+            prompt,
+            expectJson: true,
+            temperature: 0.2,
+            cancellationToken);
 
         try
         {
@@ -69,25 +74,36 @@ public class GeminiClient : IGeminiClient
             {
                 confidence = confEl.ValueKind == JsonValueKind.Number
                     ? confEl.GetDecimal()
-                    : decimal.TryParse(confEl.GetString(), out var parsed) ? parsed : 0m;
+                    : decimal.TryParse(
+                        confEl.GetString(),
+                        NumberStyles.Number,
+                        CultureInfo.InvariantCulture,
+                        out var parsed)
+                        ? parsed
+                        : 0m;
             }
 
             confidence = Math.Clamp(confidence, 0m, 1m);
-
-            // Only accept a category that is actually in the allowed set; otherwise treat as unresolved.
             var matched = allowedCategories.FirstOrDefault(
                 c => string.Equals(c, category, StringComparison.OrdinalIgnoreCase));
 
-            return new AiClassificationResult { CategoryName = matched, Confidence = matched is null ? 0m : confidence };
+            return new AiClassificationResult
+            {
+                CategoryName = matched,
+                Confidence = matched is null ? 0m : confidence
+            };
         }
-        catch (JsonException ex)
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException)
         {
-            _logger.LogWarning(ex, "Failed to parse Gemini classification response: {Raw}", raw);
-            throw new GeminiUnavailableException("Gemini returned an unparseable classification response.", ex);
+            _logger.LogWarning(ex, "Failed to parse AI classification response: {Raw}", raw);
+            throw new AiProviderUnavailableException(
+                "The AI provider returned an unparseable classification response.", ex);
         }
     }
 
-    public Task<string> GenerateScoreCommentAsync(string scoreContext, CancellationToken cancellationToken = default)
+    public Task<string> GenerateScoreCommentAsync(
+        string scoreContext,
+        CancellationToken cancellationToken = default)
     {
         var prompt =
             "Bạn là cố vấn tài chính cá nhân thân thiện. Dựa trên dữ liệu điểm chi tiêu dưới đây, " +
@@ -95,10 +111,17 @@ public class GeminiClient : IGeminiClient
             "không dùng markdown, không emoji.\n\n" +
             $"Dữ liệu:\n{scoreContext}";
 
-        return GenerateAsync(_options.ReportModel, prompt, expectJson: false, cancellationToken);
+        return GenerateAsync(
+            _options.GenerationModel,
+            prompt,
+            expectJson: false,
+            temperature: 0.7,
+            cancellationToken);
     }
 
-    public Task<string> GenerateReportAsync(string reportContext, CancellationToken cancellationToken = default)
+    public Task<string> GenerateReportAsync(
+        string reportContext,
+        CancellationToken cancellationToken = default)
     {
         var prompt =
             "Bạn là cố vấn tài chính cá nhân. Viết một báo cáo tài chính tuần bằng tiếng Việt, " +
@@ -107,7 +130,12 @@ public class GeminiClient : IGeminiClient
             "tiết kiệm cụ thể và khả thi. Không dùng markdown, không emoji, không tiêu đề.\n\n" +
             $"Dữ liệu tuần:\n{reportContext}";
 
-        return GenerateAsync(_options.ReportModel, prompt, expectJson: false, cancellationToken);
+        return GenerateAsync(
+            _options.GenerationModel,
+            prompt,
+            expectJson: false,
+            temperature: 0.7,
+            cancellationToken);
     }
 
     public Task<string> ChatAsync(
@@ -119,7 +147,9 @@ public class GeminiClient : IGeminiClient
         var history = new StringBuilder();
         foreach (var turn in recentTurns)
         {
-            var who = string.Equals(turn.SenderType, "AI", StringComparison.OrdinalIgnoreCase) ? "Trợ lý" : "Người dùng";
+            var who = string.Equals(turn.SenderType, "AI", StringComparison.OrdinalIgnoreCase)
+                ? "Trợ lý"
+                : "Người dùng";
             history.AppendLine($"{who}: {turn.Content}");
         }
 
@@ -131,88 +161,81 @@ public class GeminiClient : IGeminiClient
             (history.Length > 0 ? $"=== LỊCH SỬ HỘI THOẠI GẦN ĐÂY ===\n{history}\n" : "") +
             $"=== CÂU HỎI ===\n{question}";
 
-        return GenerateAsync(_options.ReportModel, prompt, expectJson: false, cancellationToken);
+        return GenerateAsync(
+            _options.GenerationModel,
+            prompt,
+            expectJson: false,
+            temperature: 0.7,
+            cancellationToken);
     }
 
-    /// <summary>Single call to the generateContent endpoint. Returns the raw text part.</summary>
     private async Task<string> GenerateAsync(
         string model,
         string prompt,
         bool expectJson,
+        double temperature,
         CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(_options.ApiKey))
-            throw new GeminiUnavailableException("Gemini API key is not configured.");
-
-        var generationConfig = expectJson
-            ? (object)new { responseMimeType = "application/json", temperature = 0.2 }
-            : new { temperature = 0.7 };
-
-        var body = new
-        {
-            contents = new[]
+        object body = expectJson
+            ? new
             {
-                new { role = "user", parts = new[] { new { text = prompt } } }
-            },
-            generationConfig
+                model,
+                messages = new[] { new { role = "user", content = prompt } },
+                stream = false,
+                temperature,
+                response_format = new { type = "json_object" }
+            }
+            : new
+            {
+                model,
+                messages = new[] { new { role = "user", content = prompt } },
+                stream = false,
+                temperature
+            };
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "chat/completions")
+        {
+            Content = JsonContent.Create(body, options: JsonOpts)
         };
+        OpenAiCompatibleHttp.AddAuthorization(request, _options.ApiKey);
 
-        var url = $"{_options.BaseUrl.TrimEnd('/')}/models/{model}:generateContent?key={_options.ApiKey}";
-
-        HttpResponseMessage response;
-        try
-        {
-            response = await _http.PostAsJsonAsync(url, body, JsonOpts, cancellationToken);
-        }
-        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
-        {
-            _logger.LogWarning(ex, "Gemini request failed (transport/timeout).");
-            throw new GeminiUnavailableException("Gemini request failed (transport or timeout).", ex);
-        }
-
-        if (!response.IsSuccessStatusCode)
-        {
-            var err = await response.Content.ReadAsStringAsync(cancellationToken);
-            _logger.LogWarning("Gemini returned {Status}: {Body}", (int)response.StatusCode, err);
-            throw new GeminiUnavailableException($"Gemini returned HTTP {(int)response.StatusCode}.");
-        }
-
-        var payload = await response.Content.ReadAsStringAsync(cancellationToken);
+        var payload = await OpenAiCompatibleHttp.SendAsync(
+            _http,
+            request,
+            _logger,
+            "chat completion request",
+            cancellationToken);
         var text = ExtractText(payload);
-
         if (string.IsNullOrWhiteSpace(text))
-            throw new GeminiUnavailableException("Gemini returned an empty response.");
+            throw new AiProviderUnavailableException("The AI provider returned an empty response.");
 
         return text;
     }
 
-    /// <summary>Pull candidates[0].content.parts[0].text from a Gemini response envelope.</summary>
     private static string? ExtractText(string payload)
     {
         try
         {
             using var doc = JsonDocument.Parse(payload);
             return doc.RootElement
-                .GetProperty("candidates")[0]
+                .GetProperty("choices")[0]
+                .GetProperty("message")
                 .GetProperty("content")
-                .GetProperty("parts")[0]
-                .GetProperty("text")
                 .GetString();
         }
-        catch (Exception ex) when (ex is JsonException or KeyNotFoundException or IndexOutOfRangeException or InvalidOperationException)
+        catch (Exception ex) when (ex is JsonException or KeyNotFoundException or
+                                   IndexOutOfRangeException or InvalidOperationException)
         {
             return null;
         }
     }
 
-    /// <summary>Strip ```json ... ``` or ``` ... ``` fences a model sometimes wraps JSON in.</summary>
-    private static string StripCodeFences(string s)
+    private static string StripCodeFences(string value)
     {
-        var trimmed = s.Trim();
+        var trimmed = value.Trim();
         if (!trimmed.StartsWith("```"))
             return trimmed;
 
-        // Drop the opening fence line (``` or ```json) and the closing fence.
         var firstNewline = trimmed.IndexOf('\n');
         if (firstNewline < 0)
             return trimmed.Trim('`').Trim();

@@ -14,16 +14,16 @@ public class AiCategorizationService : IAiCategorizationService
     public const string UncategorizedName = "Chưa phân loại";
 
     private readonly FinVietDbContext _db;
-    private readonly IGeminiClient _gemini;
+    private readonly IAiModelClient _aiModel;
     private readonly ILogger<AiCategorizationService> _logger;
 
     public AiCategorizationService(
         FinVietDbContext db,
-        IGeminiClient gemini,
+        IAiModelClient aiModel,
         ILogger<AiCategorizationService> logger)
     {
         _db = db;
-        _gemini = gemini;
+        _aiModel = aiModel;
         _logger = logger;
     }
 
@@ -45,7 +45,7 @@ public class AiCategorizationService : IAiCategorizationService
         var expenseCategories = await ExpenseCategoriesAsync(cancellationToken);
         try
         {
-            var result = await _gemini.ClassifyAsync(
+            var result = await _aiModel.ClassifyAsync(
                 input,
                 expenseCategories.Keys.ToList(),
                 cancellationToken);
@@ -63,9 +63,9 @@ public class AiCategorizationService : IAiCategorizationService
             await ApplyUncategorizedAsync(txn, cancellationToken);
             return Outcome(txn, txn.CategoryId, UncategorizedName, isAi: false, queued: false, "FALLBACK");
         }
-        catch (GeminiUnavailableException ex)
+        catch (AiProviderUnavailableException ex)
         {
-            _logger.LogWarning(ex, "Gemini unavailable; falling back to Uncategorized for txn {Id}.", transactionId);
+            _logger.LogWarning(ex, "AI provider unavailable; falling back to Uncategorized for txn {Id}.", transactionId);
             await ApplyUncategorizedAsync(txn, cancellationToken);
             return Outcome(txn, txn.CategoryId, UncategorizedName, isAi: false, queued: false, "FALLBACK");
         }
@@ -76,7 +76,7 @@ public class AiCategorizationService : IAiCategorizationService
         CancellationToken cancellationToken = default)
     {
         var expenseCategories = await ExpenseCategoriesAsync(cancellationToken);
-        return await _gemini.ClassifyAsync(input, expenseCategories.Keys.ToList(), cancellationToken);
+        return await _aiModel.ClassifyAsync(input, expenseCategories.Keys.ToList(), cancellationToken);
     }
 
     public async Task<bool> ReprocessAsync(
@@ -92,7 +92,7 @@ public class AiCategorizationService : IAiCategorizationService
         var expenseCategories = await ExpenseCategoriesAsync(cancellationToken);
         try
         {
-            var result = await _gemini.ClassifyAsync(rawInput, expenseCategories.Keys.ToList(), cancellationToken);
+            var result = await _aiModel.ClassifyAsync(rawInput, expenseCategories.Keys.ToList(), cancellationToken);
             if (result.CategoryName is not null && expenseCategories.TryGetValue(result.CategoryName, out var catId))
             {
                 txn.CategoryId = catId;
@@ -103,7 +103,7 @@ public class AiCategorizationService : IAiCategorizationService
             }
             return true;
         }
-        catch (GeminiUnavailableException)
+        catch (AiProviderUnavailableException)
         {
             return false;
         }

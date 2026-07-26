@@ -94,7 +94,7 @@ Status legend: ✅ Pass · ⏭️ Skipped-Known-Bug · 🚫 Not-Implemented · �
 |----|--------|--------------|-------|----------|--------|
 | TC-AI-01 | Spending Score | Logged-in | GET `/api/ai/score?period=WEEKLY` | 200, finalScore (weights 50/50) | ✅ |
 | TC-AI-02 | Spending Score | Logged-in | GET `/api/ai/score?period=MONTHLY` | 200, finalScore (30/40/30) | ✅ |
-| TC-AI-03 | Categorize | Logged-in | POST `/api/ai/categorize/preview` | **Expected** 200 suggestion | ⏭️ **ISSUE #B**: 500, Gemini API key not configured |
+| TC-AI-03 | Categorize | Logged-in, Ollama running | POST `/api/ai/categorize/preview` | 200 suggestion from local model | ⏳ Re-test after local AI migration |
 | TC-AI-04 | Weekly Report | Logged-in | GET `/api/ai/reports` | **Expected** 200 list | ⏭️ **BUG #A**: 500 `column a.report_id does not exist` |
 | TC-AI-05 | Weekly Report | Logged-in | POST `/api/ai/reports/generate` | **Expected** 2xx | ⏭️ **BUG #A**: 500 (v3 schema drift) |
 | TC-AI-06 | Chatbot | Logged-in | POST `/api/ai/chat` question | **Expected** 200 answer | ⏭️ **BUG #A**: 500, relation `chat_message` missing |
@@ -152,9 +152,9 @@ bucket directly, no admin review step.
 | # | Severity | Area | Symptom | Root cause |
 |---|----------|------|---------|-----------|
 | A | High (blocks 2 required features) | AI Weekly Report + Chatbot | 500 on `/api/ai/reports*` and `/api/ai/chat*` | `DbInitializer` skips all SQL migrations when v3 schema detected → V8 (`ai_weekly_reports.report_id`, `chat_message`) never ran on `FinViet_update`; EF model drifted from DB. |
-| B | Medium (config) | AI categorization | 500 "Gemini API key is not configured" | Missing `Gemini` API key in config. (Spec says OpenAI; impl uses Gemini.) |
+| B | Resolved in code | AI categorization | Previous cloud API-key dependency | Replaced by local Ollama through an OpenAI-compatible client. |
 | C | Medium | CSV import | 500 "Invalid file signature" on plain CSV | `BankStatementExcelParser` only reads Excel binaries; endpoint accepts `.csv` but cannot parse text CSV. Should be 400, and CSV should be supported per req. |
 
 ## Notes / deviations
-- **Tech stack:** Capstone registered as Spring Boot (Java) + OpenAI; implementation is ASP.NET Core + Gemini. Architecture still maps (REST + PostgreSQL + Monday `WeeklyReportScheduler`).
+- **Tech stack:** Implementation is ASP.NET Core with a provider-neutral OpenAI-compatible client backed by local Ollama, PostgreSQL, and Monday `WeeklyReportScheduler`.
 - **How to re-run:** start API (`dotnet run --project src/FinViet.Api`), then `dotnet test tests/FinViet.Api.IntegrationTests`. Target/credentials override via env vars `FINVIET_TEST_BASEURL`, `FINVIET_TEST_CUST_EMAIL`, etc. If the API is down, the whole suite skips (not fails).
