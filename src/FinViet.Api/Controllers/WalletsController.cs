@@ -269,6 +269,44 @@ public class WalletsController : ControllerBase
             "SePay wallets synchronized successfully"));
     }
 
+    /// <summary>
+    /// Register this API's receiver as a webhook on SePay for a linked wallet, so transactions
+    /// arrive in real time. Idempotent — an existing registration for the same account and URL is
+    /// adopted instead of duplicated. Runs automatically on link when SePay:WebhookUrl is set.
+    /// </summary>
+    [HttpPost("{id:guid}/sepay-webhook")]
+    public async Task<ActionResult<ApiResponse<SepayWebhookRegistrationResponse>>> RegisterSepayWebhook(
+        [FromRoute] Guid id,
+        CancellationToken cancellationToken)
+    {
+        var result = await _sepayWalletService.RegisterWebhookAsync(
+            User.GetCustomerId(),
+            id,
+            cancellationToken);
+
+        return Ok(ApiResponse<SepayWebhookRegistrationResponse>.Ok(
+            result,
+            result.AlreadyExisted
+                ? "SePay webhook already registered"
+                : "SePay webhook registered successfully"));
+    }
+
+    /// <summary>Delete the webhook FinViet registered on SePay for this wallet.</summary>
+    [HttpDelete("{id:guid}/sepay-webhook")]
+    public async Task<ActionResult<ApiResponse<SepayWebhookRegistrationResponse>>> UnregisterSepayWebhook(
+        [FromRoute] Guid id,
+        CancellationToken cancellationToken)
+    {
+        var result = await _sepayWalletService.UnregisterWebhookAsync(
+            User.GetCustomerId(),
+            id,
+            cancellationToken);
+
+        return Ok(ApiResponse<SepayWebhookRegistrationResponse>.Ok(
+            result,
+            "SePay webhook unregistered successfully"));
+    }
+
     /// <summary>Drop the SePay authorization and turn the wallet back into a manual one.</summary>
     [HttpDelete("{id:guid}/sepay-link")]
     public async Task<ActionResult<ApiResponse<SepayUnlinkResponse>>> UnlinkSepayWallet(

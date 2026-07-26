@@ -60,6 +60,7 @@ public partial class FinVietDbContext
             entity.Property(e => e.AccessTokenProtected).HasColumnType("text").HasColumnName("access_token");
             entity.Property(e => e.RefreshTokenProtected).HasColumnType("text").HasColumnName("refresh_token");
             entity.Property(e => e.AccessTokenExpiresAt).HasColumnName("access_token_expires_at");
+            entity.Property(e => e.SepayWebhookId).HasColumnName("sepay_webhook_id");
             entity.Property(e => e.LastSyncedAt).HasColumnName("last_synced_at");
             entity.Property(e => e.CreatedAt).HasDefaultValueSql("now()").HasColumnName("created_at");
             entity.Property(e => e.UpdatedAt).HasDefaultValueSql("now()").HasColumnName("updated_at");

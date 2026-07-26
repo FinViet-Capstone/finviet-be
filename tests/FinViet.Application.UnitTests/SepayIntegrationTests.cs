@@ -124,6 +124,69 @@ public class SepayIntegrationTests
     }
 
     [Fact]
+    public void WebhookCreateRequest_SerializesTheFieldNamesSepayExpects()
+    {
+        // SePay validates on exact field names and enum spellings; a rename here fails silently
+        // at runtime as a 400, so the contract is pinned in a test.
+        var request = new SepayWebhookCreateRequest
+        {
+            BankAccountId = 19,
+            Name = "FinViet - MBBank",
+            WebhookUrl = "https://api.finviet.vn/api/wallets/sepay/webhook",
+            ApiKey = "secret"
+        };
+
+        var json = JsonSerializer.Serialize(request, JsonOptions);
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+
+        Assert.Equal(19, root.GetProperty("bank_account_id").GetInt32());
+        Assert.Equal("All", root.GetProperty("event_type").GetString());
+        Assert.Equal("Api_Key", root.GetProperty("authen_type").GetString());
+        Assert.Equal("Json", root.GetProperty("request_content_type").GetString());
+        Assert.Equal("secret", root.GetProperty("api_key").GetString());
+        Assert.Equal(1, root.GetProperty("active").GetInt32());
+        // 0 = deliver everything; 1 would drop transactions whose content has no payment code.
+        Assert.Equal(0, root.GetProperty("is_verify_payment").GetInt32());
+    }
+
+    [Fact]
+    public void WebhookCreateResponse_ReadsTheAssignedId()
+    {
+        const string json = """
+            { "status": "success", "message": "Webhook created successfully", "data": { "id": 23 } }
+            """;
+
+        var response = JsonSerializer.Deserialize<SepayWebhookCreateResponse>(json, JsonOptions);
+
+        Assert.Equal(23, Assert.IsType<SepayWebhookCreateResponse>(response).Data?.Id);
+    }
+
+    [Fact]
+    public void WebhookList_DeserializesRegisteredWebhooks()
+    {
+        const string json = """
+            {
+              "status": "success",
+              "data": [
+                {
+                  "id": 23, "bank_account_id": 19, "name": "FinViet - MBBank",
+                  "event_type": "All", "authen_type": "Api_Key",
+                  "webhook_url": "https://api.finviet.vn/api/wallets/sepay/webhook", "active": 1
+                }
+              ]
+            }
+            """;
+
+        var response = JsonSerializer.Deserialize<SepayWebhookListResponse>(json, JsonOptions);
+
+        var webhook = Assert.Single(Assert.IsType<SepayWebhookListResponse>(response).Data);
+        Assert.Equal(23, webhook.Id);
+        Assert.Equal(19, webhook.BankAccountId);
+        Assert.Equal("https://api.finviet.vn/api/wallets/sepay/webhook", webhook.WebhookUrl);
+    }
+
+    [Fact]
     public void LinkStateProtector_RoundTripsCustomerId()
     {
         var protector = new SepayLinkStateProtector(new EphemeralDataProtectionProvider());

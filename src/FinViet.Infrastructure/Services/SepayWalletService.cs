@@ -239,12 +239,43 @@ internal sealed class SepayWalletService : ISepayWalletService
         }
 
         await CategorizeAsync(createdExpenseIds, cancellationToken);
+        await TryAutoRegisterWebhookAsync(customerId, wallet.WalletId, cancellationToken);
 
         return new SepayLinkResult
         {
             Wallets = [ToWalletResponse(wallet, sepayLink)],
             TransactionsSynced = created
         };
+    }
+
+    /// <summary>
+    /// Registers the webhook right after linking so real-time delivery starts without a second
+    /// call. Skipped when no public webhook URL is configured, and never allowed to fail the
+    /// link — the wallet is already usable, it just falls back to manual sync.
+    /// </summary>
+    private async Task TryAutoRegisterWebhookAsync(
+        Guid customerId,
+        Guid walletId,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(_options.WebhookUrl) || string.IsNullOrWhiteSpace(_options.WebhookApiKey))
+            return;
+
+        try
+        {
+            await RegisterWebhookAsync(customerId, walletId, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex,
+                "Automatic SePay webhook registration failed for wallet {WalletId}; " +
+                "the wallet is linked and can still be synced manually.",
+                walletId);
+        }
     }
 
     // ── Link with a personal SePay User API token (static) ──────────────────────
@@ -446,7 +477,9 @@ internal sealed class SepayWalletService : ISepayWalletService
                 AccountMask = AccountNumberMask.Apply(link.AccountNumber),
                 AccountHolderName = link.AccountHolderName,
                 LastSyncedAt = link.LastSyncedAt,
-                RelinkRequired = IsRelinkRequired(link)
+                RelinkRequired = IsRelinkRequired(link),
+                WebhookId = link.SepayWebhookId,
+                WebhookRegistered = link.SepayWebhookId.HasValue
             })
             .ToList();
     }
@@ -624,6 +657,141 @@ internal sealed class SepayWalletService : ISepayWalletService
         };
     }
 
+    // ── Webhook registration on SePay ───────────────────────────────────────────
+
+    public async Task<SepayWebhookRegistrationResponse> RegisterWebhookAsync(
+        Guid customerId,
+        Guid walletId,
+        CancellationToken cancellationToken = default)
+    {
+        var link = await LoadWebhookCapableLinkAsync(customerId, walletId, cancellationToken);
+
+        if (string.IsNullOrWhiteSpace(_options.WebhookApiKey))
+        {
+            throw new IntegrationUnavailableException(
+                "SePay:WebhookApiKey is not configured, so the receiver would reject every delivery.",
+                "sepay_webhook_disabled");
+        }
+
+        var webhookUrl = _options.WebhookUrl?.Trim();
+        if (string.IsNullOrWhiteSpace(webhookUrl))
+        {
+            throw new IntegrationUnavailableException(
+                "SePay:WebhookUrl is not configured.",
+                "sepay_webhook_url_missing");
+        }
+
+        // SePay only calls public HTTPS endpoints; catching this here gives a clear message
+        // instead of an opaque validation error from their API.
+        if (!Uri.TryCreate(webhookUrl, UriKind.Absolute, out var parsed)
+            || (parsed.Scheme != Uri.UriSchemeHttps && parsed.Scheme != Uri.UriSchemeHttp)
+            || parsed.IsLoopback)
+        {
+            throw new IntegrationUnavailableException(
+                "SePay:WebhookUrl must be a public http(s) URL — SePay cannot reach localhost.",
+                "sepay_webhook_url_invalid");
+        }
+
+        var accessToken = await GetAccessTokenAsync(link, cancellationToken);
+
+        // Adopt an existing webhook rather than stacking duplicates, so calling this twice (or
+        // after a re-link) leaves exactly one registration behind.
+        var existing = (await _client.GetWebhooksAsync(accessToken, cancellationToken))
+            .FirstOrDefault(w => w.BankAccountId == link.SepayBankAccountId
+                                 && string.Equals(w.WebhookUrl?.TrimEnd('/'), webhookUrl.TrimEnd('/'),
+                                     StringComparison.OrdinalIgnoreCase));
+
+        var webhookId = existing?.Id ?? await _client.CreateWebhookAsync(
+            accessToken,
+            new SepayWebhookCreateRequest
+            {
+                BankAccountId = link.SepayBankAccountId,
+                Name = Truncate($"{_options.WebhookName} - {link.BankShortName ?? "Bank"}", 120)!,
+                EventType = SepayWebhookConstants.EventTypeAll,
+                AuthenType = SepayWebhookConstants.AuthenTypeApiKey,
+                WebhookUrl = webhookUrl,
+                ApiKey = _options.WebhookApiKey,
+                RequestContentType = SepayWebhookConstants.ContentTypeJson,
+                IsVerifyPayment = 0,
+                Active = 1
+            },
+            cancellationToken);
+
+        link.SepayWebhookId = webhookId;
+        link.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync(cancellationToken);
+
+        _logger.LogInformation(
+            "SePay webhook {WebhookId} {Action} for wallet {WalletId}.",
+            webhookId, existing is null ? "created" : "adopted", walletId);
+
+        return new SepayWebhookRegistrationResponse
+        {
+            WalletId = walletId,
+            WebhookId = webhookId,
+            WebhookUrl = webhookUrl,
+            EventType = SepayWebhookConstants.EventTypeAll,
+            AlreadyExisted = existing is not null
+        };
+    }
+
+    public async Task<SepayWebhookRegistrationResponse> UnregisterWebhookAsync(
+        Guid customerId,
+        Guid walletId,
+        CancellationToken cancellationToken = default)
+    {
+        var link = await LoadWebhookCapableLinkAsync(customerId, walletId, cancellationToken);
+
+        if (!link.SepayWebhookId.HasValue)
+        {
+            throw new NotFoundException("No SePay webhook is registered for this wallet.");
+        }
+
+        var webhookId = link.SepayWebhookId.Value;
+        var accessToken = await GetAccessTokenAsync(link, cancellationToken);
+        await _client.DeleteWebhookAsync(accessToken, webhookId, cancellationToken);
+
+        link.SepayWebhookId = null;
+        link.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync(cancellationToken);
+
+        return new SepayWebhookRegistrationResponse
+        {
+            WalletId = walletId,
+            WebhookId = webhookId,
+            WebhookUrl = _options.WebhookUrl,
+            EventType = SepayWebhookConstants.EventTypeAll
+        };
+    }
+
+    private async Task<SepayLink> LoadWebhookCapableLinkAsync(
+        Guid customerId,
+        Guid walletId,
+        CancellationToken cancellationToken)
+    {
+        var link = await _db.SepayLinks
+            .Include(l => l.Wallet)
+            .FirstOrDefaultAsync(
+                l => l.Wallet.CustomerId == customerId
+                     && l.WalletId == walletId
+                     && !l.Wallet.IsDeleted,
+                cancellationToken);
+
+        if (link is null)
+            throw new NotFoundException("SePay-linked wallet not found.");
+
+        // The static User API token authenticates against /userapi only; webhook management
+        // lives behind OAuth scopes it can never hold.
+        if (IsStatic(link))
+        {
+            throw new BusinessRuleException(
+                "Webhooks can only be managed on an OAuth-linked wallet. Re-link this wallet with SePay OAuth.",
+                "sepay_webhook_requires_oauth");
+        }
+
+        return link;
+    }
+
     // ── Unlink ──────────────────────────────────────────────────────────────────
 
     public async Task<SepayUnlinkResponse> UnlinkWalletAsync(
@@ -644,6 +812,29 @@ internal sealed class SepayWalletService : ISepayWalletService
 
         var retained = await _db.Transactions
             .CountAsync(t => t.WalletId == walletId && t.EntryMethod == SepayEntryMethod, cancellationToken);
+
+        // Best effort: drop the webhook we registered so SePay stops posting to an endpoint that
+        // can no longer route the delivery. A failure here must not block the unlink — the user
+        // asked to disconnect, and the receiver ignores unmatched accounts anyway.
+        if (link.SepayWebhookId.HasValue && !IsStatic(link))
+        {
+            try
+            {
+                var accessToken = await GetAccessTokenAsync(link, cancellationToken);
+                await _client.DeleteWebhookAsync(accessToken, link.SepayWebhookId.Value, cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex,
+                    "Could not delete SePay webhook {WebhookId} while unlinking wallet {WalletId}; " +
+                    "remove it by hand in the SePay dashboard.",
+                    link.SepayWebhookId.Value, walletId);
+            }
+        }
 
         // The wallet and its history stay; only the authorization goes away. Turning it back into
         // a basic wallet is what lifts the read-only rules on transfers and manual entries.

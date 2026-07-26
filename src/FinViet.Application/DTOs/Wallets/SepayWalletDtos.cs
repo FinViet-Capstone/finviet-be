@@ -149,6 +149,31 @@ public sealed class SepayLinkStatusResponse
 
     /// <summary>True when the stored authorization can no longer be renewed — re-link required.</summary>
     public bool RelinkRequired { get; set; }
+
+    /// <summary>Id of the webhook FinViet registered on SePay; null when none is registered.</summary>
+    public int? WebhookId { get; set; }
+
+    /// <summary>True when real-time delivery is active for this wallet.</summary>
+    public bool WebhookRegistered { get; set; }
+}
+
+/// <summary>Result of registering (or reusing) the SePay webhook for a wallet.</summary>
+public sealed class SepayWebhookRegistrationResponse
+{
+    public Guid WalletId { get; set; }
+
+    public int WebhookId { get; set; }
+
+    public string WebhookUrl { get; set; } = string.Empty;
+
+    /// <summary>"All" — both money-in and money-out are delivered.</summary>
+    public string EventType { get; set; } = string.Empty;
+
+    /// <summary>
+    /// True when a webhook for this account and URL already existed on SePay and was adopted
+    /// instead of creating a duplicate.
+    /// </summary>
+    public bool AlreadyExisted { get; set; }
 }
 
 /// <summary>Result of unlinking a SePay wallet.</summary>

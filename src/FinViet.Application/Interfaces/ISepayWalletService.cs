@@ -70,6 +70,23 @@ public interface ISepayWalletService
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Register this API's webhook receiver on SePay for a linked wallet, so transactions arrive
+    /// in real time instead of waiting for a sync. Idempotent: an existing webhook for the same
+    /// account and URL is adopted rather than duplicated. OAuth links only — the static User API
+    /// token has no access to the webhook management API.
+    /// </summary>
+    Task<SepayWebhookRegistrationResponse> RegisterWebhookAsync(
+        Guid customerId,
+        Guid walletId,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Delete the webhook FinViet registered on SePay for a wallet.</summary>
+    Task<SepayWebhookRegistrationResponse> UnregisterWebhookAsync(
+        Guid customerId,
+        Guid walletId,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Ingest one SePay webhook delivery: match the account number to a linked wallet, upsert the
     /// transaction, and refresh the wallet balance. Unmatched deliveries are acknowledged and
     /// ignored so SePay does not retry forever.

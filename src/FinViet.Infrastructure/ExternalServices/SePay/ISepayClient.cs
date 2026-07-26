@@ -29,6 +29,25 @@ internal interface ISepayClient
         string? toDate = null,
         CancellationToken cancellationToken = default);
 
+    // ── Webhook management (OAuth scopes webhook:read / :write / :delete) ───
+
+    /// <summary>List the webhooks registered on the authenticated SePay account.</summary>
+    Task<List<SepayWebhookInfo>> GetWebhooksAsync(
+        string accessToken,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Register a webhook and return the id SePay assigned to it.</summary>
+    Task<int> CreateWebhookAsync(
+        string accessToken,
+        SepayWebhookCreateRequest request,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Delete a webhook by id.</summary>
+    Task DeleteWebhookAsync(
+        string accessToken,
+        int webhookId,
+        CancellationToken cancellationToken = default);
+
     // ── Static User API (personal token) ────────────────────────────────────
 
     /// <summary>

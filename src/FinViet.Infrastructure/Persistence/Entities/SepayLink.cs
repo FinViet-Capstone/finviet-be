@@ -39,6 +39,13 @@ public sealed class SepayLink
     /// </summary>
     public DateTime? AccessTokenExpiresAt { get; set; }
 
+    /// <summary>
+    /// Id of the webhook FinViet registered on SePay for this bank account, so it can be removed
+    /// again on unlink. Null when nothing is registered, or when the webhook was created by hand
+    /// in the SePay dashboard.
+    /// </summary>
+    public int? SepayWebhookId { get; set; }
+
     public DateTime? LastSyncedAt { get; set; }
 
     public DateTime CreatedAt { get; set; }

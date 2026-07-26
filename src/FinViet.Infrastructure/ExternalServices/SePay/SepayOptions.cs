@@ -22,8 +22,13 @@ public sealed class SepayOptions
     /// <summary>OAuth2 redirect URI registered with SePay.</summary>
     public string RedirectUri { get; set; } = string.Empty;
 
-    /// <summary>Space-separated scopes requested during authorization.</summary>
-    public string Scopes { get; set; } = "profile bank-account:read transaction:read";
+    /// <summary>
+    /// Space-separated scopes requested during authorization. The webhook scopes are what let
+    /// FinViet register its own receiver instead of the user pasting the URL into the SePay
+    /// dashboard; drop them if you would rather wire webhooks up by hand.
+    /// </summary>
+    public string Scopes { get; set; } =
+        "profile bank-account:read transaction:read webhook:read webhook:write webhook:delete";
 
     /// <summary>How long a signed OAuth <c>state</c> stays valid (minutes, clamped to 1–30).</summary>
     public int LinkStateLifetimeMinutes { get; set; } = 10;
@@ -33,6 +38,16 @@ public sealed class SepayOptions
     /// Leave empty to disable the webhook endpoint entirely.
     /// </summary>
     public string WebhookApiKey { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Publicly reachable URL of this API's webhook receiver, e.g.
+    /// <c>https://api.finviet.vn/api/wallets/sepay/webhook</c>. SePay refuses private hosts, so a
+    /// localhost value only works behind a tunnel. Required to auto-register webhooks.
+    /// </summary>
+    public string WebhookUrl { get; set; } = string.Empty;
+
+    /// <summary>Name shown for the auto-registered webhook in the SePay dashboard.</summary>
+    public string WebhookName { get; set; } = "FinViet";
 
     public int TimeoutSeconds { get; set; } = 30;
 

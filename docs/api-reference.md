@@ -167,6 +167,8 @@ Live Swagger/OpenAPI JSON is also available at `/swagger/v1/swagger.json` when t
 | GET | `/sepay/links` | — | `ApiResponse<SepayLinkStatusResponse[]>` |
 | POST | `/{id:guid}/sepay-sync` | — | `ApiResponse<SepayWalletSyncResponse>` |
 | POST | `/sepay/sync-all` | — | `ApiResponse<SepaySyncAllResponse>` |
+| POST | `/{id:guid}/sepay-webhook` | — | `ApiResponse<SepayWebhookRegistrationResponse>` |
+| DELETE | `/{id:guid}/sepay-webhook` | — | `ApiResponse<SepayWebhookRegistrationResponse>` |
 | DELETE | `/{id:guid}/sepay-link` | — | `ApiResponse<SepayUnlinkResponse>` |
 | POST | `/sepay/webhook` **(Anonymous, `Authorization: Apikey <SePay:WebhookApiKey>`)** | `SepayWebhookRequest` | `ApiResponse<SepayWebhookResult>` |
 
@@ -199,7 +201,11 @@ LinkSepayTokenRequest:     { apiToken: string, accountNumber?: string }
 SepayLinkResult:           { wallets: WalletResponse[], transactionsSynced: number }
 SepayLinkStatusResponse:   { walletId, walletName, balance, authMode: "oauth" | "static",
                              sepayBankAccountId?, bankShortName?, accountMask?, accountHolderName?,
-                             lastSyncedAt?, relinkRequired: boolean }
+                             lastSyncedAt?, relinkRequired: boolean,
+                             webhookId?: number, webhookRegistered: boolean }
+SepayWebhookRegistrationResponse:
+                           { walletId, webhookId: number, webhookUrl: string,
+                             eventType: "All", alreadyExisted: boolean }
 SepayWalletSyncResponse:   { walletId, balance, transactionsCreated, transactionsUpdated, syncedAt }
 SepaySyncAllResponse:      { wallets: SepayWalletSyncResponse[], transactionsCreated,
                              transactionsUpdated, failures: Record<Guid, string> }
@@ -214,6 +220,16 @@ SepayWebhookResult:        { success: boolean, outcome: "created" | "updated" | 
 `POST /sepay/bank-accounts` with the returned `code` + `state` to let the user pick an account →
 `POST /sepay/link` with the *same* `code`, `state` and the chosen `bankAccountId`. The exchanged
 token is cached server-side for 5 minutes so the single-use code works across both calls.
+
+**Real-time delivery** — when `SePay:WebhookUrl` and `SePay:WebhookApiKey` are configured, linking
+also registers this API's receiver as a webhook on SePay (`event_type=All`, `authen_type=Api_Key`),
+so transactions arrive without waiting for a sync. A failure there never fails the link — the
+wallet just falls back to manual sync. `POST /{id}/sepay-webhook` registers it explicitly and is
+idempotent (an existing webhook for the same account + URL is adopted, never duplicated);
+`DELETE /{id}/sepay-webhook` removes it, and unlinking removes it best-effort. Needs the
+`webhook:read` / `webhook:write` / `webhook:delete` scopes and a **public** URL — SePay refuses
+loopback hosts, so local testing requires a tunnel. OAuth links only: a static User API token
+cannot reach the webhook management API (`sepay_webhook_requires_oauth`).
 
 **Business rules** — a `sepay_linked` wallet is read-only: it cannot take manual transactions
 (`linked_wallet_read_only`) or take part in a transfer (`sepay_wallet_read_only`), and its synced

@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Headers;
+using System.Text;
 using System.Text.Json;
 using FinViet.Application.Common.Exceptions;
 using Microsoft.Extensions.Logging;
@@ -145,6 +146,75 @@ internal sealed class SepayClient : ISepayClient
             "get transactions",
             cancellationToken);
         return await ReadResponseAsync<SepayTransactionListResponse>(response, "get transactions", cancellationToken);
+    }
+
+    // ── Webhook management ──────────────────────────────────────────────────────
+
+    public async Task<List<SepayWebhookInfo>> GetWebhooksAsync(
+        string accessToken,
+        CancellationToken cancellationToken = default)
+    {
+        var response = await SendWithRetryAsync(
+            () => CreateRequest(HttpMethod.Get, "/api/v1/webhooks", accessToken),
+            "list webhooks",
+            cancellationToken);
+        var envelope = await ReadResponseAsync<SepayWebhookListResponse>(response, "list webhooks", cancellationToken);
+        return envelope.Data;
+    }
+
+    public async Task<int> CreateWebhookAsync(
+        string accessToken,
+        SepayWebhookCreateRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        // Serialized once so a retry re-sends exactly the same body.
+        var payload = JsonSerializer.Serialize(request, JsonOptions);
+        var response = await SendWithRetryAsync(
+            () =>
+            {
+                var message = CreateRequest(HttpMethod.Post, "/api/v1/webhooks", accessToken);
+                message.Content = new StringContent(payload, Encoding.UTF8, "application/json");
+                return message;
+            },
+            "create webhook",
+            cancellationToken);
+
+        var envelope = await ReadResponseAsync<SepayWebhookCreateResponse>(response, "create webhook", cancellationToken);
+        if (envelope.Data is null || envelope.Data.Id <= 0)
+        {
+            throw new ExternalServiceException(
+                "SePay did not return the id of the created webhook.",
+                "sepay_webhook_id_missing");
+        }
+
+        return envelope.Data.Id;
+    }
+
+    public async Task DeleteWebhookAsync(
+        string accessToken,
+        int webhookId,
+        CancellationToken cancellationToken = default)
+    {
+        var response = await SendWithRetryAsync(
+            () => CreateRequest(HttpMethod.Delete, $"/api/v1/webhooks/{webhookId}", accessToken),
+            "delete webhook",
+            cancellationToken);
+
+        // A webhook the user already removed in the SePay dashboard is not an error for us —
+        // the desired end state (it is gone) already holds.
+        if (response.StatusCode == HttpStatusCode.NotFound)
+        {
+            _logger.LogInformation("SePay webhook {WebhookId} was already gone.", webhookId);
+            return;
+        }
+
+        if (!response.IsSuccessStatusCode)
+        {
+            var body = await response.Content.ReadAsStringAsync(cancellationToken);
+            _logger.LogWarning("SePay delete webhook {WebhookId} failed: {Status} {Body}",
+                webhookId, (int)response.StatusCode, Truncate(body));
+            throw MapSepayError(response, body, "delete webhook");
+        }
     }
 
     // ── Static User API (personal token) ────────────────────────────────────────
