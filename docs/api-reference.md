@@ -67,11 +67,23 @@ Live Swagger/OpenAPI JSON is also available at `/swagger/v1/swagger.json` when t
 | GET | `/` | — | `ApiResponse<ProfileDto>` |
 | PUT | `/` | `UpdateProfileRequest` | `ApiResponse<ProfileDto>` |
 | POST | `/avatar` | multipart file (`file`, ≤5MB JPEG/PNG/WebP) | `ApiResponse<string>` (avatar URL) |
+| GET | `/income-allocation` | — | `ApiResponse<IncomeAllocationSummaryDto>` |
+| POST | `/income-allocation` | `ScheduleIncomeAllocationRequest` | `ApiResponse<IncomeAllocationEntryDto>` |
 
 **UpdateProfileRequest**
 ```ts
 { fullName: string, monthlyIncomeExpected?: number, gender?: Gender, dateOfBirth?: DateOnly }
 ```
+
+> `needsPct`/`wantsPct`/`savingsPct` on `UpdateProfileRequest` only take effect while onboarding
+> (`Customer.OnboardingDone` is still false) — that's the one-time "onboarding default" the
+> income-allocation resolver falls back to. Once onboarding is done, sending any of
+> `monthlyIncomeExpected`/`needsPct`/`wantsPct`/`savingsPct` here throws 422
+> `allocation_locked_use_schedule_endpoint`; use the endpoints below instead.
+
+**ScheduleIncomeAllocationRequest**: `{ monthlyIncome: number, needsPct: number, wantsPct: number, savingsPct: number }` — always schedules for **next calendar month**; calling again before rollover just revises that pending draft.
+**IncomeAllocationEntryDto**: `{ effectiveMonth: string /* yyyy-MM */, monthlyIncome: number, needsPct: number, wantsPct: number, savingsPct: number }`
+**IncomeAllocationSummaryDto**: `{ current: IncomeAllocationEntryDto, pending: IncomeAllocationEntryDto | null }`
 
 ---
 

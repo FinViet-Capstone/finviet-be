@@ -104,6 +104,7 @@ public static class DependencyInjection
         services.AddScoped<IWalletService, WalletService>();
         services.AddScoped<ISepayWalletService, SepayWalletService>();
         services.AddScoped<IBudgetService, BudgetService>();
+        services.AddScoped<IIncomeAllocationService, IncomeAllocationService>();
 
         // Category Services
         services.AddScoped<ICategoryService, CategoryService>();

@@ -20,6 +20,20 @@ public class UpdateProfileCommandHandler : IRequestHandler<UpdateProfileCommand,
 
         if (c is null) throw new NotFoundException("Customer", request.CustomerId);
 
+        // Income/allocation can only be set directly here while onboarding — that's the
+        // "onboarding-time default" IIncomeAllocationService falls back to when a customer has no
+        // history row yet. Once onboarding is done, further edits must go through
+        // ScheduleIncomeAllocationChangeCommand (next-month-effective) instead of overwriting this
+        // row in place, which is exactly the retroactive-drift bug that command exists to fix.
+        var editingAllocation = request.MonthlyIncomeExpected.HasValue
+            || request.NeedsPct.HasValue || request.WantsPct.HasValue || request.SavingsPct.HasValue;
+        if (editingAllocation && c.OnboardingDone)
+        {
+            throw new BusinessRuleException(
+                "Income and budget allocation can no longer be edited here after onboarding; schedule a change for next month instead.",
+                "allocation_locked_use_schedule_endpoint");
+        }
+
         c.FullName              = request.FullName.Trim();
         if (request.MonthlyIncomeExpected.HasValue) c.MonthlyIncomeExpected = request.MonthlyIncomeExpected;
         if (request.Gender.HasValue)      c.Gender      = request.Gender;

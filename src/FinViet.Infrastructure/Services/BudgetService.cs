@@ -23,15 +23,18 @@ public class BudgetService : IBudgetService
 
     private readonly FinVietDbContext _dbContext;
     private readonly IBudgetAlertNotifier _budgetAlertNotifier;
+    private readonly IIncomeAllocationService _incomeAllocationService;
     private readonly ILogger<BudgetService> _logger;
 
     public BudgetService(
         FinVietDbContext dbContext,
         IBudgetAlertNotifier budgetAlertNotifier,
+        IIncomeAllocationService incomeAllocationService,
         ILogger<BudgetService> logger)
     {
         _dbContext = dbContext;
         _budgetAlertNotifier = budgetAlertNotifier;
+        _incomeAllocationService = incomeAllocationService;
         _logger = logger;
     }
 
@@ -64,14 +67,17 @@ public class BudgetService : IBudgetService
         CancellationToken cancellationToken = default)
     {
         var window = ResolveMonthWindow(month);
-        var customer = await _dbContext.Customers
+        var customerExists = await _dbContext.Customers
             .AsNoTracking()
-            .FirstOrDefaultAsync(c => c.CustomerId == customerId, cancellationToken);
+            .AnyAsync(c => c.CustomerId == customerId, cancellationToken);
 
-        if (customer is null)
+        if (!customerExists)
             throw new NotFoundException("Customer not found.");
 
-        var monthlyIncome = customer.MonthlyIncomeExpected ?? 0m;
+        // Resolved per requested month rather than read live off Customer, so a change scheduled
+        // for next month never retroactively moves this month's (or a past month's) numbers.
+        var allocation = await _incomeAllocationService.GetEffectiveAsync(customerId, window.Key, cancellationToken);
+        var monthlyIncome = allocation.MonthlyIncome;
         var budgets = await _dbContext.Budgets
             .AsNoTracking()
             .Include(b => b.Category)
@@ -92,9 +98,9 @@ public class BudgetService : IBudgetService
 
         var bucketConfigs = new[]
         {
-            new { Bucket = "needs", Pct = (decimal)customer.NeedsPct },
-            new { Bucket = "wants", Pct = (decimal)customer.WantsPct },
-            new { Bucket = "savings", Pct = (decimal)customer.SavingsPct }
+            new { Bucket = "needs", Pct = (decimal)allocation.NeedsPct },
+            new { Bucket = "wants", Pct = (decimal)allocation.WantsPct },
+            new { Bucket = "savings", Pct = (decimal)allocation.SavingsPct }
         };
 
         var summaries = new List<BucketSummaryResponse>();

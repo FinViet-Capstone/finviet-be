@@ -29,7 +29,9 @@ Two of the five FE items turned out not to be "FE-only" as originally framed: Fi
 
 ## 2. Income-Allocation History (Snapshot + Next-Month-Effective)
 
-**Current state:** `Customer.MonthlyIncomeExpected/NeedsPct/WantsPct/SavingsPct` (`Customer.cs`) are plain mutable columns, no history. `UpdateProfileCommandHandler` (`PUT /api/profile`) overwrites them in place immediately. `BudgetService.GetBudgetBucketsAsync` (`GET /api/budgets/buckets`) reads these live columns for whatever `?month=` is requested — including past months — so editing the allocation today retroactively changes past months' bucket-adherence numbers in production. Confirmed by FE as the score that matters (the Stitch "Target" panel maps to this path, not the separate AI Spending Score, which already snapshots per period via `AiSpendingScore`/`SpendingScoreService` and is unaffected either way).
+**Status: Done (2026-07-27)** — implemented on branch `feature/income-allocation-history`. See `context/current-feature.md` history for the exact file list; behavior matches the plan below as written (income/allocation edits after onboarding now throw `allocation_locked_use_schedule_endpoint` instead of overwriting `Customer` in place; `BudgetService` resolves per-month via the new service).
+
+**Current state (at time of planning):** `Customer.MonthlyIncomeExpected/NeedsPct/WantsPct/SavingsPct` (`Customer.cs`) are plain mutable columns, no history. `UpdateProfileCommandHandler` (`PUT /api/profile`) overwrites them in place immediately. `BudgetService.GetBudgetBucketsAsync` (`GET /api/budgets/buckets`) reads these live columns for whatever `?month=` is requested — including past months — so editing the allocation today retroactively changes past months' bucket-adherence numbers in production. Confirmed by FE as the score that matters (the Stitch "Target" panel maps to this path, not the separate AI Spending Score, which already snapshots per period via `AiSpendingScore`/`SpendingScoreService` and is unaffected either way).
 
 **Planned changes:**
 - New table `income_allocation_settings` (or similar): `Id`, `CustomerId`, `EffectiveMonth` (`YYYY-MM` or first-of-month date), `MonthlyIncome`, `NeedsPct`, `WantsPct`, `SavingsPct`, `CreatedAt`. Unique constraint on `(CustomerId, EffectiveMonth)`. Model the insert/keep-immutable-once-period-starts idiom after `SpendingScoreService.SnapshotAsync`'s "keep existing snapshot for a closed period" pattern, adapted for a forward-looking schedule rather than a backward-looking snapshot.
@@ -87,7 +89,7 @@ Two of the five FE items turned out not to be "FE-only" as originally framed: Fi
 Matches FE's own sequencing where it lines up, so both repos' branches land in a compatible order:
 
 1. ~~**Finverse removal (item 1)**~~ — **Done** (see item 1 above).
-2. **Income-allocation history (item 2)** — self-contained, biggest single feature, unblocks FE's item 4.
+2. ~~**Income-allocation history (item 2)**~~ — **Done** (see item 2 above).
 3. **Customer settings endpoint (item 3) + Change-password endpoint (item 4)** — small, unblock FE's Settings (item 2) Wave 1; can be built together or as two small back-to-back cycles.
 4. **Custom category creation endpoint (item 5)** — needed before FE's item 1 (custom-icon flow) can fully land, since custom categories aren't usable in real transactions without it.
 5. **Category bucket move (item 6)** — no work; just confirm still-correct when FE's drag-and-drop (their item 5) starts hitting it.
