@@ -45,7 +45,9 @@ Two of the five FE items turned out not to be "FE-only" as originally framed: Fi
 
 ## 3. Customer Settings Endpoint (Theme + Budget Alert Thresholds)
 
-**Current state:** `CustomerSetting` entity already has `Theme` (enum Light/Dark/System), `Language`, `DefaultCurrency`, `NotifBudgetThresholds` (`int[]`, default `{80,100}`) columns — but nothing in the Application/Api layers reads or writes any of them. `BudgetService.cs` hardcodes `WarningThreshold = 80m`/`ExceededThreshold = 100m` for real `budget_alert` notifications (with `Budget.LastAlertThreshold` for dedup), ignoring the orphaned `NotifBudgetThresholds` column entirely.
+**Status: Done (2026-07-27)** — implemented on branch `feature/customer-settings-endpoint`. The `customer_settings` table's existence was uncertain (no migration created it, confirmed), so a defensive `V23__ensure_customer_settings.sql` was added rather than just assuming. Also found: no code anywhere ever created a `customer_settings` row for any customer — the new endpoint upserts on first write. See `context/current-feature.md` history for the full file list.
+
+**Current state (at time of planning):** `CustomerSetting` entity already has `Theme` (enum Light/Dark/System), `Language`, `DefaultCurrency`, `NotifBudgetThresholds` (`int[]`, default `{80,100}`) columns — but nothing in the Application/Api layers reads or writes any of them. `BudgetService.cs` hardcodes `WarningThreshold = 80m`/`ExceededThreshold = 100m` for real `budget_alert` notifications (with `Budget.LastAlertThreshold` for dedup), ignoring the orphaned `NotifBudgetThresholds` column entirely.
 
 **Planned changes:**
 - Confirm the `customer_settings` table actually exists in the current DB before building against it (no migration text matches it in the numbered `V*` scripts — may be in a baseline schema not yet audited).
@@ -90,7 +92,7 @@ Matches FE's own sequencing where it lines up, so both repos' branches land in a
 
 1. ~~**Finverse removal (item 1)**~~ — **Done** (see item 1 above).
 2. ~~**Income-allocation history (item 2)**~~ — **Done** (see item 2 above).
-3. **Customer settings endpoint (item 3) + Change-password endpoint (item 4)** — small, unblock FE's Settings (item 2) Wave 1; can be built together or as two small back-to-back cycles.
+3. ~~**Customer settings endpoint (item 3)**~~ — **Done** (see item 3 above). **Change-password endpoint (item 4)** — still open; small, unblocks FE's Settings (item 2) Wave 1.
 4. **Custom category creation endpoint (item 5)** — needed before FE's item 1 (custom-icon flow) can fully land, since custom categories aren't usable in real transactions without it.
 5. **Category bucket move (item 6)** — no work; just confirm still-correct when FE's drag-and-drop (their item 5) starts hitting it.
 
