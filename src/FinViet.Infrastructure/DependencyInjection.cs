@@ -4,6 +4,7 @@ using FinViet.Infrastructure.ExternalServices;
 using FinViet.Infrastructure.ExternalServices.Documents;
 using FinViet.Infrastructure.ExternalServices.OpenAiCompatible;
 using FinViet.Infrastructure.ExternalServices.Notification;
+using FinViet.Infrastructure.ExternalServices.Ocr;
 using FinViet.Infrastructure.ExternalServices.TransactionImport;
 using FinViet.Infrastructure.ExternalServices.SePay;
 using FinViet.Infrastructure.Features.Auth.Commands.Login;
@@ -95,6 +96,11 @@ public static class DependencyInjection
 
         // Transaction extract (SMS/CSV → candidate rows + AI suggestions; no persistence)
         services.AddScoped<ITransactionExtractService, TransactionExtractService>();
+
+        // Receipt OCR (photo extraction). No provider chosen yet — placeholder throws 503 until
+        // Ocr:Provider/Ocr:ApiKey are configured and a real implementation is swapped in.
+        services.Configure<OcrOptions>(configuration.GetSection(OcrOptions.SectionName));
+        services.AddScoped<IReceiptOcrService, UnconfiguredReceiptOcrService>();
 
         // Transaction Import parsers (shared by the extract flow)
         services.AddScoped<IBankStatementParser, BankStatementExcelParser>();

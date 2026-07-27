@@ -530,6 +530,7 @@ SepayWebhookResult:        { success: boolean, outcome: "created" | "updated" | 
 |---|---|---|---|
 | POST | `/sms` | `{ text: string }` (≤ 20,000 chars) | `ApiResponse<ExtractResponse>` |
 | POST | `/csv` | multipart: `file` (.csv / .xlsx / .xls, ≤ 5 MB) + `maxRows?: number` | `ApiResponse<ExtractResponse>` |
+| POST | `/photo` | multipart: `file` (.jpg / .jpeg / .png / .heic, ≤ 8 MB) | `ApiResponse<ExtractResponse>` (`rows` has 0 or 1 item) — **503** `ocr_not_configured` until a real OCR provider is wired in (currently a placeholder, see `IReceiptOcrService`) |
 
 **ExtractResponse**
 ```ts
