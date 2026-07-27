@@ -14,6 +14,9 @@ public class CategoryService : ICategoryService
 {
     private const string SavingsGoalCategoryId = "cat_savings_goal";
 
+    // Distinguishes customer-created categories from seeded cat_* ones — see CreateCustomCategoryAsync.
+    private const string CustomCategoryIdPrefix = "custom_";
+
     private static readonly HashSet<string> AllowedTypes = new(StringComparer.OrdinalIgnoreCase)
     {
         "income", "expense"
@@ -52,7 +55,13 @@ public class CategoryService : ICategoryService
             .ToListAsync(cancellationToken);
 
         var overrides = await GetCustomerBucketOverridesAsync(customerId, cancellationToken);
-        return categories.Select(c => ToResponse(c, overrides.GetValueOrDefault(c.CategoryId))).ToList();
+
+        // Custom categories (id prefix "custom_") are private to their creator — the global
+        // Category table has no owner column, so "is this mine" is "do I have an active
+        // customer_categories row for it", seeded at creation time (see CreateCustomCategoryAsync).
+        var visible = categories.Where(c => IsVisibleTo(c.CategoryId, overrides));
+
+        return visible.Select(c => ToResponse(c, overrides.GetValueOrDefault(c.CategoryId))).ToList();
     }
 
     public async Task<CategoryResponse?> GetCategoryByIdAsync(
@@ -68,8 +77,21 @@ public class CategoryService : ICategoryService
             return null;
 
         var overrides = await GetCustomerBucketOverridesAsync(customerId, cancellationToken);
+
+        if (!IsVisibleTo(category.CategoryId, overrides))
+            return null;
+
         return ToResponse(category, overrides.GetValueOrDefault(categoryId));
     }
+
+    /// <summary>
+    /// A seeded <c>cat_*</c> category is visible to everyone; a <c>custom_*</c> one only to a
+    /// customer who has an active <c>customer_categories</c> row for it. Pure/no I/O so it's
+    /// unit-testable without a database.
+    /// </summary>
+    internal static bool IsVisibleTo(string categoryId, IReadOnlyDictionary<string, string> customerBucketOverrides)
+        => !categoryId.StartsWith(CustomCategoryIdPrefix, StringComparison.Ordinal)
+           || customerBucketOverrides.ContainsKey(categoryId);
 
     public async Task<CategoryResponse> SetCustomerBucketAsync(
         Guid customerId,
@@ -203,6 +225,60 @@ public class CategoryService : ICategoryService
         await _dbContext.SaveChangesAsync(cancellationToken);
 
         return ToResponse(category);
+    }
+
+    public async Task<CategoryResponse> CreateCustomCategoryAsync(
+        Guid customerId,
+        CreateCustomCategoryRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var name = request.Name.Trim();
+        if (string.IsNullOrWhiteSpace(name))
+            throw new ValidationException("Category name is required.");
+
+        var normalizedBucket = request.Bucket?.Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(normalizedBucket) || !AllowedExpenseClasses.Contains(normalizedBucket))
+            throw new ValidationException("Bucket must be one of: needs, wants, savings.");
+
+        var duplicateName = await CategoryNameExistsAsync(name, "expense", null, cancellationToken);
+        if (duplicateName)
+            throw new ValidationException("Category name already exists for this type.");
+
+        // Guid.NewGuid() collisions aren't a practical concern, unlike the name-based admin slug.
+        var categoryId = $"{CustomCategoryIdPrefix}{Guid.NewGuid()}";
+
+        var category = new Category
+        {
+            CategoryId = categoryId,
+            CategoryName = name,
+            NameVi = name,
+            NameEn = name,
+            Type = "expense",
+            IsMandatory = false,
+            DefaultBucket = normalizedBucket,
+            // The icon file stays device-local per FE's plan — nothing to store here.
+            Icon = null,
+            Color = request.Color
+        };
+        _dbContext.Categories.Add(category);
+
+        // Seed the creator's own override immediately so the category is usable in their chosen
+        // bucket without a follow-up PUT .../bucket call — also what makes it visible to them
+        // (see IsVisibleTo): a custom category has no "global default" separate from this.
+        _dbContext.CustomerCategories.Add(new CustomerCategory
+        {
+            Id = Guid.NewGuid(),
+            CustomerId = customerId,
+            CategoryId = categoryId,
+            BucketId = normalizedBucket,
+            Source = "system",
+            IsActive = true,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        });
+
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        return ToResponse(category, normalizedBucket);
     }
 
     public async Task<CategoryResponse?> UpdateCategoryAsync(

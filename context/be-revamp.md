@@ -71,7 +71,9 @@ Two of the five FE items turned out not to be "FE-only" as originally framed: Fi
 
 ## 5. Custom Category Creation Endpoint
 
-**Current state:** `Category.CategoryId` is a free-form string PK (no collision risk with a `custom_` prefix), but `POST /api/categories` is `[Authorize(Roles = "Admin")]`-only, and both `Transaction.CategoryId` and `Budget.CategoryId` have real FK constraints into `categories`. FE confirmed custom categories must attach to real transactions — a locally-created category with no server-side `Category` row would fail those FKs the moment a customer tries to use it.
+**Status: Done (2026-07-27)** — implemented on branch `feature/custom-category-endpoint`, with one necessary addition beyond this plan's text: `Category` is a global table with no owner column, so a visibility fix was required in `GetCategoriesAsync`/`GetCategoryByIdAsync` — without it, every customer's custom category would have leaked into every other customer's category list. Also simplified the request shape to omit `type` (always `expense` — the FE flow only ever picks a bucket, which has no meaning for income). Not implemented: a customer-facing delete for custom categories (`DELETE /api/categories/{id}` is still Admin-only) — flagged as a likely near-term follow-up since FE's `customCategories.ts` anticipates `deleteCustomCategory`. See `context/current-feature.md` history for the full file list.
+
+**Current state (at time of planning):** `Category.CategoryId` is a free-form string PK (no collision risk with a `custom_` prefix), but `POST /api/categories` is `[Authorize(Roles = "Admin")]`-only, and both `Transaction.CategoryId` and `Budget.CategoryId` have real FK constraints into `categories`. FE confirmed custom categories must attach to real transactions — a locally-created category with no server-side `Category` row would fail those FKs the moment a customer tries to use it.
 
 **Planned changes:**
 - New endpoint, e.g. `POST /api/categories/custom` — `[Authorize(Roles = "Customer")]`, body `{ name, bucket, color, type }`. Server generates the `custom_<uuid>` id (never trust a client-supplied id, to guarantee the prefix distinguishes custom from seeded `cat_*` categories). Inserts a real `Category` row so `Transaction`/`Budget` FKs resolve normally.
@@ -96,7 +98,7 @@ Matches FE's own sequencing where it lines up, so both repos' branches land in a
 2. ~~**Income-allocation history (item 2)**~~ — **Done** (see item 2 above).
 3. ~~**Customer settings endpoint (item 3)**~~ — **Done** (see item 3 above).
 4. ~~**Change-password endpoint (item 4)**~~ — **Done** (see item 4 above).
-5. **Custom category creation endpoint (item 5)** — needed before FE's item 1 (custom-icon flow) can fully land, since custom categories aren't usable in real transactions without it.
+5. ~~**Custom category creation endpoint (item 5)**~~ — **Done** (see item 5 above).
 6. **Category bucket move (item 6)** — no work; just confirm still-correct when FE's drag-and-drop (their item 5) starts hitting it.
 
 ## Verification

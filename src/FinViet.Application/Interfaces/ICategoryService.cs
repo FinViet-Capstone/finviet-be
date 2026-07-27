@@ -18,6 +18,17 @@ public interface ICategoryService
         CreateCategoryRequest request,
         CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Customer-scoped category creation, no admin approval — inserts a real <c>Category</c> row
+    /// (id <c>custom_&lt;uuid&gt;</c>) so Transaction/Budget FKs resolve, and seeds an active
+    /// <c>CustomerCategory</c> override so it's immediately usable in the creator's chosen bucket.
+    /// The category is private to its creator (see <see cref="GetCategoriesAsync"/>).
+    /// </summary>
+    Task<CategoryResponse> CreateCustomCategoryAsync(
+        Guid customerId,
+        CreateCustomCategoryRequest request,
+        CancellationToken cancellationToken = default);
+
     Task<CategoryResponse?> UpdateCategoryAsync(
         string categoryId,
         UpdateCategoryRequest request,

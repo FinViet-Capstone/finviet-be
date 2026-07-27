@@ -80,6 +80,23 @@ public class CategoriesController : ControllerBase
     private Guid? CurrentCustomerIdOrNull()
         => User.IsInRole("Customer") ? User.GetCustomerId() : null;
 
+    [HttpPost("custom")]
+    [Authorize(Roles = "Customer")]
+    public async Task<ActionResult<ApiResponse<CategoryResponse>>> CreateCustomCategory(
+        [FromBody] CreateCustomCategoryRequest request,
+        CancellationToken cancellationToken)
+    {
+        var customerId = User.GetCustomerId();
+        var category = await _categoryService.CreateCustomCategoryAsync(customerId, request, cancellationToken);
+
+        return CreatedAtAction(
+            nameof(GetCategoryById),
+            new { id = category.CategoryId },
+            ApiResponse<CategoryResponse>.Ok(
+                category,
+                "Category created successfully"));
+    }
+
     [HttpPost]
     [Authorize(Roles = "Admin")]
     public async Task<ActionResult<ApiResponse<CategoryResponse>>> CreateCategory(

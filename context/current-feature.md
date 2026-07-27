@@ -2,7 +2,7 @@
 
 <!-- Feature name and short description -->
 
-Authenticated change-password endpoint. Item 4 of `context/be-revamp.md`'s build order. Today only unauthenticated `forgot-password`/`reset-password` (email-token based) exist — FE's `ChangePasswordSheet` already calls `useChangePassword({currentPassword, newPassword})` and is currently force-routed to a mock for lack of a real endpoint (per `be-notes.md`'s resolved Q&A).
+Custom category creation endpoint. Item 5 of `context/be-revamp.md`'s build order. `POST /api/categories` is Admin-only, but FE's local-custom-icon flow needs customers to create their own categories that real transactions/budgets can reference — which requires a real `Category` row (FK constraints from `Transaction`/`Budget`), which today only an Admin can insert.
 
 ## Status
 
@@ -14,18 +14,19 @@ Completed — awaiting commit approval
 
 <!-- Goals and requirements -->
 
-- New `POST /api/auth/change-password` — `[Authorize(Roles = "Customer")]`, body `{ currentPassword, newPassword }`.
-- New `ChangePasswordCommand`/handler under `Features/Auth/Commands/ChangePassword/`, following the existing per-command-subfolder pattern (`LoginCommand`/`ResetPasswordCommand`).
-- Verify `currentPassword` against the stored BCrypt hash before updating; throw `BadRequestException` ("Current password is incorrect.") on mismatch — matches the existing exception-to-status-code convention (400).
-- Reuse `ResetPasswordCommandValidator`'s exact password policy for `NewPassword` (min 8 chars, ≥1 uppercase, ≥1 digit) for consistency.
-- Mirror `ResetPasswordCommandHandler`'s security practice: revoke all other active refresh tokens on successful change, forcing re-login on other devices/sessions.
+- New `POST /api/categories/custom` — `[Authorize(Roles = "Customer")]`, body `{ name, bucket, color }`. Server generates the id as `custom_<uuid>` (never trust a client-supplied id) so it's always distinguishable from seeded `cat_*` categories.
+- Always creates an `expense`-type category — the FE flow only ever picks a bucket (needs/wants/savings), which only applies to expense categories; there's no FE path that produces an "income" custom category, so the request doesn't take a `type` field (simplification vs. `be-revamp.md`'s literal `{ name, bucket, color, type }` shape).
+- Reuses `CategoryService`'s existing duplicate-name check (`CategoryNameExistsAsync`) rather than duplicating that logic — extends the service with a customer-scoped creation path alongside the existing admin one (`CreateCategoryAsync`), not a parallel implementation.
+- Seeds an active `CustomerCategory` override row for the creator at creation time (bucket = whatever they picked), so the category is immediately usable without a follow-up `PUT .../bucket` call.
+- **Necessary addition beyond `be-revamp.md`'s literal plan text**: `Category` is a global table — `GetCategoriesAsync`/`GetCategoryByIdAsync` returned every row to every caller, customer or not. Without a visibility fix, every customer's custom category would leak into every *other* customer's category list and detail lookups the moment one was created. Both methods now treat any `custom_`-prefixed category as private to its creator — visible only to a customer who has an active `CustomerCategory` row for it (which creation seeds). This wasn't spelled out in the plan but is required for the feature to be safe to ship at all.
 
 ## Notes
 
 <!-- Any extra notes -->
 
-- Full backend audit and decisions: `context/be-revamp.md` (item 4).
-- Google-only accounts have a random, unguessable `PasswordHash` set at signup (see `GoogleLoginCommandHandler`) — they'll naturally get "Current password is incorrect" from this endpoint, which is acceptable; a "set initial password" flow for OAuth-only accounts is out of scope here.
+- Full backend audit and decisions: `context/be-revamp.md` (item 5).
+- **Not implemented, flagged as a likely near-term follow-up**: FE's own `customCategories.ts` service module (per `fe-plan-2026-07-revamp.md`) anticipates `createCustomCategory`, `getCustomCategories`, `deleteCustomCategory`. This session only builds creation. Listing can reuse the existing `GET /api/categories` (now correctly scoped) without new BE work. Deletion has no customer-facing path yet — `DELETE /api/categories/{id}` is still Admin-only, so a customer currently cannot delete their own custom category without Admin help. Out of scope for `be-revamp.md`'s literal item 5 text; flagging rather than silently expanding scope.
+- The icon file itself never reaches the backend (per FE's plan — local-only, device storage) — only `name`/`bucket`/`color` sync; `Icon` is left null on the created `Category` row.
 - Not verified against a live database or integration test suite in this session.
 
 ## History
@@ -37,5 +38,6 @@ Completed — awaiting commit approval
 - 2026-07-27 — Item 1 superseded: a teammate independently implemented the same removal (plus SePay OAuth/webhook hardening and an AI-provider swap) on `origin/dev` (commits `8c4be9f`, `f95f2ab`) before this branch was committed upstream. Per user decision, `feature/remove-finverse`'s code changes were dropped in favor of the teammate's version — `khoi` was merged with `origin/dev` directly (merge commit `6fdc8ed`) instead. Only the `context/*.md` planning docs were carried over from the abandoned branch. `dotnet build` passes on `khoi` post-merge with 0 errors. Item 1 of `be-revamp.md` is done.
 - 2026-07-27 — Item 2 (income-allocation history) implemented on branch `feature/income-allocation-history`, committed (`c31c392`), merged into `khoi` (fast-forward), branch deleted. New `income_allocation_settings` table/service/endpoints; `BudgetService` resolves allocation per requested month instead of reading `Customer` live; `UpdateProfileCommandHandler` blocks post-onboarding direct edits. 11 new unit tests (`TC-INCALLOC-01..08`), all 32 unit tests pass, `dotnet build` 0 errors.
 - 2026-07-27 — Item 3 (customer settings endpoint) implemented; caught mid-way that it had been started directly on `khoi` instead of a branch — corrected by branching (`feature/customer-settings-endpoint`) from that state before committing. Committed (`216222d`, `f31ecee`), merged into `khoi` (fast-forward), branch deleted. New `PATCH /api/profile/settings`; `BudgetService` reads per-customer alert thresholds; defensive `V23` migration since no script ever created `customer_settings`. `dotnet build` 0 errors, all 32 unit tests pass.
-- 2026-07-27 — Started item 4 (change-password endpoint). Branch `feature/change-password-endpoint` created.
-- 2026-07-27 — Implemented: new `ChangePasswordCommand`/validator/handler (`Features/Auth/Commands/ChangePassword/`), new `POST /api/auth/change-password` (`[Authorize(Roles = "Customer")]`) on `AuthController`. Verifies current password via BCrypt, hashes and stores the new one, revokes all other active refresh tokens (mirroring `ResetPasswordCommandHandler`). Updated `docs/api-reference.md`. `dotnet build` 0 errors; all 32 unit tests pass. Awaiting commit approval.
+- 2026-07-27 — Item 4 (change-password endpoint) implemented on branch `feature/change-password-endpoint`, committed (`e71a3c3`), merged into `khoi` (fast-forward), branch deleted. New `POST /api/auth/change-password`; revokes other active refresh tokens on success. `dotnet build` 0 errors, all 32 unit tests pass.
+- 2026-07-27 — Started item 5 (custom category creation endpoint). Branch `feature/custom-category-endpoint` created.
+- 2026-07-27 — Implemented: `ICategoryService.CreateCustomCategoryAsync` + `POST /api/categories/custom` (Customer role); new `CreateCustomCategoryRequest` DTO; `GetCategoriesAsync`/`GetCategoryByIdAsync` fixed to scope `custom_*` categories to their creator via a new `IsVisibleTo` check (necessary addition beyond the original plan — see Goals). 4 new unit tests (`TC-CUSTOMCAT-01..04`) for the visibility logic, all 36 unit tests pass, `dotnet build` 0 errors. Updated `docs/api-reference.md`. Flagged, not implemented: customer-facing delete for custom categories (still Admin-only via the existing `DELETE /api/categories/{id}`). Awaiting commit approval.

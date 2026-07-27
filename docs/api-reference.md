@@ -95,8 +95,9 @@ Live Swagger/OpenAPI JSON is also available at `/swagger/v1/swagger.json` when t
 | Method | Path | Role | Request | Response |
 |---|---|---|---|---|
 | GET | `/?type=` | any authenticated | query `type?` | `ApiResponse<CategoryResponse[]>` (customer's own bucket override, if any, wins over the global default) |
-| GET | `/{id}` | any authenticated | — | `ApiResponse<CategoryResponse>` (404) |
+| GET | `/{id}` | any authenticated | — | `ApiResponse<CategoryResponse>` (404) — 404 for a `custom_*` category you don't own, same as if it didn't exist |
 | POST | `/` | Admin | `CreateCategoryRequest` | `ApiResponse<CategoryResponse>` (201) |
+| POST | `/custom` | Customer | `CreateCustomCategoryRequest` | `ApiResponse<CategoryResponse>` (201) — no admin approval; always `expense` type, id `custom_<uuid>`, private to the creator |
 | PATCH | `/{id}` | Admin | `UpdateCategoryRequest` | `ApiResponse<CategoryResponse>` (404) |
 | DELETE | `/{id}` | Admin | — | `ApiResponse<object?>` (404) |
 | PUT | `/{id}/bucket` | Customer | `SetCategoryBucketRequest` | `ApiResponse<CategoryResponse>` — reassign which bucket this expense category counts against, for the caller only. No admin approval needed. |
@@ -112,6 +113,7 @@ Live Swagger/OpenAPI JSON is also available at `/swagger/v1/swagger.json` when t
 ```
 **CreateCategoryRequest**: `{ categoryId?, categoryName?, nameVi?, nameEn?, type, isMandatory, expenseClass?, icon?, color?, sortOrder? }`
 **UpdateCategoryRequest**: all fields optional versions of the above (no `categoryId`).
+**CreateCustomCategoryRequest**: `{ name, bucket: "needs" | "wants" | "savings", color? }` — no `type` (always `expense`); the icon file itself never reaches the backend (device-local per FE's plan).
 **SetCategoryBucketRequest**: `{ bucketId: "needs" | "wants" | "savings" }` — expense categories only; `cat_savings_goal` is reserved and cannot be reassigned.
 
 > The former `category-requests` admin-approval flow (submit → admin approve/reject → category
