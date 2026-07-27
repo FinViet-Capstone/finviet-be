@@ -100,6 +100,7 @@ Live Swagger/OpenAPI JSON is also available at `/swagger/v1/swagger.json` when t
 | POST | `/custom` | Customer | `CreateCustomCategoryRequest` | `ApiResponse<CategoryResponse>` (201) — no admin approval; always `expense` type, id `custom_<uuid>`, private to the creator |
 | PATCH | `/{id}` | Admin | `UpdateCategoryRequest` | `ApiResponse<CategoryResponse>` (404) |
 | DELETE | `/{id}` | Admin | — | `ApiResponse<object?>` (404) |
+| DELETE | `/custom/{id}` | Customer | — | `ApiResponse<object?>` (404 for a category you don't own, or a seeded one; 400 if referenced by transactions) |
 | PUT | `/{id}/bucket` | Customer | `SetCategoryBucketRequest` | `ApiResponse<CategoryResponse>` — reassign which bucket this expense category counts against, for the caller only. No admin approval needed. |
 | DELETE | `/{id}/bucket` | Customer | — | `ApiResponse<CategoryResponse>` — clears the caller's override, reverting to the category's global default. |
 

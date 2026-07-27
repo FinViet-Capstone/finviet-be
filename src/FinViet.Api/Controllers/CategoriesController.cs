@@ -97,6 +97,23 @@ public class CategoriesController : ControllerBase
                 "Category created successfully"));
     }
 
+    [HttpDelete("custom/{id}")]
+    [Authorize(Roles = "Customer")]
+    public async Task<ActionResult<ApiResponse<object?>>> DeleteCustomCategory(
+        [FromRoute] string id,
+        CancellationToken cancellationToken)
+    {
+        var customerId = User.GetCustomerId();
+        var deleted = await _categoryService.DeleteCustomCategoryAsync(customerId, id, cancellationToken);
+
+        if (!deleted)
+            return NotFound(ApiResponse<object?>.Fail("Category not found."));
+
+        return Ok(ApiResponse<object?>.Ok(
+            null,
+            "Category deleted successfully"));
+    }
+
     [HttpPost]
     [Authorize(Roles = "Admin")]
     public async Task<ActionResult<ApiResponse<CategoryResponse>>> CreateCategory(

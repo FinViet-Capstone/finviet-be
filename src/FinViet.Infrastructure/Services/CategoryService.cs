@@ -354,6 +354,39 @@ public class CategoryService : ICategoryService
         return true;
     }
 
+    public async Task<bool> DeleteCustomCategoryAsync(
+        Guid customerId,
+        string categoryId,
+        CancellationToken cancellationToken = default)
+    {
+        // Same ownership test as IsVisibleTo: a seeded cat_* category or a custom_* one this
+        // customer doesn't have an active override for isn't theirs to delete via this endpoint.
+        if (!categoryId.StartsWith(CustomCategoryIdPrefix, StringComparison.Ordinal))
+            return false;
+
+        var owns = await _dbContext.CustomerCategories.AnyAsync(
+            x => x.CustomerId == customerId && x.CategoryId == categoryId && x.IsActive,
+            cancellationToken);
+        if (!owns)
+            return false;
+
+        var category = await _dbContext.Categories
+            .FirstOrDefaultAsync(c => c.CategoryId == categoryId, cancellationToken);
+        if (category is null)
+            return false;
+
+        // Matches DeleteCategoryAsync's rule — don't let a deletion quietly turn transaction
+        // history "uncategorized".
+        var hasTransactions = await _dbContext.Transactions
+            .AnyAsync(t => t.CategoryId == categoryId, cancellationToken);
+        if (hasTransactions)
+            throw new ValidationException("Cannot delete category because it is referenced by transactions.");
+
+        _dbContext.Categories.Remove(category);
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        return true;
+    }
+
     private static string NormalizeType(string type)
     {
         var normalized = type.Trim().ToLowerInvariant();
