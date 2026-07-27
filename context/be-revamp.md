@@ -1,6 +1,6 @@
 # BE Plan: Category System, Settings, Bank-Linking & Budget Allocation
 
-**Status:** Agreed 2026-07-26 — implementation not started. Each item below will get its own `context/current-feature.md` cycle + feature branch when work begins, per `context/ai-interaction.md`.
+**Status:** All 6 items done (2026-07-27) — merged into `khoi`. Live verification (`dotnet test` against a running API + integration suite) still outstanding; see Verification section.
 
 ## Context
 
@@ -103,12 +103,20 @@ Matches FE's own sequencing where it lines up, so both repos' branches land in a
 
 ## Verification
 
-Per item, once implemented:
-- `dotnet build` and `dotnet test` (existing integration suite in `tests/FinViet.Api.IntegrationTests` plus any new unit tests for pure logic — see the income-allocation resolver in item 2 as the primary unit-test candidate).
-- Manual pass via Swagger UI or a REST client: new endpoints return correct status codes for the happy path and the documented error cases (per the exception-to-status-code table in `coding-standards.md`).
-- For item 1 (Finverse removal): confirm no dangling references (`dotnet build` will catch compile-time ones; grep for `Finverse` in `appsettings.json`/config for runtime ones).
-- For item 2 (income-allocation history): confirm a scheduled next-month change does **not** alter `GET /api/budgets/buckets?month=<past or current month>` — this is the core bug being fixed, so it's the one behavior worth testing explicitly end-to-end.
+**Done (this session, repeatable without a live DB):**
+- `dotnet build` — 0 errors, on every item, including the final state on `khoi`.
+- `dotnet test tests/FinViet.Application.UnitTests` — all 36 unit tests pass (`TC-INCALLOC-01..08`, `TC-CUSTOMCAT-01..04`, plus pre-existing).
+- No dangling `Finverse` references (item 1) — grepped clean except the intentionally-preserved enum doc comments and immutable historical migrations.
+
+**Not done — needs a live environment, which this session doesn't have access to:**
+- `dotnet test tests/FinViet.Api.IntegrationTests` against a running API (`ApiTestFixture` requires `ConnectionStrings:DefaultConnection` + `Jwt:Secret` — neither exists in `appsettings*.json`, user-secrets, or any environment variable available to this session; attempting `dotnet run --project src/FinViet.Api` confirmed this with `Npgsql...Host can't be null`).
+- Manual Swagger/REST-client pass on every new endpoint (`/api/profile/income-allocation`, `/api/profile/settings`, `/api/auth/change-password`, `/api/categories/custom`) for correct status codes on the happy path and documented error cases.
+- The core item-2 regression check: schedule a next-month allocation change, confirm `GET /api/budgets/buckets?month=<past or current month>` doesn't move.
+- Confirm near-zero live `finverse_linked` wallet rows before assuming the item-1 migration was a no-op in practice (flagged, never checked against a real DB).
+
+→ **This needs to happen in whatever environment already has the DB/JWT secrets configured** (your own machine/IDE) — start the API there, then run `dotnet test tests/FinViet.Api.IntegrationTests`, or hit the endpoints via Swagger. I can help interpret failures if you paste them back.
 
 ## History
 
 - 2026-07-26 — Plan finalized after `be-notes.md` review and FE's confirmation of all four open questions. Implementation not started.
+- 2026-07-27 — All 6 items done, merged into `khoi`. Build + unit-test verification complete; live integration-test/manual verification against a running API attempted but blocked — this session has no `ConnectionStrings:DefaultConnection`/`Jwt:Secret` configured anywhere (not in `appsettings*.json`, user-secrets, or environment). Needs to be run in an environment that has those secrets.
