@@ -20,7 +20,7 @@ Live Swagger/OpenAPI JSON is also available at `/swagger/v1/swagger.json` when t
 
 ---
 
-## Auth — `api/auth` (anonymous)
+## Auth — `api/auth` (anonymous, except `/change-password`)
 
 | Method | Path | Request | Response |
 |---|---|---|---|
@@ -35,6 +35,7 @@ Live Swagger/OpenAPI JSON is also available at `/swagger/v1/swagger.json` when t
 | POST | `/logout` | `{ refreshToken }` | 204 No Content |
 | POST | `/forgot-password` | `{ email }` | `ApiResponse<string>` |
 | POST | `/reset-password` | `{ token, newPassword, confirmPassword }` | `ApiResponse<string>` |
+| POST | `/change-password` **(role: Customer)** | `{ currentPassword, newPassword }` | `ApiResponse<string>` (400 if current password is wrong) — revokes all other active refresh tokens on success |
 
 **AuthResponseDto**
 ```ts

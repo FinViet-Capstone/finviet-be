@@ -59,7 +59,9 @@ Two of the five FE items turned out not to be "FE-only" as originally framed: Fi
 
 ## 4. Change-Password Endpoint
 
-**Current state:** Only unauthenticated `POST /api/auth/forgot-password` + `/reset-password` (email-token based) exist. No authenticated old-password/new-password flow. FE confirmed `ChangePasswordSheet` already calls `useChangePassword({currentPassword, newPassword})` and is currently force-routed to a mock (`real/auth.ts:27-28`) for lack of a real endpoint.
+**Status: Done (2026-07-27)** — implemented on branch `feature/change-password-endpoint`. See `context/current-feature.md` history for the file list.
+
+**Current state (at time of planning):** Only unauthenticated `POST /api/auth/forgot-password` + `/reset-password` (email-token based) exist. No authenticated old-password/new-password flow. FE confirmed `ChangePasswordSheet` already calls `useChangePassword({currentPassword, newPassword})` and is currently force-routed to a mock (`real/auth.ts:27-28`) for lack of a real endpoint.
 
 **Planned changes:**
 - New endpoint `POST /api/auth/change-password` — `[Authorize]`, body `{ currentPassword, newPassword }`. Verify current password against the stored hash before updating; return `400`/`BadRequestException` on mismatch (per the existing exception-to-status-code convention in `coding-standards.md`).
@@ -92,9 +94,10 @@ Matches FE's own sequencing where it lines up, so both repos' branches land in a
 
 1. ~~**Finverse removal (item 1)**~~ — **Done** (see item 1 above).
 2. ~~**Income-allocation history (item 2)**~~ — **Done** (see item 2 above).
-3. ~~**Customer settings endpoint (item 3)**~~ — **Done** (see item 3 above). **Change-password endpoint (item 4)** — still open; small, unblocks FE's Settings (item 2) Wave 1.
-4. **Custom category creation endpoint (item 5)** — needed before FE's item 1 (custom-icon flow) can fully land, since custom categories aren't usable in real transactions without it.
-5. **Category bucket move (item 6)** — no work; just confirm still-correct when FE's drag-and-drop (their item 5) starts hitting it.
+3. ~~**Customer settings endpoint (item 3)**~~ — **Done** (see item 3 above).
+4. ~~**Change-password endpoint (item 4)**~~ — **Done** (see item 4 above).
+5. **Custom category creation endpoint (item 5)** — needed before FE's item 1 (custom-icon flow) can fully land, since custom categories aren't usable in real transactions without it.
+6. **Category bucket move (item 6)** — no work; just confirm still-correct when FE's drag-and-drop (their item 5) starts hitting it.
 
 ## Verification
 
