@@ -2,7 +2,7 @@
 
 <!-- Feature name and short description -->
 
-Custom category creation + deletion endpoints. Item 5 of `context/be-revamp.md`'s build order, plus a user-requested follow-up: `POST /api/categories` is Admin-only, but FE's local-custom-icon flow needs customers to create (and later delete) their own categories that real transactions/budgets can reference — which requires a real `Category` row (FK constraints from `Transaction`/`Budget`), which today only an Admin can insert or remove.
+`TransactionsController` response envelope fix. Item 1 of a mobile-integration gap-closing plan (see `context/mobile-integration-plan.md` if present, else the session's approved plan): every other controller wraps responses in `ApiResponse<T>` (`{success, message, data}`), but `TransactionsController` returns raw `PagedResult<T>`/DTOs/`bool` directly — the one documented exception in this file's own conventions section. Closing that inconsistency so the mobile client can drop its special-case unwrapping and use the shared `unwrap<T>()` helper like every other domain.
 
 ## Status
 
@@ -14,20 +14,17 @@ Completed — awaiting commit approval
 
 <!-- Goals and requirements -->
 
-- New `POST /api/categories/custom` — `[Authorize(Roles = "Customer")]`, body `{ name, bucket, color }`. Server generates the id as `custom_<uuid>` (never trust a client-supplied id) so it's always distinguishable from seeded `cat_*` categories.
-- Always creates an `expense`-type category — the FE flow only ever picks a bucket (needs/wants/savings), which only applies to expense categories; there's no FE path that produces an "income" custom category, so the request doesn't take a `type` field (simplification vs. `be-revamp.md`'s literal `{ name, bucket, color, type }` shape).
-- Reuses `CategoryService`'s existing duplicate-name check (`CategoryNameExistsAsync`) rather than duplicating that logic — extends the service with a customer-scoped creation path alongside the existing admin one (`CreateCategoryAsync`), not a parallel implementation.
-- Seeds an active `CustomerCategory` override row for the creator at creation time (bucket = whatever they picked), so the category is immediately usable without a follow-up `PUT .../bucket` call.
-- **Necessary addition beyond `be-revamp.md`'s literal plan text**: `Category` is a global table — `GetCategoriesAsync`/`GetCategoryByIdAsync` returned every row to every caller, customer or not. Without a visibility fix, every customer's custom category would leak into every *other* customer's category list and detail lookups the moment one was created. Both methods now treat any `custom_`-prefixed category as private to its creator — visible only to a customer who has an active `CustomerCategory` row for it (which creation seeds). This wasn't spelled out in the plan but is required for the feature to be safe to ship at all.
+- Wrap all 7 `TransactionsController` actions' return values in `ApiResponse<T>.Ok(result)`: `GetTransactions`, `GetSummary`, `GetTransactionById`, `CreateTransaction`, `UpdateTransaction`, `DeleteTransaction`, `ClassifyTransaction`.
+- This is a breaking wire-format change for this one controller — must ship alongside the matching mobile change (`finviet-mobile/src/services/real/transactions.ts`) in the same working session/release, not independently.
+- Update `docs/api-reference.md`'s Transactions section to show the now-consistent envelope.
+- No business-logic changes — purely a response-shape wrap, per the "minimal, scoped changes" standing rule.
 
 ## Notes
 
 <!-- Any extra notes -->
 
-- Full backend audit and decisions: `context/be-revamp.md` (item 5).
-- FE's own `customCategories.ts` service module (per `fe-plan-2026-07-revamp.md`) anticipates `createCustomCategory`, `getCustomCategories`, `deleteCustomCategory`. Listing reuses the existing `GET /api/categories` (now correctly scoped) — no new BE work needed for that one. Creation and deletion are both now built (see History).
-- The icon file itself never reaches the backend (per FE's plan — local-only, device storage) — only `name`/`bucket`/`color` sync; `Icon` is left null on the created `Category` row.
-- Not verified against a live database or integration test suite in this session.
+- Companion mobile-side change lives in the `finviet-mobile` repo, tracked separately there (not part of this repo's `context/` docs).
+- Part of a larger approved plan covering: this envelope fix, SMS-extraction mobile wiring, Google OAuth mobile wiring, photo-extraction (new OCR endpoint), and a free/premium subscriptions feature — those are separate future entries in this file, done one at a time.
 
 ## History
 
@@ -41,4 +38,6 @@ Completed — awaiting commit approval
 - 2026-07-27 — Item 4 (change-password endpoint) implemented on branch `feature/change-password-endpoint`, committed (`e71a3c3`), merged into `khoi` (fast-forward), branch deleted. New `POST /api/auth/change-password`; revokes other active refresh tokens on success. `dotnet build` 0 errors, all 32 unit tests pass.
 - 2026-07-27 — Started item 5 (custom category creation endpoint). Branch `feature/custom-category-endpoint` created.
 - 2026-07-27 — Implemented: `ICategoryService.CreateCustomCategoryAsync` + `POST /api/categories/custom` (Customer role); new `CreateCustomCategoryRequest` DTO; `GetCategoriesAsync`/`GetCategoryByIdAsync` fixed to scope `custom_*` categories to their creator via a new `IsVisibleTo` check (necessary addition beyond the original plan — see Goals). 4 new unit tests (`TC-CUSTOMCAT-01..04`) for the visibility logic, all 36 unit tests pass, `dotnet build` 0 errors. Updated `docs/api-reference.md`. Committed (`7429881`), merged into `khoi` (fast-forward), branch deleted.
-- 2026-07-27 — User requested the flagged delete follow-up be built too. **Process slip repeated**: started directly on `khoi` again instead of branching first — caught before committing, same as item 3; branched (`feature/custom-category-delete`) from that state before committing. Implemented `ICategoryService.DeleteCustomCategoryAsync` (mirrors `DeleteCategoryAsync`'s "blocked if referenced by transactions" rule) + `DELETE /api/categories/custom/{id}` (Customer role, 404 for a category you don't own — same framing as the visibility scoping, not a distinct "forbidden" signal). `dotnet build` 0 errors, all 36 unit tests pass (no new ones — this path has no new *pure* logic beyond what's already covered; it reuses `IsVisibleTo`'s ownership concept directly via an `AnyAsync` check).
+- 2026-07-27 — User requested the flagged delete follow-up be built too. **Process slip repeated**: started directly on `khoi` again instead of branching first — caught before committing, same as item 3; branched (`feature/custom-category-delete`) from that state before committing. Implemented `ICategoryService.DeleteCustomCategoryAsync` (mirrors `DeleteCategoryAsync`'s "blocked if referenced by transactions" rule) + `DELETE /api/categories/custom/{id}` (Customer role, 404 for a category you don't own — same framing as the visibility scoping, not a distinct "forbidden" signal). `dotnet build` 0 errors, all 36 unit tests pass (no new ones — this path has no new *pure* logic beyond what's already covered; it reuses `IsVisibleTo`'s ownership concept directly via an `AnyAsync` check). Committed (`ada6fb8`), merged into `khoi`.
+- 2026-07-27 — Started `TransactionsController` envelope fix (item 1 of the mobile-integration gap plan). Branch `fix/transactions-response-envelope` created.
+- 2026-07-27 — Implemented: all 7 `TransactionsController` actions now return `ApiResponse<T>.Ok(result)` instead of the raw DTO/`PagedResult`/`bool`. Updated `docs/api-reference.md` (Conventions section + Transactions table) to drop the "one exception" note. Companion mobile change made in `finviet-mobile` (`src/services/real/transactions.ts`): all `res.data as X` reads replaced with the shared `unwrap<X>(res)` helper from `src/lib/api.ts`; removed the file's now-redundant local `unwrapEnvelope` duplicate (the transfer endpoint already used it, now shares the same helper as everything else). `dotnet build` 0 errors, all 36 unit tests pass; mobile `npx tsc --noEmit` clean.

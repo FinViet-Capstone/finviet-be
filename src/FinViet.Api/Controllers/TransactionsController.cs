@@ -31,7 +31,7 @@ public class TransactionsController : ControllerBase
             Filter = query
         });
 
-        return Ok(result);
+        return Ok(ApiResponse<PagedResult<TransactionResponseDto>>.Ok(result));
     }
 
     [HttpGet("summary")]
@@ -45,7 +45,7 @@ public class TransactionsController : ControllerBase
             Month = month
         });
 
-        return Ok(result);
+        return Ok(ApiResponse<TransactionSummaryResponseDto>.Ok(result));
     }
 
     [HttpGet("{id:guid}")]
@@ -57,7 +57,7 @@ public class TransactionsController : ControllerBase
             TransactionId = id
         });
 
-        return Ok(result);
+        return Ok(ApiResponse<TransactionResponseDto>.Ok(result));
     }
 
     [HttpPost]
@@ -79,7 +79,7 @@ public class TransactionsController : ControllerBase
         };
 
         var result = await _mediator.Send(command);
-        return CreatedAtAction(nameof(CreateTransaction), result);
+        return CreatedAtAction(nameof(CreateTransaction), ApiResponse<TransactionResponseDto>.Ok(result));
     }
 
     [HttpPut("{id}")]
@@ -93,7 +93,7 @@ public class TransactionsController : ControllerBase
         };
 
         var result = await _mediator.Send(command);
-        return Ok(result);
+        return Ok(ApiResponse<TransactionResponseDto>.Ok(result));
     }
 
     [HttpDelete("{id}")]
@@ -105,7 +105,7 @@ public class TransactionsController : ControllerBase
             TransactionId = id
         };
         var result = await _mediator.Send(command);
-        return Ok(result);
+        return Ok(ApiResponse<bool>.Ok(result));
     }
 
     [HttpPatch("{id}/classify")]
@@ -119,7 +119,7 @@ public class TransactionsController : ControllerBase
         };
 
         var result = await _mediator.Send(command);
-        return Ok(result);
+        return Ok(ApiResponse<TransactionResponseDto>.Ok(result));
     }
 
     private Guid GetCustomerId()

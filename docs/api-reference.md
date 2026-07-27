@@ -7,11 +7,11 @@ Live Swagger/OpenAPI JSON is also available at `/swagger/v1/swagger.json` when t
 
 - All routes are prefixed `api/...`.
 - Auth: Bearer JWT (`Authorization: Bearer <accessToken>`) unless marked **Anonymous**.
-- Standard envelope (unless noted otherwise):
+- Standard envelope:
   ```ts
   ApiResponse<T> = { success: boolean, message?: string, data?: T }
   ```
-  `TransactionsController` returns raw objects/`PagedResult<T>` **without** this envelope.
+  All controllers, including `TransactionsController`, use this envelope (as of the transactions-envelope fix; previously `TransactionsController` was the one exception).
 - Paged envelope:
   ```ts
   PagedResult<T> = { page: number, pageSize: number, totalItems: number, totalPages: number, items: T[] }
@@ -186,17 +186,15 @@ Live Swagger/OpenAPI JSON is also available at `/swagger/v1/swagger.json` when t
 
 ## Transactions — `api/transactions` (role: Customer)
 
-> **Note:** This controller returns raw objects, **not** wrapped in `ApiResponse`.
-
 | Method | Path | Request | Response |
 |---|---|---|---|
-| GET | `/` | `TransactionQueryDto` (query params) | `PagedResult<TransactionResponseDto>` |
-| GET | `/summary?year=&month=` | query `year`, `month` | `TransactionSummaryResponseDto` |
-| GET | `/{id:guid}` | — | `TransactionResponseDto` |
-| POST | `/` | `CreateTransactionDto` + header `Idempotency-Key?` | `TransactionResponseDto` (201) |
-| PUT | `/{id}` | `UpdateTransactionDto` | `TransactionResponseDto` |
-| DELETE | `/{id}` | — | `bool` |
-| PATCH | `/{id}/classify` | `ClassifyTransactionDto` | `TransactionResponseDto` |
+| GET | `/` | `TransactionQueryDto` (query params) | `ApiResponse<PagedResult<TransactionResponseDto>>` |
+| GET | `/summary?year=&month=` | query `year`, `month` | `ApiResponse<TransactionSummaryResponseDto>` |
+| GET | `/{id:guid}` | — | `ApiResponse<TransactionResponseDto>` |
+| POST | `/` | `CreateTransactionDto` + header `Idempotency-Key?` | `ApiResponse<TransactionResponseDto>` (201) |
+| PUT | `/{id}` | `UpdateTransactionDto` | `ApiResponse<TransactionResponseDto>` |
+| DELETE | `/{id}` | — | `ApiResponse<bool>` |
+| PATCH | `/{id}/classify` | `ClassifyTransactionDto` | `ApiResponse<TransactionResponseDto>` |
 
 **TransactionQueryDto** (query params)
 ```ts
