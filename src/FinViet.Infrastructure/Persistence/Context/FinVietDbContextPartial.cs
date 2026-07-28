@@ -14,6 +14,7 @@ public partial class FinVietDbContext
     public virtual DbSet<RefreshToken> RefreshTokens { get; set; }
     public virtual DbSet<EmailVerificationToken> EmailVerificationTokens { get; set; }
     public virtual DbSet<CustomerSetting> CustomerSettings { get; set; }
+    public virtual DbSet<IncomeAllocationSetting> IncomeAllocationSettings { get; set; }
 
     partial void OnModelCreatingPartial(ModelBuilder modelBuilder)
     {
@@ -179,6 +180,35 @@ public partial class FinVietDbContext
                 .HasForeignKey(d => d.CustomerId)
                 .OnDelete(DeleteBehavior.Cascade)
                 .HasConstraintName("refresh_tokens_customer_id_fkey");
+        });
+
+        // ── IncomeAllocationSetting entity ───────────────────────
+        modelBuilder.Entity<IncomeAllocationSetting>(entity =>
+        {
+            entity.HasKey(e => e.Id).HasName("income_allocation_settings_pkey");
+            entity.ToTable("income_allocation_settings");
+
+            entity.HasIndex(e => new { e.CustomerId, e.EffectiveMonth }, "uq_income_allocation_customer_month")
+                .IsUnique();
+
+            entity.Property(e => e.Id)
+                .HasDefaultValueSql("gen_random_uuid()")
+                .HasColumnName("id");
+            entity.Property(e => e.CustomerId).HasColumnName("customer_id");
+            entity.Property(e => e.EffectiveMonth).HasMaxLength(7).HasColumnName("effective_month");
+            entity.Property(e => e.MonthlyIncome).HasPrecision(15, 2).HasColumnName("monthly_income");
+            entity.Property(e => e.NeedsPct).HasColumnName("needs_pct");
+            entity.Property(e => e.WantsPct).HasColumnName("wants_pct");
+            entity.Property(e => e.SavingsPct).HasColumnName("savings_pct");
+            entity.Property(e => e.CreatedAt)
+                .HasDefaultValueSql("now()")
+                .HasColumnName("created_at");
+
+            entity.HasOne(d => d.Customer)
+                .WithMany()
+                .HasForeignKey(d => d.CustomerId)
+                .OnDelete(DeleteBehavior.Cascade)
+                .HasConstraintName("income_allocation_settings_customer_id_fkey");
         });
 
         // ── EmailVerificationToken entity ────────────────────────

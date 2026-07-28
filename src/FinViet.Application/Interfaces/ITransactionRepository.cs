@@ -13,7 +13,7 @@ public interface ITransactionRepository
     Task<TransactionSummaryResponseDto> GetSummaryAsync(Guid customerId, int year, int month, CancellationToken cancellationToken = default);
 
     Task<TransactionResponseDto> CreateAsync(Guid walletId, string? categoryId, string transactionType, decimal amount, DateTime transactionDate, string note, CancellationToken cancellationToken = default);
-    Task<TransactionResponseDto> CreateManualForCustomerAsync(Guid customerId, Guid walletId, string? categoryId, string transactionType, decimal amount, DateTime transactionDate, string? note, string? idempotencyKey, CancellationToken cancellationToken = default);
+    Task<TransactionResponseDto> CreateManualForCustomerAsync(Guid customerId, Guid walletId, string? categoryId, string transactionType, decimal amount, DateTime transactionDate, string? note, string? idempotencyKey, string? entryMethod = null, CancellationToken cancellationToken = default);
     Task<TransactionResponseDto> UpdateAsync(Guid transactionId, string? categoryId, string transactionType, decimal amount, DateTime transactionDate, string note, CancellationToken cancellationToken = default);
     Task<bool> DeleteAsync(Guid id, CancellationToken cancellationToken = default);
     Task<bool> DeleteForCustomerAsync(Guid customerId, Guid transactionId, CancellationToken cancellationToken = default);

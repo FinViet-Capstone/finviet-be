@@ -37,8 +37,10 @@ public class GoogleLoginCommandHandler : IRequestHandler<GoogleLoginCommand, Aut
             throw new BadRequestException("Google account must have a verified email.");
 
         var customer = await _db.Customers
+            .Include(c => c.Setting)
             .FirstOrDefaultAsync(c => c.GoogleId == firebaseUser.Uid, cancellationToken)
             ?? await _db.Customers
+            .Include(c => c.Setting)
             .FirstOrDefaultAsync(c => c.Email == firebaseUser.Email.ToLower(), cancellationToken);
 
         if (customer is null)

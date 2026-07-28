@@ -1,5 +1,7 @@
+using FinViet.Api.Common;
 using FinViet.Application.Common;
 using FinViet.Application.Features.Auth.Commands.AdminLogin;
+using FinViet.Application.Features.Auth.Commands.ChangePassword;
 using FinViet.Application.Features.Auth.Commands.ForgotPassword;
 using FinViet.Application.Features.Auth.Commands.GoogleLogin;
 using FinViet.Application.Features.Auth.Commands.Login;
@@ -10,6 +12,7 @@ using FinViet.Application.Features.Auth.Commands.ResendVerificationEmail;
 using FinViet.Application.Features.Auth.Commands.ResetPassword;
 using FinViet.Application.Features.Auth.Commands.VerifyEmail;
 using MediatR;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace FinViet.Api.Controllers;
@@ -146,6 +149,20 @@ public class AuthController : ControllerBase
         return Ok(ApiResponse<string>.Ok(result));
     }
 
+    /// <summary>Đổi mật khẩu khi đã đăng nhập (yêu cầu mật khẩu hiện tại).</summary>
+    [HttpPost("change-password")]
+    [Authorize(Roles = "Customer")]
+    [ProducesResponseType(typeof(ApiResponse<string>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> ChangePassword([FromBody] ChangePasswordRequest request, CancellationToken ct)
+    {
+        var customerId = User.GetCustomerId();
+        var result = await _mediator.Send(
+            new ChangePasswordCommand(customerId, request.CurrentPassword, request.NewPassword), ct);
+
+        return Ok(ApiResponse<string>.Ok(result));
+    }
+
     private static string BuildVerifyEmailHtml(bool success, string message)
     {
         var color   = success ? "#10B981" : "#EF4444";
@@ -181,3 +198,4 @@ public record RefreshTokenRequest(string RefreshToken);
 public record LogoutRequest(string RefreshToken);
 public record ForgotPasswordRequest(string Email);
 public record ResetPasswordRequest(string Token, string NewPassword, string ConfirmPassword);
+public record ChangePasswordRequest(string CurrentPassword, string NewPassword);
