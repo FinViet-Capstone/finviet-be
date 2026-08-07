@@ -1,6 +1,3 @@
-using System.Globalization;
-using System.Text;
-using System.Text.RegularExpressions;
 using FinViet.Application.DTOs.Categories;
 using FinViet.Application.Exceptions;
 using FinViet.Application.Interfaces;
@@ -12,20 +9,8 @@ namespace FinViet.Infrastructure.Services;
 
 public class CategoryService : ICategoryService
 {
-    private const string SavingsGoalCategoryId = "cat_savings_goal";
-
     // Distinguishes customer-created categories from seeded cat_* ones — see CreateCustomCategoryAsync.
     private const string CustomCategoryIdPrefix = "custom_";
-
-    private static readonly HashSet<string> AllowedTypes = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "income", "expense"
-    };
-
-    private static readonly HashSet<string> AllowedExpenseClasses = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "needs", "wants", "savings"
-    };
 
     private readonly FinVietDbContext _dbContext;
 
@@ -43,11 +28,11 @@ public class CategoryService : ICategoryService
 
         if (!string.IsNullOrWhiteSpace(type))
         {
-            var normalizedType = NormalizeType(type);
+            var normalizedType = CategoryRules.NormalizeType(type);
             query = query.Where(c => c.Type == normalizedType);
         }
 
-        query = query.Where(c => c.CategoryId != "cat_savings_goal");
+        query = query.Where(c => c.CategoryId != CategoryRules.SavingsGoalCategoryId);
 
         var categories = await query
             .OrderBy(c => c.SortOrder)
@@ -105,15 +90,8 @@ public class CategoryService : ICategoryService
         if (category is null)
             throw new NotFoundException("Category not found.");
 
-        if (!string.Equals(category.Type, "expense", StringComparison.OrdinalIgnoreCase))
-            throw new ValidationException("Only expense categories can be assigned to a bucket.");
-
-        if (string.Equals(category.CategoryId, SavingsGoalCategoryId, StringComparison.OrdinalIgnoreCase))
-            throw new ValidationException("Saving goal contributions cannot be reassigned to a different bucket.");
-
-        var normalizedBucket = bucketId?.Trim().ToLowerInvariant();
-        if (string.IsNullOrWhiteSpace(normalizedBucket) || !AllowedExpenseClasses.Contains(normalizedBucket))
-            throw new ValidationException("Bucket must be one of: needs, wants, savings.");
+        CategoryRules.EnsureCustomerBucketCanBeSet(category.CategoryId, category.Type);
+        var normalizedBucket = CategoryRules.NormalizeCustomerBucket(bucketId);
 
         var customerCategory = await _dbContext.CustomerCategories
             .FirstOrDefaultAsync(x => x.CustomerId == customerId && x.CategoryId == categoryId, cancellationToken);
@@ -187,12 +165,12 @@ public class CategoryService : ICategoryService
         CreateCategoryRequest request,
         CancellationToken cancellationToken = default)
     {
-        var nameVi = FirstNonEmpty(request.NameVi, request.CategoryName);
+        var nameVi = CategoryRules.FirstNonEmpty(request.NameVi, request.CategoryName);
         if (string.IsNullOrWhiteSpace(nameVi))
             throw new ValidationException("Category name is required.");
 
-        var normalizedType = NormalizeType(request.Type);
-        var normalizedExpenseClass = NormalizeExpenseClass(request.ExpenseClass, normalizedType);
+        var normalizedType = CategoryRules.NormalizeType(request.Type);
+        var normalizedExpenseClass = CategoryRules.NormalizeExpenseClass(request.ExpenseClass, normalizedType);
         var trimmedNameVi = nameVi.Trim();
         var trimmedNameEn = string.IsNullOrWhiteSpace(request.NameEn) ? trimmedNameVi : request.NameEn.Trim();
         var categoryId = string.IsNullOrWhiteSpace(request.CategoryId)
@@ -236,9 +214,7 @@ public class CategoryService : ICategoryService
         if (string.IsNullOrWhiteSpace(name))
             throw new ValidationException("Category name is required.");
 
-        var normalizedBucket = request.Bucket?.Trim().ToLowerInvariant();
-        if (string.IsNullOrWhiteSpace(normalizedBucket) || !AllowedExpenseClasses.Contains(normalizedBucket))
-            throw new ValidationException("Bucket must be one of: needs, wants, savings.");
+        var normalizedBucket = CategoryRules.NormalizeCustomerBucket(request.Bucket);
 
         var duplicateName = await CategoryNameExistsAsync(name, "expense", null, cancellationToken);
         if (duplicateName)
@@ -293,11 +269,11 @@ public class CategoryService : ICategoryService
             return null;
 
         if (request.Type is not null)
-            category.Type = NormalizeType(request.Type);
+            category.Type = CategoryRules.NormalizeType(request.Type);
 
         if (request.CategoryName is not null || request.NameVi is not null)
         {
-            var newName = FirstNonEmpty(request.NameVi, request.CategoryName);
+            var newName = CategoryRules.FirstNonEmpty(request.NameVi, request.CategoryName);
             if (string.IsNullOrWhiteSpace(newName))
                 throw new ValidationException("Category name cannot be empty.");
 
@@ -315,7 +291,7 @@ public class CategoryService : ICategoryService
             category.IsMandatory = request.IsMandatory.Value;
 
         if (request.ExpenseClass is not null)
-            category.DefaultBucket = NormalizeExpenseClass(request.ExpenseClass, category.Type);
+            category.DefaultBucket = CategoryRules.NormalizeExpenseClass(request.ExpenseClass, category.Type);
 
         if (request.NameEn is not null)
             category.NameEn = request.NameEn;
@@ -387,30 +363,6 @@ public class CategoryService : ICategoryService
         return true;
     }
 
-    private static string NormalizeType(string type)
-    {
-        var normalized = type.Trim().ToLowerInvariant();
-        if (!AllowedTypes.Contains(normalized))
-            throw new ValidationException("Category type must be one of: income, expense.");
-
-        return normalized;
-    }
-
-    private static string? NormalizeExpenseClass(string? expenseClass, string type)
-    {
-        if (type == "income")
-            return null;
-
-        if (string.IsNullOrWhiteSpace(expenseClass))
-            throw new ValidationException("Expense class is required for expense categories.");
-
-        var normalized = expenseClass.Trim().ToLowerInvariant();
-        if (!AllowedExpenseClasses.Contains(normalized))
-            throw new ValidationException("Expense class must be one of: needs, wants, savings.");
-
-        return normalized;
-    }
-
     private async Task<bool> CategoryNameExistsAsync(
         string categoryName,
         string type,
@@ -428,7 +380,7 @@ public class CategoryService : ICategoryService
 
     private async Task<string> GenerateUniqueSlugAsync(string name, CancellationToken cancellationToken)
     {
-        var baseSlug = "cat_" + Slugify(name);
+        var baseSlug = "cat_" + CategoryRules.Slugify(name);
         var slug = baseSlug;
         var i = 2;
 
@@ -440,26 +392,6 @@ public class CategoryService : ICategoryService
 
         return slug;
     }
-
-    private static string Slugify(string value)
-    {
-        var normalized = value.Normalize(NormalizationForm.FormD);
-        var builder = new StringBuilder();
-
-        foreach (var c in normalized)
-        {
-            var category = CharUnicodeInfo.GetUnicodeCategory(c);
-            if (category != UnicodeCategory.NonSpacingMark)
-                builder.Append(c);
-        }
-
-        var ascii = builder.ToString().Normalize(NormalizationForm.FormC).ToLowerInvariant();
-        ascii = Regex.Replace(ascii, "[^a-z0-9]+", "_").Trim('_');
-        return string.IsNullOrWhiteSpace(ascii) ? Guid.NewGuid().ToString("N")[..8] : ascii;
-    }
-
-    private static string? FirstNonEmpty(params string?[] values)
-        => values.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v));
 
     private static CategoryResponse ToResponse(Category category, string? customerBucketOverride = null)
         => new()
