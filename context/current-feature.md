@@ -2,7 +2,7 @@
 
 <!-- Feature name and short description -->
 
-Photo-extraction (receipt OCR) endpoint — provider-agnostic scaffold. Item 4 of the mobile-integration gap-closing plan. `finviet-mobile` has a photo-receipt-scan UX (`extractFromPhoto`) that has always been mock-only since no backend OCR endpoint exists. User decided: build behind a provider-agnostic interface now (no specific OCR vendor chosen yet — Google Cloud Vision vs Azure AI Vision still undecided), with a placeholder implementation that fails predictably (503) until real credentials are supplied later.
+Core API isolated unit tests and test-case documents for Authentication/Authorization, Profile/Account, Category Management, and Wallet Management. The suite focuses on important deterministic business cases from each API function and records plausible unhandled cases for later implementation work.
 
 ## Status
 
@@ -14,18 +14,20 @@ Completed — awaiting commit approval
 
 <!-- Goals and requirements -->
 
-- New `IReceiptOcrService` interface (`Application/Interfaces`) — `ExtractAsync(Stream imageStream, string contentType, CancellationToken)` returning a single nullable `ExtractedTransactionItem` (reuses the existing SMS/CSV extraction DTO rather than inventing a new response shape).
-- Placeholder implementation `UnconfiguredReceiptOcrService` (`Infrastructure/ExternalServices/Ocr/`) always throws `IntegrationUnavailableException("ocr_not_configured")` → 503, mirroring the existing `SepayWalletService` "not configured" pattern exactly (config-driven, not a hardcoded env check).
-- New `OcrOptions` (`Ocr` config section: `Provider`, `ApiKey`, `Endpoint`, `TimeoutSeconds`) — all empty/default until a real provider is chosen and wired; no secrets committed.
-- New `POST api/extract/photo` on `ExtractController` — accepts a multipart image upload, validates size (8 MB) and extension (jpg/jpeg/png/heic) the same way `ExtractCsv` validates its file, returns `ApiResponse<ExtractResponse>` (same envelope/shape as SMS and CSV extraction — `Rows` holds 0 or 1 item for a single receipt) so the client-side mapper doesn't need a new response shape.
-- **Not in scope for this pass**: switching `finviet-mobile`'s `extractFromPhoto` from mock to real. The endpoint will 503 until a real OCR provider is wired in, so flipping the mobile switch now would break the feature. Mobile stays on the mock until this is revisited with real credentials.
+- Add isolated xUnit coverage for important Auth, Profile/Account, Category, and Wallet business rules and state transitions.
+- Keep unit tests independent of the running API and real PostgreSQL: no HTTP calls, `Program` startup, Npgsql connection, migrations, seed data, or external provider traffic.
+- Use a uniquely named EF Core InMemory store only for simple handler/service state transitions; do not use it to claim PostgreSQL-specific behavior such as `ILIKE`, unique constraints, row locks, or concurrency.
+- Extract only existing deterministic validation/normalization helpers needed to test production logic without changing API behavior.
+- Produce a dedicated Excel/Word unit-test catalog following the supplied per-function test template, while preserving the historical HTTP integration-test documents.
+- Document important code gaps and deferred PostgreSQL/API/provider scenarios with suggested follow-up work; do not fix those product defects in this pass.
 
 ## Notes
 
 <!-- Any extra notes -->
 
-- When a provider is chosen later: add `Infrastructure/ExternalServices/{Provider}/` (e.g. `GoogleVision/`, `AzureVision/`) implementing `IReceiptOcrService`, swap the DI registration in `DependencyInjection.cs` for it, and set `Ocr:Provider`/`Ocr:ApiKey` via user-secrets/env var. No controller or interface changes needed at that point.
-- Part of a larger approved plan covering: transactions envelope fix (done), SMS-extraction mobile wiring (already existed, verified), Google OAuth mobile wiring (skipped for now — no Firebase project set up), this photo-extraction scaffold, and a free/premium subscriptions feature (skipped for now — payment endpoint being built by a teammate separately; SePay is transaction-sync only, not a payment rail).
+- Generated unit-test documents live separately under `tests/test-cases/unit-business-logic/` so they do not overwrite the existing `FinViet_TestCases.*` integration report.
+- Case status is evidence-based: only successfully executed xUnit cases are marked Pass; PostgreSQL/API/provider-only cases are explicitly Deferred.
+- No commit or push without explicit user permission.
 
 ## History
 
@@ -45,3 +47,4 @@ Completed — awaiting commit approval
 - 2026-07-27 — Checked item 2 (SMS-extraction mobile wiring) before starting it: already fully implemented (`finviet-mobile/src/services/real/extraction.ts` calls the real `POST /extract/sms` and maps its first row to the UI's `PhotoExtractionResult` shape). No work needed — closed as already-done.
 - 2026-07-27 — Asked user about remaining items 3–5: Google OAuth (item 3) skipped for now — no Firebase project configured yet. Subscriptions (item 5) skipped for now — a teammate is building a separate payment endpoint with a different provider; SePay is confirmed transaction-sync only. Photo extraction (item 4): user chose a provider-agnostic scaffold now, real OCR provider credentials to follow later. Started item 4. Branch `feature/photo-extraction-ocr-scaffold` created.
 - 2026-07-27 — Implemented: `IReceiptOcrService` (`Application/Interfaces`), `OcrOptions` + placeholder `UnconfiguredReceiptOcrService` (`Infrastructure/ExternalServices/Ocr/`, throws `IntegrationUnavailableException("ocr_not_configured")` — same pattern as `SepayWalletService`'s "not configured" checks), DI registration in `DependencyInjection.cs`, and `POST /api/extract/photo` on `ExtractController` (8 MB / jpg-jpeg-png-heic validation, returns `ApiResponse<ExtractResponse>` reusing the SMS/CSV shape). Updated `docs/api-reference.md`. Mobile's `extractFromPhoto` intentionally left on the mock (see Goals) since the endpoint currently always 503s. `dotnet build` 0 errors, all 36 unit tests pass. No new unit tests added — the only branch worth testing (config-empty → throw) is already exercised implicitly by every call until a provider is configured; revisit when a real provider implementation lands.
+- 2026-07-31 — Implemented isolated unit coverage for core Auth, Profile/Account, Category, and Wallet logic on `feature/core-api-unit-tests`. Added EF Core InMemory/Moq test infrastructure with no API or PostgreSQL connection, extracted existing deterministic category/wallet/avatar rules without changing contracts, and added handler/service/validator/state tests. Full Application unit suite: 136 passed, 0 failed, 0 skipped; solution build passes with 0 errors (2 pre-existing nullable warnings). Added dedicated unit-test catalog/gap report and generated Excel/Word artifacts: 4 groups, 20 functions, 40 passed catalog cases, 19 deferred integration/provider cases, and 18 code gaps.
