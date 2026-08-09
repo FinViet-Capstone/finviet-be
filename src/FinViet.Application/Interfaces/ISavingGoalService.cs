@@ -37,4 +37,18 @@ public interface ISavingGoalService
         ContributeSavingGoalRequest request,
         string? idempotencyKey,
         CancellationToken cancellationToken = default);
+
+    /// <summary>Moves money from a goal back to a regular wallet. Null return means the goal was not found/owned.</summary>
+    Task<SavingGoalResponse?> WithdrawAsync(
+        Guid customerId,
+        Guid goalId,
+        WithdrawSavingGoalRequest request,
+        string? idempotencyKey,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Full contribution/withdrawal ledger for a goal, newest first. Null means the goal was not found/owned.</summary>
+    Task<IReadOnlyList<SavingGoalContributionResponse>?> GetContributionsAsync(
+        Guid customerId,
+        Guid goalId,
+        CancellationToken cancellationToken = default);
 }

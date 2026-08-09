@@ -405,25 +405,37 @@ Every endpoint below documents **Validation** (exact field-level rules — Fluen
 | PATCH | `/{id:guid}` | `UpdateSavingGoalRequest` | `ApiResponse<SavingGoalResponse>` (404) |
 | DELETE | `/{id:guid}` | — | `ApiResponse<object?>` (404) |
 | POST | `/{id:guid}/contribute` | `ContributeSavingGoalRequest` + `Idempotency-Key` | `ApiResponse<SavingGoalResponse>` (404) |
+| POST | `/{id:guid}/withdraw` | `WithdrawSavingGoalRequest` + `Idempotency-Key` | `ApiResponse<SavingGoalResponse>` (404) |
+| GET | `/{id:guid}/contributions` | — | `ApiResponse<SavingGoalContributionResponse[]>` (404) |
 
 **CreateSavingGoalRequest**: `{ goalName, targetAmount, deadline?, initialAmount?, fundingWalletId? }`
 **UpdateSavingGoalRequest**: `{ goalName?, targetAmount?, deadline? }`
-**ContributeSavingGoalRequest**: `{ amount }`
+**ContributeSavingGoalRequest**: `{ amount, fundingWalletId?, note? }`
+**WithdrawSavingGoalRequest**: `{ amount, walletId, note? }` — `walletId` is **required on every call**; a goal has no static withdrawal wallet (mirrors the per-action wallet choice on contribute — see below).
 **SavingGoalResponse**: `{ goalId, customerId, goalName, targetAmount, currentAmount, deadline?, fundingWalletId?, remainingAmount, progressPercent, daysRemaining?, isCompleted, monthlySavingNeeded?, monthsRemaining? }`
+**SavingGoalContributionResponse**: `{ contributionId, goalId, amount, type: "contribution" | "withdrawal", contributedAt, note?, transactionId? }` — `amount` is always stored positive; direction comes from `type`. Backed by a new `type` column on `savings_goal_contributions` (migration `V24`, must be run manually — see Error codes section note); `note` reuses a `varchar(255)` column that already existed in the v3 baseline schema.
 
 ### POST `/` (create)
 **Validation**: `goalName` required; `targetAmount <= 0` rejected; `deadline` required and must be strictly **future** (`> today`); `initialAmount < 0` rejected; `initialAmount > targetAmount` rejected; duplicate `goalName` (case-insensitive) among the customer's non-deleted goals rejected.
-**Business logic**: `Idempotency-Key` **required** (400 if missing, max 200 chars); replay via `IdempotencyStore` keyed `(customerId, "saving-goal-create", key)`. `fundingWalletId`, if set, must belong to the customer and not be deleted, but is only actually **debited if `initialAmount > 0`**: locks the wallet, checks `balance >= amount`, decrements it, records an expense `Transaction` (`categoryId="cat_savings_goal"`) plus a `SavingGoalContribution` row. If `initialAmount` is 0/absent, no debit occurs even with a funding wallet set. Milestone notifications (25/50/75/100%) fire after commit if `initialAmount > 0`.
+**Business logic**: `Idempotency-Key` **required** (400 if missing, max 200 chars); replay via `IdempotencyStore` keyed `(customerId, "saving-goal-create", key)`. `fundingWalletId`, if set, must belong to the customer, not be deleted, and not be `sepay_linked` (422 `goal_funding_wallet_sepay_unsupported`), but is only actually **debited if `initialAmount > 0`**: locks the wallet, checks `balance >= amount`, decrements it, records an expense `Transaction` (`categoryId="cat_savings_goal"`) plus a `SavingGoalContribution` row (`type="contribution"`). If `initialAmount` is 0/absent, no debit occurs even with a funding wallet set. Milestone notifications (25/50/75/100%) fire after commit if `initialAmount > 0`.
 
 ### PATCH `/{id}`
 **Validation**: `targetAmount <= 0` rejected; new `targetAmount` cannot be less than current `currentAmount`; `deadline` must be strictly future; name uniqueness re-checked on rename.
 
 ### POST `/{id}/contribute`
-**Validation**: `amount <= 0` rejected; `amount > targetAmount - currentAmount` → 422 `goal_remaining_exceeded` (cannot overshoot the target).
-**Business logic**: `Idempotency-Key` required, keyed `(customerId, "saving-goal-contribute:{goalId}", key)`. Wallet resolution: request's `fundingWalletId` if provided, else the goal's stored `fundingWalletId`; **if neither resolves, no wallet debit happens — `currentAmount` is simply incremented** (per the DTO's own doc comment). When a wallet is used: locked, balance-checked (422 `insufficient_balance` if short), debited, expense `Transaction` + `SavingGoalContribution` recorded. `isCompleted = currentAmount >= targetAmount` re-evaluated after each contribution. Milestone notifications (25/50/75/100%, distinct "goal completed" copy at 100%) fire whenever the percentage crosses a threshold between the previous and new amount.
+**Validation**: `amount <= 0` rejected; `amount > targetAmount - currentAmount` → 422 `goal_remaining_exceeded` (cannot overshoot the target). `fundingWalletId`, if provided, must belong to the customer, not be deleted, and not be `sepay_linked` → 422 `goal_funding_wallet_sepay_unsupported` "Contributions can only be funded from a regular wallet, not a bank-linked one." `note`, if provided, is trimmed and capped at 255 chars (the DB column's actual limit) → 400 if longer.
+**Business logic**: `Idempotency-Key` required, keyed `(customerId, "saving-goal-contribute:{goalId}", key)`. **Per-action wallet choice**: wallet resolution is request's `fundingWalletId` if provided, else the goal's stored `fundingWalletId` (a creation-time pre-fill/fallback only, never the sole mechanism — there is intentionally no "change the goal's funding wallet" endpoint); **if neither resolves, no wallet debit happens — `currentAmount` is simply incremented**. When a wallet is used: locked, balance-checked (422 `insufficient_balance` if short), debited, expense `Transaction` + `SavingGoalContribution` (`type="contribution"`, `note` persisted) recorded. `isCompleted = currentAmount >= targetAmount` re-evaluated after each contribution. Milestone notifications (25/50/75/100%, distinct "goal completed" copy at 100%) fire whenever the percentage crosses a threshold between the previous and new amount.
+
+### POST `/{id}/withdraw`
+**Validation**: `amount <= 0` → 400. `amount > currentAmount` → 422 `goal_withdraw_exceeds_saved` "Cannot withdraw more than the goal's current saved amount." `walletId` must belong to the customer and not be deleted → 404 if not. `walletId` must **not** be `sepay_linked` → 422 `goal_withdraw_target_sepay_unsupported` "Withdrawals can only go to a regular wallet, not a bank-linked one." (same rationale as the wallet-level `POST /wallets/withdraw` feature — crediting a bank-synced wallet manually would desync it from the real account.) `note`, if provided, same 255-char cap as contribute.
+**Business logic**: `Idempotency-Key` **required**, keyed `(customerId, "saving-goal-withdraw:{goalId}", key)` — same claim/replay pattern as contribute. DB transaction, row-locks the goal and the target wallet. Credits `wallet.balance += amount` via an **income** `Transaction` (`categoryId="cat_savings_goal"`), linked through the contribution row's `transactionId`. Decrements `goal.currentAmount -= amount`; re-evaluates `isCompleted = currentAmount >= targetAmount` — a withdrawal can drop a completed goal back to incomplete. Inserts a `SavingGoalContribution` row with `type="withdrawal"`, `amount` stored positive (direction comes from `type`, not sign). No milestone notifications fire for a withdrawal (the milestone check only fires going *up* through a threshold).
+
+### GET `/{id}/contributions`
+**Validation**: goal must exist and be owned by the caller → 404 (same no-existence-leak pattern as the other goal endpoints).
+**Business logic**: Reads `SavingGoalContribution` rows for the goal, ordered newest (`contributedAt`) first. Returns both contributions and withdrawals in one combined, chronologically-ordered ledger.
 
 ### DELETE `/{id}`
-**Business logic**: Runs in a DB transaction, row-locks the goal. All linked `SavingGoalContribution` rows and their `Transaction`s (must all be `expense`/`cat_savings_goal` else 422 `goal_ledger_invalid`) are found; their wallets are locked and **fully refunded** (`wallet.balance += transaction.amount`) — deleting a goal reverses every prior contribution back into its source wallet(s) — then transactions, contributions, and the goal row are all deleted. A wallet deleted in the meantime → 422 `goal_wallet_missing`.
+**Business logic**: Runs in a DB transaction, row-locks the goal. All linked `SavingGoalContribution` rows and their `Transaction`s are found; each must be `cat_savings_goal` and either `expense` (contribution) or `income` (withdrawal), else 422 `goal_ledger_invalid`. Their wallets are locked and reversed **according to each entry's direction**: a contribution (expense) is refunded back (`wallet.balance += amount`); a withdrawal (income) has its credit undone (`wallet.balance -= amount`) — the net effect always equals refunding exactly the goal's still-unwithdrawn `currentAmount`. If undoing a withdrawal would drive its destination wallet negative (the withdrawn cash was already spent elsewhere) → 422 `goal_ledger_reversal_insufficient_balance`. A wallet deleted in the meantime → 422 `goal_wallet_missing`. Transactions, contributions, and the goal row are then all deleted together.
 
 ### `monthlySavingNeeded` / `monthsRemaining`
 Only computed when `deadline` is set. `monthsRemaining` = whole calendar months to deadline (floored at 0, decremented by 1 if `deadline.Day < today.Day`). `remaining = max(0, targetAmount - currentAmount)`. `monthlySavingNeeded`: `0` if `remaining <= 0`; `remaining / monthsRemaining` (2dp) if `monthsRemaining >= 1`; else the whole `remaining` amount (due immediately, deadline within the current month).
@@ -618,8 +630,14 @@ PagedResult<T>  = { page: number, pageSize: number, totalItems: number, totalPag
 | `sepay_webhook_disabled` | 422/503 | Wallets | `SePay:WebhookApiKey` not configured server-side |
 | `sepay_webhook_url_missing` / `sepay_webhook_url_invalid` | 422 | Wallets | `SePay:WebhookUrl` missing, or not a public non-loopback http(s) URL |
 | `goal_remaining_exceeded` | 422 | SavingGoals | Contribution amount exceeds `targetAmount - currentAmount` |
-| `goal_ledger_invalid` | 422 | SavingGoals | Deleting a goal whose contribution ledger has a non-`expense`/`cat_savings_goal` transaction |
+| `goal_ledger_invalid` | 422 | SavingGoals | Deleting a goal whose contribution ledger has an entry that isn't a `cat_savings_goal` `expense`/`income` transaction |
 | `goal_wallet_missing` | 422 | SavingGoals | Deleting a goal whose funding wallet was deleted before refund could complete |
+| `goal_ledger_reversal_insufficient_balance` | 422 | SavingGoals | Deleting a goal would need to undo a withdrawal's credit, but the destination wallet no longer has that balance (already spent) |
+| `goal_funding_wallet_sepay_unsupported` | 422 | SavingGoals | `fundingWalletId` (create or contribute) resolves to a `sepay_linked` wallet |
+| `goal_withdraw_exceeds_saved` | 422 | SavingGoals | `POST /saving-goals/{id}/withdraw` amount exceeds the goal's `currentAmount` |
+| `goal_withdraw_target_sepay_unsupported` | 422 | SavingGoals | `POST /saving-goals/{id}/withdraw` targeting a `sepay_linked` wallet |
 | `ocr_not_configured` | 503 | Extract | `POST /extract/photo` — no real OCR provider wired (`IReceiptOcrService` placeholder) |
 
 Plain 400/404/409/403 errors (no `Code`, message-only) are noted inline in each endpoint's Validation/Business logic section above.
+
+**Migration note**: `V24__saving_goal_contribution_type.sql` (adds the `type` column backing `SavingGoalContributionResponse.type`) must be run manually against the target database before starting the API — same caveat as `V22`/`V23`, since `DbInitializer.ApplyMigrationsAsync` skips all numbered migration files once the v3 baseline schema is detected.

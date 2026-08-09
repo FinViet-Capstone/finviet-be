@@ -111,6 +111,40 @@ public class SavingGoalsController : ControllerBase
             "Contribution added successfully"));
     }
 
+    [HttpPost("{id:guid}/withdraw")]
+    public async Task<ActionResult<ApiResponse<SavingGoalResponse>>> Withdraw(
+        [FromRoute] Guid id,
+        [FromBody] WithdrawSavingGoalRequest request,
+        [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey,
+        CancellationToken cancellationToken)
+    {
+        var customerId = GetCustomerId();
+        var goal = await _savingGoalService.WithdrawAsync(customerId, id, request, idempotencyKey, cancellationToken);
+
+        if (goal is null)
+            return NotFound(ApiResponse<SavingGoalResponse>.Fail("Saving goal not found."));
+
+        return Ok(ApiResponse<SavingGoalResponse>.Ok(
+            goal,
+            "Withdrawal completed successfully"));
+    }
+
+    [HttpGet("{id:guid}/contributions")]
+    public async Task<ActionResult<ApiResponse<IReadOnlyList<SavingGoalContributionResponse>>>> GetContributions(
+        [FromRoute] Guid id,
+        CancellationToken cancellationToken)
+    {
+        var customerId = GetCustomerId();
+        var contributions = await _savingGoalService.GetContributionsAsync(customerId, id, cancellationToken);
+
+        if (contributions is null)
+            return NotFound(ApiResponse<IReadOnlyList<SavingGoalContributionResponse>>.Fail("Saving goal not found."));
+
+        return Ok(ApiResponse<IReadOnlyList<SavingGoalContributionResponse>>.Ok(
+            contributions,
+            "Saving goal contributions retrieved successfully"));
+    }
+
     private Guid GetCustomerId()
     {
         var claimValue = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
