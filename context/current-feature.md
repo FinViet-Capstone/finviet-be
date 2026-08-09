@@ -2,9 +2,9 @@
 
 <!-- Feature name and short description -->
 
-Saving goals: ledger rework — history endpoint, withdraw-to-wallet, per-action wallet choice,
-contribution notes (item 2 of `docs/10-08-2026-be-todos.md`, from FE↔BE mobile-integration
-reconciliation).
+Income allocation: arbitrary-month lookup on `GET /profile/income-allocation` (item 3 of
+`docs/10-08-2026-be-todos.md`, added by the user after discovering the gap while wiring the
+mobile budgets screen).
 
 ## Status
 
@@ -16,44 +16,31 @@ Completed — awaiting commit approval
 
 <!-- Goals and requirements -->
 
-- **2a** `GET /saving-goals/{id}/contributions` — full ledger history (contributions +
-  withdrawals) for a goal, newest first.
-- **2b** `POST /saving-goals/{id}/withdraw` — move money from a goal back to a regular wallet.
-  Requires `Idempotency-Key`. Rejects a `sepay_linked` target wallet and amounts exceeding
-  `currentAmount`.
-- **2c** Per-action wallet choice on contribute — **already implemented** on `main`/`khoi`
-  (`ContributeSavingGoalRequest.FundingWalletId` + `ApplyContributionAsync`'s
-  request-wallet-then-goal-wallet fallback already exist). Only gap found: the funding wallet
-  was never checked for `sepay_linked` — closing that gap here since 2c's own validation bullet
-  calls for it.
-- **2d** `note?` on both contribute and withdraw, persisted on `SavingGoalContribution.note`
-  (column already exists in the v3 baseline schema and was already EF-mapped, just never
-  written to — no migration needed for it).
-- Schema: add a `type` column (`'contribution'` default) to `savings_goal_contributions` to
-  distinguish ledger entry direction — new migration.
-- Update `docs/api-reference.md` (Saving Goals section) once implemented.
+- Add an optional `month` (`yyyy-MM`) query param to `GET /profile/income-allocation`, running
+  the same `IncomeAllocationService.ResolveEffectiveRow` carry-forward logic against that
+  arbitrary month instead of only ever resolving today's.
+- Default to today's month when `month` is omitted, preserving the exact existing response
+  shape/behavior (`current` for today + `pending` for next real calendar month).
+- When `month` is given, `pending` is always `null` — "next real calendar month's draft" isn't a
+  meaningful concept relative to an arbitrary queried month.
+- Update `docs/api-reference.md` (Profile section) once implemented.
 
 ## Notes
 
 <!-- Any extra notes -->
 
-- Spec source: `docs/10-08-2026-be-todos.md` §2 (2a–2d) — same FE↔BE reconciliation pass as
-  item 1 (`docs/10-08-2026-be-todos.md` §1, already shipped on `khoi`).
-- **Necessary addition beyond the spec**: `DeleteGoalAsync` currently assumes every ledger
-  transaction is an `expense` (a contribution) and rejects the whole delete
-  (`goal_ledger_invalid`) the instant it sees anything else — it also always reverses by
-  *adding* the transaction amount back to the wallet. Once withdrawals (an `income` transaction)
-  exist, that logic is simply wrong: it would either hard-block deleting any goal that ever had
-  a withdrawal, or (if the type check were loosened without fixing the math) refund withdrawn
-  money a second time. Fixed as part of this item: both `expense` and `income` are now valid
-  ledger entries, and each reverses with the sign appropriate to its direction (contribution:
-  add back; withdrawal: subtract back out — capped by a new `goal_ledger_reversal_insufficient_balance`
-  if that would drive the destination wallet negative, e.g. the withdrawn cash was already spent).
-- Migration numbering: `V24` — same "must be run manually before starting the API" caveat as
-  `V22`/`V23`, since `DbInitializer.ApplyMigrationsAsync` skips all numbered migrations once the
-  v3 baseline schema is detected (`customers` table exists) — see those two files' own comments
-  for precedent. Not folded into `EnsureAdditiveTablesAsync` (which is for brand-new tables) to
-  avoid touching that shared, always-run SQL block for an existing table's column.
+- Spec source: `docs/10-08-2026-be-todos.md` §3 — the user added this section directly to the
+  shared TODO doc (confirmed by the user) after discovering, while wiring the FE, that
+  `app/(tabs)/budgets/index.tsx` had to route through `GET /budgets/buckets?month=` instead of
+  the profile endpoint for a past-month lookup.
+- `IIncomeAllocationService.GetEffectiveAsync(customerId, month, ct)` already accepted an
+  arbitrary month — the resolver logic itself needed no changes. The only gap was that
+  `GetSummaryAsync`/`GET /profile/income-allocation` never exposed a way to pass a month in from
+  the API surface.
+- Month-format validation (`NormalizeMonth`) mirrors `BudgetService.ResolveMonthWindow`'s
+  existing `yyyy-MM` parsing and error message ("Month must use yyyy-MM format.") for
+  consistency with `GET /budgets?month=`/`GET /budgets/buckets?month=`, rather than inventing a
+  second validation style for the same shape of parameter.
 - No commit or push without explicit user permission.
 
 ## History
@@ -81,4 +68,5 @@ Completed — awaiting commit approval
 - 2026-08-10 — User merged `origin/dev` (2 new commits: Render Docker deployment) into local `dev`, then merged `dev` into `khoi` (clean auto-merge, one shared file `WalletService.cs`); the uncommitted `docs/api-reference.md` rewrite carried over onto `khoi` via stash. `khoi` now 6 commits ahead of `origin/khoi`, uncommitted. User confirmed future work happens on `khoi`.
 - 2026-08-10 — User shared `docs/10-08-2026-be-todos.md` (FE↔BE reconciliation output from the `finviet-mobile` team) as the next task; two independent items, sequenced as two branches per user's choice. Started item 1 on `feature/transaction-conditional-edit` (branched from `khoi`).
 - 2026-08-10 — Implemented item 1: `UpdateTransactionDto`/`UpdateTransactionCommand` extended from `{ categoryId? }` to `{ categoryId?, amount?, merchant?, transactionDate? }` with partial-update semantics (null = unchanged) on all four fields, including `categoryId` (a small compatible tightening from the old always-overwrite-with-null behavior — see Notes). New `TransactionRules.EnsureEditableFieldsAllowed` rejects `amount`/`merchant`/`transactionDate` on a `sepay_linked`-wallet transaction with 422 `synced_transaction_fields_locked` (checked unlocked in the handler via `IWalletRepository.GetByIdAsync`, since wallet type is immutable post-creation — no lock/race needed). New `ITransactionRepository.EditForCustomerAsync` mirrors the create/delete row-lock pattern: locks the wallet only when a synced field is actually being edited, reverses the old balance delta and applies the new one on amount change (422 `insufficient_balance`, reused code), writes merchant/date/category directly otherwise. `PATCH /classify` left untouched (still single-purpose set/clear, no lock, no field restriction). Added `InternalsVisibleTo` on `FinViet.Application` (matching the existing `FinViet.Infrastructure` pattern) so `TransactionRules` could be unit-tested directly; 7 new tests (`TC-TXN-U01..05`) cover `EnsureEditableFieldsAllowed`'s branches. All 143 unit tests pass, `dotnet build` 0 errors (2 pre-existing nullable warnings, unchanged). Balance-math/lock behavior in `EditForCustomerAsync` itself is not unit-testable (raw `FOR UPDATE` SQL needs real Postgres, same gap already accepted for `CreateManualForCustomerAsync`/`DeleteForCustomerAsync`) — verified instead by booting the API to confirm DI resolves cleanly (no local Postgres DB available in this environment to exercise the full path). `docs/api-reference.md` updated (Transactions DTO/PUT/PATCH sections split apart, new error code added to the table). Committed (`683780e`), merged into `khoi` (fast-forward), branch deleted, per explicit user instruction.
-- 2026-08-10 — User said "go ahead, item 2." Branch `feature/saving-goal-ledger-rework` created from `khoi`. Discovered while reading `SavingGoalService.cs` that 2c (per-action wallet choice on contribute) was **already implemented** on `khoi` — `ContributeSavingGoalRequest.FundingWalletId` and `ApplyContributionAsync`'s request-wallet-then-goal-wallet fallback already existed; the only real gap against 2c's own validation bullet was that the resolved funding wallet was never checked for `sepay_linked`. Implemented the rest: 2a `GET /saving-goals/{id}/contributions` (`SavingGoalContributionResponse[]`, newest first, 404 via null for a goal not owned by the caller); 2b `POST /saving-goals/{id}/withdraw` (`WithdrawSavingGoalRequest{amount,walletId,note?}`, required `Idempotency-Key`, 422 `goal_withdraw_exceeds_saved`/`goal_withdraw_target_sepay_unsupported`, books an `income` transaction crediting the wallet and a `SavingGoalContribution` row with `type="withdrawal"`); 2c's sepay gap closed with new 422 `goal_funding_wallet_sepay_unsupported` on both create's and contribute's funding-wallet resolution; 2d `note?` added to `ContributeSavingGoalRequest`/`WithdrawSavingGoalRequest`, persisted via a new `internal static SavingGoalService.ValidateNote` (255-char cap, matching the existing `savings_goal_contributions.note` column — no migration needed for that column, it already existed and was already EF-mapped, just never written to). New migration `V24__saving_goal_contribution_type.sql` adds the `type` column (`'contribution'` default, backfills existing rows, CHECK constraint) — same "run manually before starting the API" caveat as `V22`/`V23` (v3-schema skip in `DbInitializer`). **Necessary fix beyond the spec**: `DeleteGoalAsync` previously assumed every ledger entry was an `expense`/contribution and both rejected (`goal_ledger_invalid`) anything else and always reversed by adding the amount back — both wrong once `income`/withdrawal entries exist. Fixed to accept both types and reverse each with the correct sign via new `internal static SavingGoalService.ReversalDelta`, guarded by a new 422 `goal_ledger_reversal_insufficient_balance` if undoing a withdrawal would drive its wallet negative (the withdrawn cash already spent). 10 new unit tests (`TC-GOAL-U01..08`, one `[Theory]` with 3 cases) cover `GetContributionsAsync` (InMemory-testable, no DB locking involved) plus the two extracted pure helpers; the locked/transactional paths (`WithdrawAsync`, updated `ApplyContributionAsync`, updated `DeleteGoalAsync`) remain integration-only (raw `FOR UPDATE` SQL, same accepted gap as `CreateManualForCustomerAsync`). All 153 unit tests pass, `dotnet build` 0 errors (2 pre-existing nullable warnings, unchanged); API boots cleanly (DI resolves; DB init itself fails locally, no Postgres DB in this environment — same known gap as item 1). `docs/api-reference.md` updated (Saving Goals section: two new endpoints, two new DTOs, all four existing endpoints' validation/business-logic notes revised, 6 new error codes, migration note).
+- 2026-08-10 — User said "go ahead, item 2." Branch `feature/saving-goal-ledger-rework` created from `khoi`. Discovered while reading `SavingGoalService.cs` that 2c (per-action wallet choice on contribute) was **already implemented** on `khoi` — `ContributeSavingGoalRequest.FundingWalletId` and `ApplyContributionAsync`'s request-wallet-then-goal-wallet fallback already existed; the only real gap against 2c's own validation bullet was that the resolved funding wallet was never checked for `sepay_linked`. Implemented the rest: 2a `GET /saving-goals/{id}/contributions` (`SavingGoalContributionResponse[]`, newest first, 404 via null for a goal not owned by the caller); 2b `POST /saving-goals/{id}/withdraw` (`WithdrawSavingGoalRequest{amount,walletId,note?}`, required `Idempotency-Key`, 422 `goal_withdraw_exceeds_saved`/`goal_withdraw_target_sepay_unsupported`, books an `income` transaction crediting the wallet and a `SavingGoalContribution` row with `type="withdrawal"`); 2c's sepay gap closed with new 422 `goal_funding_wallet_sepay_unsupported` on both create's and contribute's funding-wallet resolution; 2d `note?` added to `ContributeSavingGoalRequest`/`WithdrawSavingGoalRequest`, persisted via a new `internal static SavingGoalService.ValidateNote` (255-char cap, matching the existing `savings_goal_contributions.note` column — no migration needed for that column, it already existed and was already EF-mapped, just never written to). New migration `V24__saving_goal_contribution_type.sql` adds the `type` column (`'contribution'` default, backfills existing rows, CHECK constraint) — same "run manually before starting the API" caveat as `V22`/`V23` (v3-schema skip in `DbInitializer`). **Necessary fix beyond the spec**: `DeleteGoalAsync` previously assumed every ledger entry was an `expense`/contribution and both rejected (`goal_ledger_invalid`) anything else and always reversed by adding the amount back — both wrong once `income`/withdrawal entries exist. Fixed to accept both types and reverse each with the correct sign via new `internal static SavingGoalService.ReversalDelta`, guarded by a new 422 `goal_ledger_reversal_insufficient_balance` if undoing a withdrawal would drive its wallet negative (the withdrawn cash already spent). 10 new unit tests (`TC-GOAL-U01..08`, one `[Theory]` with 3 cases) cover `GetContributionsAsync` (InMemory-testable, no DB locking involved) plus the two extracted pure helpers; the locked/transactional paths (`WithdrawAsync`, updated `ApplyContributionAsync`, updated `DeleteGoalAsync`) remain integration-only (raw `FOR UPDATE` SQL, same accepted gap as `CreateManualForCustomerAsync`). All 153 unit tests pass, `dotnet build` 0 errors (2 pre-existing nullable warnings, unchanged); API boots cleanly (DI resolves; DB init itself fails locally, no Postgres DB in this environment — same known gap as item 1). `docs/api-reference.md` updated (Saving Goals section: two new endpoints, two new DTOs, all four existing endpoints' validation/business-logic notes revised, 6 new error codes, migration note). Committed (`a7529af`), merged into `khoi` (fast-forward), branch deleted, per explicit user instruction.
+- 2026-08-10 — While staging item 2's commit, found `docs/10-08-2026-be-todos.md` had picked up a new §3 (income allocation arbitrary-month lookup) that hadn't been there when first read. Flagged it to the user; user confirmed they added it themselves and said to implement it. Branch `feature/income-allocation-month-lookup` created from `khoi`. Implemented: `GetIncomeAllocationQuery` gained an optional `Month` positional param; `ProfileController.GetIncomeAllocation` takes `[FromQuery] string? month`; `IIncomeAllocationService.GetSummaryAsync`/`IncomeAllocationService.GetSummaryAsync` gained an optional `string? month = null` — when given, resolves `Current` via the existing `GetEffectiveAsync(customerId, month, ct)` against that month instead of today's, and always returns `Pending = null`; when omitted, behavior is byte-for-byte the same as before. New `internal static IncomeAllocationService.NormalizeMonth` validates/zero-pads `yyyy-MM`, deliberately copying `BudgetService.ResolveMonthWindow`'s exact parsing rule and error message ("Month must use yyyy-MM format.") rather than inventing a second month-validation style. 10 new unit tests (`TC-INCALLOC-09..12`): pure `NormalizeMonth` cases (no DB) plus two InMemory-DB `GetSummaryAsync` tests proving the carried-forward-month resolution and that a real "next month" draft row never leaks into `Pending` when an explicit historical month is queried. All 163 unit tests pass, `dotnet build` 0 errors/0 warnings. `docs/api-reference.md` updated (Profile section: `GET /income-allocation` table row + endpoint doc revised for the new query param).

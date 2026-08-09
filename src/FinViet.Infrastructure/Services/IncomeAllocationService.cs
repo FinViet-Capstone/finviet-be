@@ -4,6 +4,7 @@ using FinViet.Application.Interfaces;
 using FinViet.Infrastructure.Persistence.Context;
 using FinViet.Infrastructure.Persistence.Entities;
 using Microsoft.EntityFrameworkCore;
+using ValidationException = FinViet.Application.Exceptions.ValidationException;
 
 namespace FinViet.Infrastructure.Services;
 
@@ -45,8 +46,15 @@ public class IncomeAllocationService : IIncomeAllocationService
     }
 
     public async Task<IncomeAllocationSummaryDto> GetSummaryAsync(
-        Guid customerId, CancellationToken cancellationToken = default)
+        Guid customerId, string? month = null, CancellationToken cancellationToken = default)
     {
+        if (!string.IsNullOrWhiteSpace(month))
+        {
+            var requestedMonth = NormalizeMonth(month);
+            var requested = await GetEffectiveAsync(customerId, requestedMonth, cancellationToken);
+            return new IncomeAllocationSummaryDto { Current = requested, Pending = null };
+        }
+
         var currentMonth = MonthKey(DateTime.UtcNow);
         var nextMonth = MonthKey(DateTime.UtcNow.AddMonths(1));
 
@@ -109,6 +117,25 @@ public class IncomeAllocationService : IIncomeAllocationService
     {
         var local = utcNow.AddHours(7);
         return $"{local.Year:D4}-{local.Month:D2}";
+    }
+
+    /// <summary>
+    /// Validates and normalizes a caller-supplied <c>yyyy-MM</c> string (same format rule as
+    /// <c>BudgetService.ResolveMonthWindow</c>, same error message for consistency). Pure/no I/O.
+    /// </summary>
+    internal static string NormalizeMonth(string month)
+    {
+        var parts = month.Trim().Split('-', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length != 2 ||
+            !int.TryParse(parts[0], out var year) ||
+            !int.TryParse(parts[1], out var parsedMonth) ||
+            year < 1 ||
+            parsedMonth is < 1 or > 12)
+        {
+            throw new ValidationException("Month must use yyyy-MM format.");
+        }
+
+        return $"{year:D4}-{parsedMonth:D2}";
     }
 
     /// <summary>

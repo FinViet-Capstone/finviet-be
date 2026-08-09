@@ -12,9 +12,15 @@ public interface IIncomeAllocationService
     Task<IncomeAllocationEntryDto> GetEffectiveAsync(
         Guid customerId, string month, CancellationToken cancellationToken = default);
 
-    /// <summary>Current-month effective allocation plus the next-month draft, if one is scheduled.</summary>
+    /// <summary>
+    /// Current-month effective allocation plus the next-month draft, if one is scheduled.
+    /// When <paramref name="month"/> (<c>yyyy-MM</c>) is given, <c>Current</c> resolves for that
+    /// arbitrary month instead and <c>Pending</c> is always null (it only means "next real
+    /// calendar month's draft", which isn't meaningful relative to an arbitrary queried month).
+    /// Throws a 400 validation error if <paramref name="month"/> isn't valid <c>yyyy-MM</c>.
+    /// </summary>
     Task<IncomeAllocationSummaryDto> GetSummaryAsync(
-        Guid customerId, CancellationToken cancellationToken = default);
+        Guid customerId, string? month = null, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Upserts the entry for next calendar month. Calling this again before rollover revises the

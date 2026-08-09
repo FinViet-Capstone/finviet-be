@@ -141,7 +141,7 @@ Every endpoint below documents **Validation** (exact field-level rules — Fluen
 | PUT | `/` | `UpdateProfileRequest` | `ApiResponse<ProfileDto>` |
 | PATCH | `/settings` | `UpdateProfileSettingsRequest` | `ApiResponse<ProfileDto>` |
 | POST | `/avatar` | multipart `file` (JPEG/PNG/WebP, ≤5 MB) | `ApiResponse<string>` (avatar URL) |
-| GET | `/income-allocation` | — | `ApiResponse<IncomeAllocationSummaryDto>` |
+| GET | `/income-allocation?month=` | query `month?` (yyyy-MM) | `ApiResponse<IncomeAllocationSummaryDto>` |
 | POST | `/income-allocation` | `ScheduleIncomeAllocationRequest` | `ApiResponse<IncomeAllocationEntryDto>` |
 
 **UpdateProfileRequest**: `{ fullName, monthlyIncomeExpected?, gender?, dateOfBirth?, onboardingDone?, needsPct?, wantsPct?, savingsPct? }`
@@ -162,8 +162,9 @@ Every endpoint below documents **Validation** (exact field-level rules — Fluen
 **Validation** (`AvatarValidationRules.Validate`, inline, not FluentValidation): content type must be `image/jpeg`/`image/png`/`image/webp` (case-insensitive) else 400 "Only JPEG, PNG, and WebP images are allowed."; size `> 5 MB` else 400 "Avatar file size must not exceed 5 MB."; magic-byte sniff (JPEG `FF D8 FF`, PNG `89 50 4E 47`, WebP `RIFF....WEBP`) must match the declared content type else 400 "File content does not match the declared image type."
 **Business logic**: 404 if customer missing. If an avatar already exists, the **old file is deleted first**. New file stored at `{WebRootPath}/avatars/{Guid:N}{ext}` (ext from content type, default `.jpg`); stored/returned URL is the relative path `/avatars/{name}`.
 
-### GET `/income-allocation`
-**Business logic** (`IncomeAllocationService`, ICT = UTC+7): `current` = `GetEffectiveAsync(customerId, currentMonth)` — picks the row with the **largest `EffectiveMonth` ≤ month** (carry-forward, ordinal string compare on `yyyy-MM`); if none qualifies, falls back to the `Customer` row's own `MonthlyIncomeExpected`/`NeedsPct`/`WantsPct`/`SavingsPct` (the 50/30/20 onboarding defaults). `pending` = the row with `EffectiveMonth == nextMonth`, or `null`.
+### GET `/income-allocation?month=`
+**Validation**: `month`, if provided, must be `yyyy-MM` (same format rule and error message as `GET /budgets?month=`'s `BudgetService.ResolveMonthWindow`) → 400 "Month must use yyyy-MM format." if not.
+**Business logic** (`IncomeAllocationService`, ICT = UTC+7): without `month`: `current` = `GetEffectiveAsync(customerId, currentMonth)` — picks the row with the **largest `EffectiveMonth` ≤ month** (carry-forward, ordinal string compare on `yyyy-MM`); if none qualifies, falls back to the `Customer` row's own `MonthlyIncomeExpected`/`NeedsPct`/`WantsPct`/`SavingsPct` (the 50/30/20 onboarding defaults). `pending` = the row with `EffectiveMonth == nextMonth`, or `null`. **With `month`**: the same carry-forward resolution runs against the requested month instead of today's — lets the caller ask "what was the split in effect for month X?" for any past or future month — and `current.effectiveMonth` in the response reflects whichever row actually carried forward (may be earlier than the requested month), matching `GET /budgets/buckets?month=`'s existing resolution semantics. `pending` is always `null` when `month` is given — "next real calendar month's draft" isn't a meaningful concept relative to an arbitrary queried month.
 
 ### POST `/income-allocation` (schedule)
 **Validation** (`ScheduleIncomeAllocationChangeCommandValidator`): `monthlyIncome >= 0`; each pct `InclusiveBetween(0, 100)`; sum-to-100 enforced in the validator.
