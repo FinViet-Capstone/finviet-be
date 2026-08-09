@@ -2,7 +2,7 @@
 
 <!-- Feature name and short description -->
 
-Core API isolated unit tests and test-case documents for Authentication/Authorization, Profile/Account, Category Management, and Wallet Management. The suite focuses on important deterministic business cases from each API function and records plausible unhandled cases for later implementation work.
+Render Docker deployment support for the FinViet ASP.NET Core API.
 
 ## Status
 
@@ -14,19 +14,17 @@ Completed — awaiting commit approval
 
 <!-- Goals and requirements -->
 
-- Add isolated xUnit coverage for important Auth, Profile/Account, Category, and Wallet business rules and state transitions.
-- Keep unit tests independent of the running API and real PostgreSQL: no HTTP calls, `Program` startup, Npgsql connection, migrations, seed data, or external provider traffic.
-- Use a uniquely named EF Core InMemory store only for simple handler/service state transitions; do not use it to claim PostgreSQL-specific behavior such as `ILIKE`, unique constraints, row locks, or concurrency.
-- Extract only existing deterministic validation/normalization helpers needed to test production logic without changing API behavior.
-- Produce a dedicated Excel/Word unit-test catalog following the supplied per-function test template, while preserving the historical HTTP integration-test documents.
-- Document important code gaps and deferred PostgreSQL/API/provider scenarios with suggested follow-up work; do not fix those product defects in this pass.
+- Add a multi-stage .NET 8 `Dockerfile` that restores, publishes, and runs `FinViet.Api` on Render.
+- Bind ASP.NET Core to Render's public web-service port on `0.0.0.0`.
+- Add a `.dockerignore` that excludes local build output, tests, editor metadata, local configuration, and credentials from the Docker build context.
+- Keep runtime configuration outside the image and provide it through Render environment variables.
 
 ## Notes
 
 <!-- Any extra notes -->
 
-- Generated unit-test documents live separately under `tests/test-cases/unit-business-logic/` so they do not overwrite the existing `FinViet_TestCases.*` integration report.
-- Case status is evidence-based: only successfully executed xUnit cases are marked Pass; PostgreSQL/API/provider-only cases are explicitly Deferred.
+- Render will deploy the repository root using the Docker runtime; no Render build/start commands are needed.
+- `src/FinViet.Api/appsettings.json` remains local-only and must not enter the Docker build context.
 - No commit or push without explicit user permission.
 
 ## History
@@ -48,3 +46,5 @@ Completed — awaiting commit approval
 - 2026-07-27 — Asked user about remaining items 3–5: Google OAuth (item 3) skipped for now — no Firebase project configured yet. Subscriptions (item 5) skipped for now — a teammate is building a separate payment endpoint with a different provider; SePay is confirmed transaction-sync only. Photo extraction (item 4): user chose a provider-agnostic scaffold now, real OCR provider credentials to follow later. Started item 4. Branch `feature/photo-extraction-ocr-scaffold` created.
 - 2026-07-27 — Implemented: `IReceiptOcrService` (`Application/Interfaces`), `OcrOptions` + placeholder `UnconfiguredReceiptOcrService` (`Infrastructure/ExternalServices/Ocr/`, throws `IntegrationUnavailableException("ocr_not_configured")` — same pattern as `SepayWalletService`'s "not configured" checks), DI registration in `DependencyInjection.cs`, and `POST /api/extract/photo` on `ExtractController` (8 MB / jpg-jpeg-png-heic validation, returns `ApiResponse<ExtractResponse>` reusing the SMS/CSV shape). Updated `docs/api-reference.md`. Mobile's `extractFromPhoto` intentionally left on the mock (see Goals) since the endpoint currently always 503s. `dotnet build` 0 errors, all 36 unit tests pass. No new unit tests added — the only branch worth testing (config-empty → throw) is already exercised implicitly by every call until a provider is configured; revisit when a real provider implementation lands.
 - 2026-07-31 — Implemented isolated unit coverage for core Auth, Profile/Account, Category, and Wallet logic on `feature/core-api-unit-tests`. Added EF Core InMemory/Moq test infrastructure with no API or PostgreSQL connection, extracted existing deterministic category/wallet/avatar rules without changing contracts, and added handler/service/validator/state tests. Full Application unit suite: 136 passed, 0 failed, 0 skipped; solution build passes with 0 errors (2 pre-existing nullable warnings). Added dedicated unit-test catalog/gap report and generated Excel/Word artifacts: 4 groups, 20 functions, 40 passed catalog cases, 19 deferred integration/provider cases, and 18 code gaps.
+- 2026-08-09 — Started Render Docker deployment support; documenting the container build/runtime contract before implementation.
+- 2026-08-09 — Added a multi-stage .NET 8 `Dockerfile` for Render and a `.dockerignore` excluding local settings, credentials, build output, tests, and editor metadata. Release solution build passed with 0 errors and 6 existing nullable warnings. Docker image build could not be executed because the local Docker daemon is not running.
