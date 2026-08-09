@@ -83,6 +83,19 @@ internal static class TransactionRules
         if (type is "transfer_out" or "transfer_in")
             throw new BusinessRuleException("Transfer legs cannot be reclassified.", "transfer_managed");
     }
+
+    // amount/merchant/transactionDate are provider-authoritative on a sepay_linked wallet
+    // (bank-sync owns them); only categoryId may still change there.
+    public static void EnsureEditableFieldsAllowed(string? walletType, bool amountProvided, bool merchantProvided, bool dateProvided)
+    {
+        if (!amountProvided && !merchantProvided && !dateProvided)
+            return;
+
+        if (string.Equals(walletType, "sepay_linked", StringComparison.OrdinalIgnoreCase))
+            throw new BusinessRuleException(
+                "Only the category can be changed for transactions from a bank-synced wallet.",
+                "synced_transaction_fields_locked");
+    }
 }
 
 public class CreateTransactionHandler : IRequestHandler<CreateTransactionCommand, TransactionResponseDto>
@@ -165,15 +178,18 @@ public class CreateTransactionHandler : IRequestHandler<CreateTransactionCommand
 public class UpdateTransactionHandler : IRequestHandler<UpdateTransactionCommand, TransactionResponseDto>
 {
     private readonly ITransactionRepository _transactionRepository;
+    private readonly IWalletRepository _walletRepository;
     private readonly ICategoryService _categoryService;
     private readonly IBudgetService _budgetService;
 
     public UpdateTransactionHandler(
         ITransactionRepository transactionRepository,
+        IWalletRepository walletRepository,
         ICategoryService categoryService,
         IBudgetService budgetService)
     {
         _transactionRepository = transactionRepository;
+        _walletRepository = walletRepository;
         _categoryService = categoryService;
         _budgetService = budgetService;
     }
@@ -189,14 +205,40 @@ public class UpdateTransactionHandler : IRequestHandler<UpdateTransactionCommand
 
         var type = TransactionRules.Normalize(transaction.TransactionType);
         TransactionRules.EnsureNotTransfer(type);
-        await TransactionRules.ValidateCategoryAsync(_categoryService, request.CategoryId, type, cancellationToken);
 
-        var result = (await _transactionRepository.ClassifyAsync(
+        var amountProvided = request.Amount.HasValue;
+        var merchantProvided = request.Merchant is not null;
+        var dateProvided = request.TransactionDate.HasValue;
+
+        // Wallet type is immutable after creation (WalletRules.ValidateUpdate rejects changing
+        // it), so this pre-lock read is race-free — no need to re-check under the repo's lock.
+        if (amountProvided || merchantProvided || dateProvided)
+        {
+            var wallet = await _walletRepository.GetByIdAsync(transaction.WalletId, cancellationToken);
+            TransactionRules.EnsureEditableFieldsAllowed(wallet?.WalletType, amountProvided, merchantProvided, dateProvided);
+        }
+
+        if (amountProvided && request.Amount!.Value <= 0)
+            throw new BadRequestException("Amount must be greater than zero.");
+
+        var categoryId = request.CategoryId;
+        if (categoryId == "cat_income")
+            categoryId = "cat_income_other";
+        if (categoryId is not null)
+            await TransactionRules.ValidateCategoryAsync(_categoryService, categoryId, type, cancellationToken);
+
+        var result = await _transactionRepository.EditForCustomerAsync(
+            request.CustomerId,
             request.TransactionId,
-            request.CategoryId,
-            cancellationToken))!;
+            categoryId,
+            request.Amount,
+            request.Merchant,
+            request.TransactionDate,
+            cancellationToken);
+        if (result is null)
+            throw new NotFoundException("Transaction", request.TransactionId);
 
-        // Recategorizing an expense may push a category over its budget → re-evaluate alerts.
+        // Recategorizing/reamounting an expense may push a category over its budget → re-evaluate alerts.
         if (type == "expense")
             await _budgetService.SyncBudgetOnTransactionChangeAsync(
                 request.CustomerId,

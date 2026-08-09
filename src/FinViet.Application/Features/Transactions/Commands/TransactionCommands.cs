@@ -21,6 +21,9 @@ public class UpdateTransactionCommand : IRequest<TransactionResponseDto>
     public Guid CustomerId { get; set; }
     public Guid TransactionId { get; set; }
     public string? CategoryId { get; set; }
+    public decimal? Amount { get; set; }
+    public string? Merchant { get; set; }
+    public DateTime? TransactionDate { get; set; }
 }
 
 public class DeleteTransactionCommand : IRequest<bool>

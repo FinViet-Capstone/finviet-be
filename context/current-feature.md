@@ -2,7 +2,8 @@
 
 <!-- Feature name and short description -->
 
-Render Docker deployment support for the FinViet ASP.NET Core API.
+Transactions: wallet-type-conditional editable fields (item 1 of `docs/10-08-2026-be-todos.md`,
+from FE↔BE mobile-integration reconciliation).
 
 ## Status
 
@@ -14,17 +15,30 @@ Completed — awaiting commit approval
 
 <!-- Goals and requirements -->
 
-- Add a multi-stage .NET 8 `Dockerfile` that restores, publishes, and runs `FinViet.Api` on Render.
-- Bind ASP.NET Core to Render's public web-service port on `0.0.0.0`.
-- Add a `.dockerignore` that excludes local build output, tests, editor metadata, local configuration, and credentials from the Docker build context.
-- Keep runtime configuration outside the image and provide it through Render environment variables.
+- Extend `PUT /api/transactions/{id}` (`UpdateTransactionDto`) from `{ categoryId? }` to
+  `{ categoryId?, amount?, merchant?, transactionDate? }`.
+- A transaction on a `basic` wallet (manual/photo/CSV/SMS entry) becomes fully editable on
+  those new fields, matching what manual-entry creation already allows.
+- A transaction sourced from a `sepay_linked` wallet stays read-only except for category —
+  reject `amount`/`merchant`/`transactionDate` in the request body with a new 422
+  `synced_transaction_fields_locked` error code.
+- Amount edits reverse the old wallet-balance delta and apply the new one inside the same
+  row-locked DB transaction pattern used by create/delete (`insufficient_balance` reused).
+- `walletId` and `transactionType` remain immutable — out of scope.
+- Update `docs/api-reference.md` (Transactions section) once implemented.
 
 ## Notes
 
 <!-- Any extra notes -->
 
-- Render will deploy the repository root using the Docker runtime; no Render build/start commands are needed.
-- `src/FinViet.Api/appsettings.json` remains local-only and must not enter the Docker build context.
+- Spec source: `docs/10-08-2026-be-todos.md` §1 — written by the user after an FE↔BE
+  reconciliation pass against the mobile client.
+- Semantics decision: the existing `PUT` always overwrote `CategoryId` with whatever was in
+  the body (including `null` when omitted, silently uncategorizing). The TODO spec's wording
+  ("if categoryId provided", "if amount provided") implies partial-update semantics instead —
+  a field left `null`/absent is left unchanged. This is a small compatible behavior tightening,
+  applied uniformly to all four `PUT` fields; `PATCH /classify` (single-purpose, explicit
+  set/clear) is untouched.
 - No commit or push without explicit user permission.
 
 ## History
@@ -48,3 +62,7 @@ Completed — awaiting commit approval
 - 2026-07-31 — Implemented isolated unit coverage for core Auth, Profile/Account, Category, and Wallet logic on `feature/core-api-unit-tests`. Added EF Core InMemory/Moq test infrastructure with no API or PostgreSQL connection, extracted existing deterministic category/wallet/avatar rules without changing contracts, and added handler/service/validator/state tests. Full Application unit suite: 136 passed, 0 failed, 0 skipped; solution build passes with 0 errors (2 pre-existing nullable warnings). Added dedicated unit-test catalog/gap report and generated Excel/Word artifacts: 4 groups, 20 functions, 40 passed catalog cases, 19 deferred integration/provider cases, and 18 code gaps.
 - 2026-08-09 — Started Render Docker deployment support; documenting the container build/runtime contract before implementation.
 - 2026-08-09 — Added a multi-stage .NET 8 `Dockerfile` for Render and a `.dockerignore` excluding local settings, credentials, build output, tests, and editor metadata. Release solution build passed with 0 errors and 6 existing nullable warnings. Docker image build could not be executed because the local Docker daemon is not running.
+- 2026-08-10 — `docs/api-reference.md` rewritten with a full validation-rules + business-logic pass across every controller (8 parallel research agents, one per feature area), at the user's request ahead of wiring the mobile client. Uncommitted at the time; user then directed `dev`→`khoi` sync (see below) before any commit happened.
+- 2026-08-10 — User merged `origin/dev` (2 new commits: Render Docker deployment) into local `dev`, then merged `dev` into `khoi` (clean auto-merge, one shared file `WalletService.cs`); the uncommitted `docs/api-reference.md` rewrite carried over onto `khoi` via stash. `khoi` now 6 commits ahead of `origin/khoi`, uncommitted. User confirmed future work happens on `khoi`.
+- 2026-08-10 — User shared `docs/10-08-2026-be-todos.md` (FE↔BE reconciliation output from the `finviet-mobile` team) as the next task; two independent items, sequenced as two branches per user's choice. Started item 1 on `feature/transaction-conditional-edit` (branched from `khoi`).
+- 2026-08-10 — Implemented item 1: `UpdateTransactionDto`/`UpdateTransactionCommand` extended from `{ categoryId? }` to `{ categoryId?, amount?, merchant?, transactionDate? }` with partial-update semantics (null = unchanged) on all four fields, including `categoryId` (a small compatible tightening from the old always-overwrite-with-null behavior — see Notes). New `TransactionRules.EnsureEditableFieldsAllowed` rejects `amount`/`merchant`/`transactionDate` on a `sepay_linked`-wallet transaction with 422 `synced_transaction_fields_locked` (checked unlocked in the handler via `IWalletRepository.GetByIdAsync`, since wallet type is immutable post-creation — no lock/race needed). New `ITransactionRepository.EditForCustomerAsync` mirrors the create/delete row-lock pattern: locks the wallet only when a synced field is actually being edited, reverses the old balance delta and applies the new one on amount change (422 `insufficient_balance`, reused code), writes merchant/date/category directly otherwise. `PATCH /classify` left untouched (still single-purpose set/clear, no lock, no field restriction). Added `InternalsVisibleTo` on `FinViet.Application` (matching the existing `FinViet.Infrastructure` pattern) so `TransactionRules` could be unit-tested directly; 7 new tests (`TC-TXN-U01..05`) cover `EnsureEditableFieldsAllowed`'s branches. All 143 unit tests pass, `dotnet build` 0 errors (2 pre-existing nullable warnings, unchanged). Balance-math/lock behavior in `EditForCustomerAsync` itself is not unit-testable (raw `FOR UPDATE` SQL needs real Postgres, same gap already accepted for `CreateManualForCustomerAsync`/`DeleteForCustomerAsync`) — verified instead by booting the API to confirm DI resolves cleanly (no local Postgres DB available in this environment to exercise the full path). `docs/api-reference.md` updated (Transactions DTO/PUT/PATCH sections split apart, new error code added to the table).

@@ -15,7 +15,12 @@ public class CreateTransactionDto
 
 public class UpdateTransactionDto
 {
+    // Partial update: a field left null is left unchanged. amount/merchant/transactionDate are
+    // rejected (422 synced_transaction_fields_locked) when the transaction's wallet is sepay_linked.
     public string? CategoryId { get; set; }
+    public decimal? Amount { get; set; }
+    public string? Merchant { get; set; }
+    public DateTime? TransactionDate { get; set; }
 }
 
 public class ClassifyTransactionDto

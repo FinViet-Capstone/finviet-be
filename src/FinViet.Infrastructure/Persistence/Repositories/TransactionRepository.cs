@@ -403,6 +403,68 @@ public class TransactionRepository : ITransactionRepository
         return MapToDto(transaction);
     }
 
+    public async Task<TransactionResponseDto?> EditForCustomerAsync(
+        Guid customerId,
+        Guid transactionId,
+        string? categoryId,
+        decimal? amount,
+        string? merchant,
+        DateTime? transactionDate,
+        CancellationToken cancellationToken = default)
+    {
+        await using var databaseTransaction = await _context.Database.BeginTransactionAsync(cancellationToken);
+
+        var target = await _context.Transactions
+            .FirstOrDefaultAsync(t => t.TransactionId == transactionId
+                && (t.CustomerId == customerId || (t.Wallet != null && t.Wallet.CustomerId == customerId)),
+                cancellationToken);
+        if (target is null)
+            return null;
+
+        var editingSyncedFields = amount.HasValue || merchant is not null || transactionDate.HasValue;
+        if (editingSyncedFields)
+        {
+            var wallet = (await LockWalletsAsync(new[] { target.WalletId }, cancellationToken)).SingleOrDefault();
+            if (wallet is null)
+                return null;
+
+            if (string.Equals(wallet.WalletType, "sepay_linked", StringComparison.OrdinalIgnoreCase))
+                throw new BusinessRuleException(
+                    "Only the category can be changed for transactions from a bank-synced wallet.",
+                    "synced_transaction_fields_locked");
+
+            if (amount.HasValue)
+            {
+                var normalizedType = NormalizeType(target.TransactionType);
+                var reversedBalance = (wallet.Balance ?? 0m) + ReverseBalanceDelta(target.TransactionType, target.Amount);
+                var newBalance = reversedBalance + (normalizedType == "income" ? amount.Value : -amount.Value);
+                if (newBalance < 0)
+                    throw new BusinessRuleException("Source wallet does not have enough balance.", "insufficient_balance");
+
+                wallet.Balance = newBalance;
+                wallet.UpdatedAt = DateTime.UtcNow;
+                target.Amount = amount.Value;
+            }
+
+            if (merchant is not null)
+                target.Merchant = merchant;
+
+            if (transactionDate.HasValue)
+                target.TransactionDate = transactionDate.Value.Kind == DateTimeKind.Unspecified
+                    ? DateTime.SpecifyKind(transactionDate.Value, DateTimeKind.Utc)
+                    : transactionDate.Value.ToUniversalTime();
+        }
+
+        if (categoryId is not null)
+            target.CategoryId = categoryId;
+
+        target.UpdatedAt = DateTime.UtcNow;
+        await _context.SaveChangesAsync(cancellationToken);
+        await databaseTransaction.CommitAsync(cancellationToken);
+
+        return MapToDto(target);
+    }
+
     private static string NormalizeType(string type)
         => type.Trim().ToLowerInvariant() switch
         {

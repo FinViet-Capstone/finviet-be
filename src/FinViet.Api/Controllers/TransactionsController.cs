@@ -89,7 +89,10 @@ public class TransactionsController : ControllerBase
         {
             CustomerId = GetCustomerId(),
             TransactionId = id,
-            CategoryId = dto.CategoryId
+            CategoryId = dto.CategoryId,
+            Amount = dto.Amount,
+            Merchant = dto.Merchant,
+            TransactionDate = dto.TransactionDate
         };
 
         var result = await _mediator.Send(command);
