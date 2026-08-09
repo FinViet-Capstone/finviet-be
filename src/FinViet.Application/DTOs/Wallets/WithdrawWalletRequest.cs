@@ -1,10 +1,10 @@
 namespace FinViet.Application.DTOs.Wallets;
 
 /// <summary>
-/// Rút tiền: money out of a Finverse-linked bank wallet (<see cref="FromWalletId"/>), recorded as
+/// Rút tiền: money out of a SePay-linked bank wallet (<see cref="FromWalletId"/>), recorded as
 /// an <c>expense</c> on that wallet. <see cref="ToWalletId"/> is the optional receiving wallet
 /// (ví nhận tiền rút) — when set, the amount is credited to it as income; when null, the withdrawn
-/// cash simply leaves the tracked wallets. The receiving wallet cannot be a Finverse-linked wallet.
+/// cash simply leaves the tracked wallets. The receiving wallet cannot be a SePay-linked wallet.
 /// </summary>
 public class WithdrawWalletRequest
 {

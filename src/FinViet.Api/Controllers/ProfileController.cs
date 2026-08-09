@@ -1,7 +1,10 @@
 using FinViet.Api.Common;
 using FinViet.Application.Common;
+using FinViet.Application.Features.Profile.Commands.ScheduleIncomeAllocationChange;
 using FinViet.Application.Features.Profile.Commands.UpdateProfile;
+using FinViet.Application.Features.Profile.Commands.UpdateProfileSettings;
 using FinViet.Application.Features.Profile.Commands.UploadAvatar;
+using FinViet.Application.Features.Profile.Queries.GetIncomeAllocation;
 using FinViet.Application.Features.Profile.Queries.GetProfile;
 using FinViet.Domain.Enums;
 using MediatR;
@@ -38,7 +41,45 @@ public class ProfileController : ControllerBase
         var customerId = User.GetCustomerId();
         var result     = await _mediator.Send(
             new UpdateProfileCommand(customerId, request.FullName, request.MonthlyIncomeExpected,
-                request.Gender, request.DateOfBirth, request.OnboardingDone), ct);
+                request.Gender, request.DateOfBirth, request.OnboardingDone,
+                request.NeedsPct, request.WantsPct, request.SavingsPct), ct);
+
+        return Ok(ApiResponse<object>.Ok(result));
+    }
+
+    /// <summary>Phân bổ thu nhập hiện tại (đã khóa) và bản nháp cho tháng sau, nếu có.</summary>
+    [HttpGet("income-allocation")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetIncomeAllocation(CancellationToken ct)
+    {
+        var customerId = User.GetCustomerId();
+        var result     = await _mediator.Send(new GetIncomeAllocationQuery(customerId), ct);
+        return Ok(ApiResponse<object>.Ok(result));
+    }
+
+    /// <summary>Đặt lịch thay đổi thu nhập/phân bổ hũ, có hiệu lực từ đầu tháng sau.</summary>
+    [HttpPost("income-allocation")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> ScheduleIncomeAllocationChange(
+        [FromBody] ScheduleIncomeAllocationRequest request, CancellationToken ct)
+    {
+        var customerId = User.GetCustomerId();
+        var result     = await _mediator.Send(
+            new ScheduleIncomeAllocationChangeCommand(
+                customerId, request.MonthlyIncome, request.NeedsPct, request.WantsPct, request.SavingsPct), ct);
+
+        return Ok(ApiResponse<object>.Ok(result));
+    }
+
+    /// <summary>Cập nhật giao diện (theme) và ngưỡng cảnh báo ngân sách.</summary>
+    [HttpPatch("settings")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> UpdateProfileSettings(
+        [FromBody] UpdateProfileSettingsRequest request, CancellationToken ct)
+    {
+        var customerId = User.GetCustomerId();
+        var result     = await _mediator.Send(
+            new UpdateProfileSettingsCommand(customerId, request.Theme, request.NotifBudgetThresholds), ct);
 
         return Ok(ApiResponse<object>.Ok(result));
     }
@@ -69,4 +110,17 @@ public record UpdateProfileRequest(
     decimal? MonthlyIncomeExpected,
     Gender? Gender = null,
     DateOnly? DateOfBirth = null,
-    bool? OnboardingDone = null);
+    bool? OnboardingDone = null,
+    int? NeedsPct = null,
+    int? WantsPct = null,
+    int? SavingsPct = null);
+
+public record ScheduleIncomeAllocationRequest(
+    decimal MonthlyIncome,
+    int NeedsPct,
+    int WantsPct,
+    int SavingsPct);
+
+public record UpdateProfileSettingsRequest(
+    AppTheme? Theme = null,
+    int[]? NotifBudgetThresholds = null);

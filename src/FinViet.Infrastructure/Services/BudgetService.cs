@@ -17,21 +17,24 @@ public class BudgetService : IBudgetService
     // Tên category catch-all "Chưa phân loại" — không tính vào Budget Adherence.
     private const string UncategorizedName = "Chưa phân loại";
 
-    // Các mốc cảnh báo (business logic 2b: push khi vượt 80% và 100%).
-    private const decimal WarningThreshold = 80m;
-    private const decimal ExceededThreshold = 100m;
+    // Mốc cảnh báo mặc định (business logic 2b: push khi vượt 80% và 100%) — dùng khi customer
+    // chưa có customer_settings.notif_budget_thresholds (chưa từng đổi setting nào).
+    private static readonly int[] DefaultAlertThresholds = { 80, 100 };
 
     private readonly FinVietDbContext _dbContext;
     private readonly IBudgetAlertNotifier _budgetAlertNotifier;
+    private readonly IIncomeAllocationService _incomeAllocationService;
     private readonly ILogger<BudgetService> _logger;
 
     public BudgetService(
         FinVietDbContext dbContext,
         IBudgetAlertNotifier budgetAlertNotifier,
+        IIncomeAllocationService incomeAllocationService,
         ILogger<BudgetService> logger)
     {
         _dbContext = dbContext;
         _budgetAlertNotifier = budgetAlertNotifier;
+        _incomeAllocationService = incomeAllocationService;
         _logger = logger;
     }
 
@@ -64,14 +67,17 @@ public class BudgetService : IBudgetService
         CancellationToken cancellationToken = default)
     {
         var window = ResolveMonthWindow(month);
-        var customer = await _dbContext.Customers
+        var customerExists = await _dbContext.Customers
             .AsNoTracking()
-            .FirstOrDefaultAsync(c => c.CustomerId == customerId, cancellationToken);
+            .AnyAsync(c => c.CustomerId == customerId, cancellationToken);
 
-        if (customer is null)
+        if (!customerExists)
             throw new NotFoundException("Customer not found.");
 
-        var monthlyIncome = customer.MonthlyIncomeExpected ?? 0m;
+        // Resolved per requested month rather than read live off Customer, so a change scheduled
+        // for next month never retroactively moves this month's (or a past month's) numbers.
+        var allocation = await _incomeAllocationService.GetEffectiveAsync(customerId, window.Key, cancellationToken);
+        var monthlyIncome = allocation.MonthlyIncome;
         var budgets = await _dbContext.Budgets
             .AsNoTracking()
             .Include(b => b.Category)
@@ -92,9 +98,9 @@ public class BudgetService : IBudgetService
 
         var bucketConfigs = new[]
         {
-            new { Bucket = "needs", Pct = (decimal)customer.NeedsPct },
-            new { Bucket = "wants", Pct = (decimal)customer.WantsPct },
-            new { Bucket = "savings", Pct = (decimal)customer.SavingsPct }
+            new { Bucket = "needs", Pct = (decimal)allocation.NeedsPct },
+            new { Bucket = "wants", Pct = (decimal)allocation.WantsPct },
+            new { Bucket = "savings", Pct = (decimal)allocation.SavingsPct }
         };
 
         var summaries = new List<BucketSummaryResponse>();
@@ -552,6 +558,15 @@ public class BudgetService : IBudgetService
         if (budgets.Count == 0)
             return;
 
+        var customerThresholds = await _dbContext.CustomerSettings
+            .AsNoTracking()
+            .Where(s => s.CustomerId == customerId)
+            .Select(s => s.NotifBudgetThresholds)
+            .FirstOrDefaultAsync(cancellationToken);
+        var thresholds = customerThresholds is { Length: 2 } ? customerThresholds : DefaultAlertThresholds;
+        var warningThreshold = (decimal)thresholds[0];
+        var exceededThreshold = (decimal)thresholds[1];
+
         var spentByScope = await ComputeFlatScopedSpentAsync(
             customerId,
             window,
@@ -569,15 +584,15 @@ public class BudgetService : IBudgetService
             }
 
             var response = BuildFlatBudgetResponse(budget, spentByScope);
-            var crossedThreshold = response.Percentage >= ExceededThreshold
-                ? ExceededThreshold
-                : response.Percentage >= WarningThreshold
-                    ? WarningThreshold
+            var crossedThreshold = response.Percentage >= exceededThreshold
+                ? exceededThreshold
+                : response.Percentage >= warningThreshold
+                    ? warningThreshold
                     : 0m;
 
             if (crossedThreshold > budget.LastAlertThreshold)
             {
-                var alert = CreateFlatBudgetAlert(customerId, response, crossedThreshold);
+                var alert = CreateFlatBudgetAlert(customerId, response, crossedThreshold, exceededThreshold);
                 pendingAlerts.Add(alert);
                 _dbContext.Notifications.Add(new Notification
                 {
@@ -593,7 +608,7 @@ public class BudgetService : IBudgetService
 
                 budget.LastAlertThreshold = crossedThreshold;
             }
-            else if (response.Percentage < WarningThreshold && budget.LastAlertThreshold > 0m)
+            else if (response.Percentage < warningThreshold && budget.LastAlertThreshold > 0m)
             {
                 budget.LastAlertThreshold = 0m;
             }
@@ -616,9 +631,10 @@ public class BudgetService : IBudgetService
     private static FlatBudgetAlertPayload CreateFlatBudgetAlert(
         Guid customerId,
         BudgetResponse budget,
-        decimal crossedThreshold)
+        decimal crossedThreshold,
+        decimal exceededThreshold)
     {
-        var isExceeded = crossedThreshold >= ExceededThreshold;
+        var isExceeded = crossedThreshold >= exceededThreshold;
         var title = isExceeded
             ? $"Budget exceeded: {budget.CategoryName}"
             : $"Budget warning: {budget.CategoryName}";

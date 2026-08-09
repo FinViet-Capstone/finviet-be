@@ -13,16 +13,8 @@ namespace FinViet.Infrastructure.Services;
 
 public class WalletService : IWalletService
 {
-    private const string BasicWalletType = "basic";
-    private const string FinverseLinkedWalletType = "finverse_linked";
+    private const string SepayLinkedWalletType = "sepay_linked";
     private const int MaximumWalletsPerCustomer = 10;
-
-    // Finverse-linked wallets are created by the Finverse link flow, not manually, so they are not
-    // listed here; manual creation only yields a basic wallet (aliases normalize to basic).
-    private static readonly HashSet<string> AllowedWalletTypes = new(StringComparer.OrdinalIgnoreCase)
-    {
-        BasicWalletType, "CASH", "BANK_ACCOUNT", "CREDIT_CARD", "E_WALLET", "INVESTMENT"
-    };
 
     private readonly FinVietDbContext _dbContext;
 
@@ -33,23 +25,37 @@ public class WalletService : IWalletService
 
     public async Task<WalletListResponse> GetWalletsAsync(Guid customerId, CancellationToken cancellationToken = default)
     {
-        var wallets = await _dbContext.Wallets
+        // Projected to an intermediate shape because the account-number masking below has no SQL
+        // translation; EF would otherwise fail to compose the Select.
+        var rows = await _dbContext.Wallets
             .AsNoTracking()
             .Where(w => w.CustomerId == customerId && !w.IsDeleted)
             .OrderBy(w => w.WalletName)
-            .Select(w => new WalletResponse
+            .Select(w => new
             {
-                WalletId = w.WalletId,
-                CustomerId = customerId,
-                WalletName = w.WalletName,
-                WalletType = NormalizeStoredWalletType(w.WalletType),
-                Balance = w.Balance ?? 0m,
-                FinverseAccountId = w.FinverseLink != null ? w.FinverseLink.FinverseAccountId : null,
-                InstitutionName = w.FinverseLink != null ? w.FinverseLink.InstitutionName : null,
-                AccountMask = w.FinverseLink != null ? w.FinverseLink.AccountMask : null,
-                LastSyncedAt = w.FinverseLink != null ? w.FinverseLink.LastSyncedAt : null
+                w.WalletId,
+                w.WalletName,
+                w.WalletType,
+                w.Balance,
+                Link = w.SepayLink
             })
             .ToListAsync(cancellationToken);
+
+        var wallets = rows
+            .Select(row => new WalletResponse
+            {
+                WalletId = row.WalletId,
+                CustomerId = customerId,
+                WalletName = row.WalletName,
+                WalletType = WalletRules.NormalizeStoredWalletType(row.WalletType),
+                Balance = row.Balance ?? 0m,
+                SepayBankAccountId = row.Link?.SepayBankAccountId,
+                InstitutionName = row.Link?.BankShortName,
+                AccountMask = AccountNumberMask.Apply(row.Link?.AccountNumber),
+                AuthMode = row.Link?.AuthMode,
+                LastSyncedAt = row.Link?.LastSyncedAt
+            })
+            .ToList();
 
         return new WalletListResponse
         {
@@ -62,7 +68,7 @@ public class WalletService : IWalletService
     {
         var wallet = await _dbContext.Wallets
             .AsNoTracking()
-            .Include(w => w.FinverseLink)
+            .Include(w => w.SepayLink)
             .FirstOrDefaultAsync(w => w.CustomerId == customerId && w.WalletId == walletId && !w.IsDeleted, cancellationToken);
 
         return wallet is null ? null : ToResponse(wallet);
@@ -70,7 +76,7 @@ public class WalletService : IWalletService
 
     public async Task<WalletResponse> CreateWalletAsync(Guid customerId, CreateWalletRequest request, CancellationToken cancellationToken = default)
     {
-        ValidateCreate(request);
+        WalletRules.ValidateCreate(request);
         await EnsureCustomerExistsAsync(customerId, cancellationToken);
 
         var walletCount = await _dbContext.Wallets
@@ -90,7 +96,7 @@ public class WalletService : IWalletService
             WalletId = Guid.NewGuid(),
             CustomerId = customerId,
             WalletName = trimmedName,
-            WalletType = NormalizeWalletType(request.WalletType),
+            WalletType = WalletRules.NormalizeWalletType(request.WalletType),
             Balance = request.InitialBalance
         };
 
@@ -102,10 +108,10 @@ public class WalletService : IWalletService
 
     public async Task<WalletResponse?> UpdateWalletAsync(Guid customerId, Guid walletId, UpdateWalletRequest request, CancellationToken cancellationToken = default)
     {
-        ValidateUpdate(request);
+        WalletRules.ValidateUpdate(request);
 
         var wallet = await _dbContext.Wallets
-            .Include(w => w.FinverseLink)
+            .Include(w => w.SepayLink)
             .FirstOrDefaultAsync(w => w.CustomerId == customerId && w.WalletId == walletId && !w.IsDeleted, cancellationToken);
 
         if (wallet is null)
@@ -121,9 +127,6 @@ public class WalletService : IWalletService
 
             wallet.WalletName = newName;
         }
-
-        if (!string.IsNullOrWhiteSpace(request.WalletType))
-            throw new ValidationException("Wallet type cannot be changed after creation.");
 
         await _dbContext.SaveChangesAsync(cancellationToken);
         return ToResponse(wallet);
@@ -175,11 +178,11 @@ public class WalletService : IWalletService
             cancellationToken);
     }
 
-    // Withdrawal (rút tiền) is a special money-out: the amount leaves the Finverse-linked bank
+    // Withdrawal (rút tiền) is a special money-out: the amount leaves the SePay-linked bank
     // wallet as a normal `expense` (counted as spending — NOT a transfer). An optional receiving
     // wallet (ToWalletId, nullable) is credited the amount as `income`; when null the cash simply
-    // left the tracked wallets. Balance changes on a read-only Finverse wallet are overwritten by
-    // the authoritative bank balance on the next Finverse sync.
+    // left the tracked wallets. Balance changes on a read-only SePay wallet are overwritten by
+    // the authoritative bank balance on the next SePay sync.
     public async Task<WithdrawWalletResponse> WithdrawAsync(
         Guid customerId,
         WithdrawWalletRequest request,
@@ -236,12 +239,12 @@ public class WalletService : IWalletService
         var sourceWallet = wallets.FirstOrDefault(w => w.WalletId == request.FromWalletId)
             ?? throw new NotFoundException("Source wallet not found.");
 
-        if (!NormalizeStoredWalletType(sourceWallet.WalletType).Equals(FinverseLinkedWalletType, StringComparison.Ordinal))
+        if (!WalletRules.NormalizeStoredWalletType(sourceWallet.WalletType).Equals(SepayLinkedWalletType, StringComparison.Ordinal))
             throw new BusinessRuleException(
-                "Withdrawal is only allowed from a Finverse-linked wallet.",
-                "withdraw_source_not_finverse");
+                "Withdrawal is only allowed from a SePay-linked wallet.",
+                "withdraw_source_not_sepay");
 
-        var sourceBalance = GetRequiredBalance(sourceWallet);
+        var sourceBalance = WalletRules.GetRequiredBalance(sourceWallet);
         if (sourceBalance < request.Amount)
             throw new ValidationException("Source wallet does not have enough balance.");
 
@@ -251,11 +254,11 @@ public class WalletService : IWalletService
             receivingWallet = wallets.FirstOrDefault(w => w.WalletId == request.ToWalletId.Value)
                 ?? throw new NotFoundException("Receiving wallet not found.");
 
-            // A read-only Finverse wallet cannot receive the withdrawn money.
-            if (NormalizeStoredWalletType(receivingWallet.WalletType).Equals(FinverseLinkedWalletType, StringComparison.Ordinal))
+            // A read-only SePay wallet cannot receive the withdrawn money.
+            if (WalletRules.NormalizeStoredWalletType(receivingWallet.WalletType).Equals(SepayLinkedWalletType, StringComparison.Ordinal))
                 throw new BusinessRuleException(
-                    "A Finverse-linked wallet is read-only and cannot receive a withdrawal.",
-                    "withdraw_target_finverse_read_only");
+                    "A SePay-linked wallet is read-only and cannot receive a withdrawal.",
+                    "withdraw_target_sepay_read_only");
         }
 
         var now = DateTime.UtcNow;
@@ -285,7 +288,7 @@ public class WalletService : IWalletService
         // Optional receiving wallet: the withdrawn cash lands here as income.
         if (receivingWallet is not null)
         {
-            receivingWallet.Balance = GetRequiredBalance(receivingWallet) + request.Amount;
+            receivingWallet.Balance = WalletRules.GetRequiredBalance(receivingWallet) + request.Amount;
             receivingWallet.UpdatedAt = now;
             _dbContext.Transactions.Add(new Transaction
             {
@@ -309,9 +312,9 @@ public class WalletService : IWalletService
         var result = new WithdrawWalletResponse
         {
             FromWalletId = sourceWallet.WalletId,
-            FromWalletBalance = GetRequiredBalance(sourceWallet),
+            FromWalletBalance = WalletRules.GetRequiredBalance(sourceWallet),
             ToWalletId = receivingWallet?.WalletId,
-            ToWalletBalance = receivingWallet is null ? null : GetRequiredBalance(receivingWallet)
+            ToWalletBalance = receivingWallet is null ? null : WalletRules.GetRequiredBalance(receivingWallet)
         };
         await IdempotencyStore.CompleteAsync(
             _dbContext,
@@ -387,18 +390,18 @@ public class WalletService : IWalletService
         if (toWallet is null)
             throw new NotFoundException("To wallet not found.");
 
-        // Finverse-linked wallets are read-only and cannot participate in manual transfers.
-        // (Withdrawal, the one money-out allowed from a Finverse wallet, has its own path.)
-        if (NormalizeStoredWalletType(fromWallet.WalletType).Equals(FinverseLinkedWalletType, StringComparison.Ordinal)
-            || NormalizeStoredWalletType(toWallet.WalletType).Equals(FinverseLinkedWalletType, StringComparison.Ordinal))
+        // SePay-linked wallets are read-only and cannot participate in manual transfers.
+        // (Withdrawal, the one money-out allowed from a SePay wallet, has its own path.)
+        if (WalletRules.NormalizeStoredWalletType(fromWallet.WalletType).Equals(SepayLinkedWalletType, StringComparison.Ordinal)
+            || WalletRules.NormalizeStoredWalletType(toWallet.WalletType).Equals(SepayLinkedWalletType, StringComparison.Ordinal))
         {
             throw new BusinessRuleException(
-                "Finverse-linked wallets are read-only and cannot participate in manual transfers.",
-                "finverse_wallet_read_only");
+                "SePay-linked wallets are read-only and cannot participate in manual transfers.",
+                "sepay_wallet_read_only");
         }
 
-        var fromWalletBalance = GetRequiredBalance(fromWallet);
-        var toWalletBalance = GetRequiredBalance(toWallet);
+        var fromWalletBalance = WalletRules.GetRequiredBalance(fromWallet);
+        var toWalletBalance = WalletRules.GetRequiredBalance(toWallet);
 
         if (fromWalletBalance < amount)
             throw new ValidationException("Source wallet does not have enough balance.");
@@ -454,8 +457,8 @@ public class WalletService : IWalletService
         {
             FromWalletId = fromWallet.WalletId,
             ToWalletId = toWallet.WalletId,
-            FromWalletBalance = GetRequiredBalance(fromWallet),
-            ToWalletBalance = GetRequiredBalance(toWallet)
+            FromWalletBalance = WalletRules.GetRequiredBalance(fromWallet),
+            ToWalletBalance = WalletRules.GetRequiredBalance(toWallet)
         };
         await IdempotencyStore.CompleteAsync(
             _dbContext,
@@ -570,61 +573,20 @@ public class WalletService : IWalletService
             throw new NotFoundException("Customer not found.");
     }
 
-    private static void ValidateCreate(CreateWalletRequest request)
-    {
-        if (string.IsNullOrWhiteSpace(request.WalletName))
-            throw new ValidationException("Wallet name is required.");
-
-        if (string.IsNullOrWhiteSpace(request.WalletType))
-            throw new ValidationException("Wallet type is required.");
-
-        if (request.InitialBalance < 0)
-            throw new ValidationException("Initial balance cannot be negative.");
-    }
-
-    private static void ValidateUpdate(UpdateWalletRequest request)
-    {
-        if (request.WalletName is not null && string.IsNullOrWhiteSpace(request.WalletName))
-            throw new ValidationException("Wallet name cannot be empty.");
-
-        if (request.WalletType is not null)
-            throw new ValidationException("Wallet type cannot be changed after creation.");
-    }
-
-    private static string NormalizeWalletType(string walletType)
-    {
-        var normalized = walletType.Trim();
-        if (!AllowedWalletTypes.Contains(normalized))
-            throw new ValidationException("Wallet type must be one of: basic.");
-
-        return normalized.ToUpperInvariant() switch
-        {
-            "CASH" or "BANK_ACCOUNT" or "CREDIT_CARD" or "E_WALLET" or "INVESTMENT" => BasicWalletType,
-            _ => normalized.ToLowerInvariant()
-        };
-    }
-
     private static WalletResponse ToResponse(Wallet wallet)
         => new()
         {
             WalletId = wallet.WalletId,
-            CustomerId = GetRequiredCustomerId(wallet),
+            CustomerId = WalletRules.GetRequiredCustomerId(wallet),
             WalletName = wallet.WalletName,
-            WalletType = NormalizeStoredWalletType(wallet.WalletType),
-            Balance = GetRequiredBalance(wallet),
-            FinverseAccountId = wallet.FinverseLink?.FinverseAccountId,
-            InstitutionName = wallet.FinverseLink?.InstitutionName,
-            AccountMask = wallet.FinverseLink?.AccountMask,
-            LastSyncedAt = wallet.FinverseLink?.LastSyncedAt
+            WalletType = WalletRules.NormalizeStoredWalletType(wallet.WalletType),
+            Balance = WalletRules.GetRequiredBalance(wallet),
+            SepayBankAccountId = wallet.SepayLink?.SepayBankAccountId,
+            InstitutionName = wallet.SepayLink?.BankShortName,
+            AccountMask = AccountNumberMask.Apply(wallet.SepayLink?.AccountNumber),
+            AuthMode = wallet.SepayLink?.AuthMode,
+            LastSyncedAt = wallet.SepayLink?.LastSyncedAt
         };
-
-    private static Guid GetRequiredCustomerId(Wallet wallet)
-        => wallet.CustomerId
-           ?? throw new InvalidOperationException($"Wallet {wallet.WalletId} is missing customer_id.");
-
-    private static decimal GetRequiredBalance(Wallet wallet)
-        => wallet.Balance
-           ?? throw new InvalidOperationException($"Wallet {wallet.WalletId} is missing balance.");
 
     private async Task<bool> WalletNameExistsAsync(
         Guid customerId,
@@ -639,11 +601,4 @@ public class WalletService : IWalletService
                  && EF.Functions.ILike(w.WalletName, walletName),
             cancellationToken);
     }
-
-    private static string NormalizeStoredWalletType(string walletType)
-        => walletType.ToUpperInvariant() switch
-        {
-            "CASH" or "BANK_ACCOUNT" or "CREDIT_CARD" or "E_WALLET" or "INVESTMENT" => BasicWalletType,
-            _ => walletType.ToLowerInvariant()
-        };
 }

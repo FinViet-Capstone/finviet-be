@@ -1,6 +1,3 @@
-using System.Globalization;
-using System.Text;
-using System.Text.RegularExpressions;
 using FinViet.Application.DTOs.Categories;
 using FinViet.Application.Exceptions;
 using FinViet.Application.Interfaces;
@@ -12,17 +9,8 @@ namespace FinViet.Infrastructure.Services;
 
 public class CategoryService : ICategoryService
 {
-    private const string SavingsGoalCategoryId = "cat_savings_goal";
-
-    private static readonly HashSet<string> AllowedTypes = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "income", "expense"
-    };
-
-    private static readonly HashSet<string> AllowedExpenseClasses = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "needs", "wants", "savings"
-    };
+    // Distinguishes customer-created categories from seeded cat_* ones — see CreateCustomCategoryAsync.
+    private const string CustomCategoryIdPrefix = "custom_";
 
     private readonly FinVietDbContext _dbContext;
 
@@ -40,11 +28,11 @@ public class CategoryService : ICategoryService
 
         if (!string.IsNullOrWhiteSpace(type))
         {
-            var normalizedType = NormalizeType(type);
+            var normalizedType = CategoryRules.NormalizeType(type);
             query = query.Where(c => c.Type == normalizedType);
         }
 
-        query = query.Where(c => c.CategoryId != "cat_savings_goal");
+        query = query.Where(c => c.CategoryId != CategoryRules.SavingsGoalCategoryId);
 
         var categories = await query
             .OrderBy(c => c.SortOrder)
@@ -52,7 +40,13 @@ public class CategoryService : ICategoryService
             .ToListAsync(cancellationToken);
 
         var overrides = await GetCustomerBucketOverridesAsync(customerId, cancellationToken);
-        return categories.Select(c => ToResponse(c, overrides.GetValueOrDefault(c.CategoryId))).ToList();
+
+        // Custom categories (id prefix "custom_") are private to their creator — the global
+        // Category table has no owner column, so "is this mine" is "do I have an active
+        // customer_categories row for it", seeded at creation time (see CreateCustomCategoryAsync).
+        var visible = categories.Where(c => IsVisibleTo(c.CategoryId, overrides));
+
+        return visible.Select(c => ToResponse(c, overrides.GetValueOrDefault(c.CategoryId))).ToList();
     }
 
     public async Task<CategoryResponse?> GetCategoryByIdAsync(
@@ -68,8 +62,21 @@ public class CategoryService : ICategoryService
             return null;
 
         var overrides = await GetCustomerBucketOverridesAsync(customerId, cancellationToken);
+
+        if (!IsVisibleTo(category.CategoryId, overrides))
+            return null;
+
         return ToResponse(category, overrides.GetValueOrDefault(categoryId));
     }
+
+    /// <summary>
+    /// A seeded <c>cat_*</c> category is visible to everyone; a <c>custom_*</c> one only to a
+    /// customer who has an active <c>customer_categories</c> row for it. Pure/no I/O so it's
+    /// unit-testable without a database.
+    /// </summary>
+    internal static bool IsVisibleTo(string categoryId, IReadOnlyDictionary<string, string> customerBucketOverrides)
+        => !categoryId.StartsWith(CustomCategoryIdPrefix, StringComparison.Ordinal)
+           || customerBucketOverrides.ContainsKey(categoryId);
 
     public async Task<CategoryResponse> SetCustomerBucketAsync(
         Guid customerId,
@@ -83,15 +90,8 @@ public class CategoryService : ICategoryService
         if (category is null)
             throw new NotFoundException("Category not found.");
 
-        if (!string.Equals(category.Type, "expense", StringComparison.OrdinalIgnoreCase))
-            throw new ValidationException("Only expense categories can be assigned to a bucket.");
-
-        if (string.Equals(category.CategoryId, SavingsGoalCategoryId, StringComparison.OrdinalIgnoreCase))
-            throw new ValidationException("Saving goal contributions cannot be reassigned to a different bucket.");
-
-        var normalizedBucket = bucketId?.Trim().ToLowerInvariant();
-        if (string.IsNullOrWhiteSpace(normalizedBucket) || !AllowedExpenseClasses.Contains(normalizedBucket))
-            throw new ValidationException("Bucket must be one of: needs, wants, savings.");
+        CategoryRules.EnsureCustomerBucketCanBeSet(category.CategoryId, category.Type);
+        var normalizedBucket = CategoryRules.NormalizeCustomerBucket(bucketId);
 
         var customerCategory = await _dbContext.CustomerCategories
             .FirstOrDefaultAsync(x => x.CustomerId == customerId && x.CategoryId == categoryId, cancellationToken);
@@ -165,12 +165,12 @@ public class CategoryService : ICategoryService
         CreateCategoryRequest request,
         CancellationToken cancellationToken = default)
     {
-        var nameVi = FirstNonEmpty(request.NameVi, request.CategoryName);
+        var nameVi = CategoryRules.FirstNonEmpty(request.NameVi, request.CategoryName);
         if (string.IsNullOrWhiteSpace(nameVi))
             throw new ValidationException("Category name is required.");
 
-        var normalizedType = NormalizeType(request.Type);
-        var normalizedExpenseClass = NormalizeExpenseClass(request.ExpenseClass, normalizedType);
+        var normalizedType = CategoryRules.NormalizeType(request.Type);
+        var normalizedExpenseClass = CategoryRules.NormalizeExpenseClass(request.ExpenseClass, normalizedType);
         var trimmedNameVi = nameVi.Trim();
         var trimmedNameEn = string.IsNullOrWhiteSpace(request.NameEn) ? trimmedNameVi : request.NameEn.Trim();
         var categoryId = string.IsNullOrWhiteSpace(request.CategoryId)
@@ -205,6 +205,58 @@ public class CategoryService : ICategoryService
         return ToResponse(category);
     }
 
+    public async Task<CategoryResponse> CreateCustomCategoryAsync(
+        Guid customerId,
+        CreateCustomCategoryRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var name = request.Name.Trim();
+        if (string.IsNullOrWhiteSpace(name))
+            throw new ValidationException("Category name is required.");
+
+        var normalizedBucket = CategoryRules.NormalizeCustomerBucket(request.Bucket);
+
+        var duplicateName = await CategoryNameExistsAsync(name, "expense", null, cancellationToken);
+        if (duplicateName)
+            throw new ValidationException("Category name already exists for this type.");
+
+        // Guid.NewGuid() collisions aren't a practical concern, unlike the name-based admin slug.
+        var categoryId = $"{CustomCategoryIdPrefix}{Guid.NewGuid()}";
+
+        var category = new Category
+        {
+            CategoryId = categoryId,
+            CategoryName = name,
+            NameVi = name,
+            NameEn = name,
+            Type = "expense",
+            IsMandatory = false,
+            DefaultBucket = normalizedBucket,
+            // The icon file stays device-local per FE's plan — nothing to store here.
+            Icon = null,
+            Color = request.Color
+        };
+        _dbContext.Categories.Add(category);
+
+        // Seed the creator's own override immediately so the category is usable in their chosen
+        // bucket without a follow-up PUT .../bucket call — also what makes it visible to them
+        // (see IsVisibleTo): a custom category has no "global default" separate from this.
+        _dbContext.CustomerCategories.Add(new CustomerCategory
+        {
+            Id = Guid.NewGuid(),
+            CustomerId = customerId,
+            CategoryId = categoryId,
+            BucketId = normalizedBucket,
+            Source = "system",
+            IsActive = true,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        });
+
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        return ToResponse(category, normalizedBucket);
+    }
+
     public async Task<CategoryResponse?> UpdateCategoryAsync(
         string categoryId,
         UpdateCategoryRequest request,
@@ -217,11 +269,11 @@ public class CategoryService : ICategoryService
             return null;
 
         if (request.Type is not null)
-            category.Type = NormalizeType(request.Type);
+            category.Type = CategoryRules.NormalizeType(request.Type);
 
         if (request.CategoryName is not null || request.NameVi is not null)
         {
-            var newName = FirstNonEmpty(request.NameVi, request.CategoryName);
+            var newName = CategoryRules.FirstNonEmpty(request.NameVi, request.CategoryName);
             if (string.IsNullOrWhiteSpace(newName))
                 throw new ValidationException("Category name cannot be empty.");
 
@@ -239,7 +291,7 @@ public class CategoryService : ICategoryService
             category.IsMandatory = request.IsMandatory.Value;
 
         if (request.ExpenseClass is not null)
-            category.DefaultBucket = NormalizeExpenseClass(request.ExpenseClass, category.Type);
+            category.DefaultBucket = CategoryRules.NormalizeExpenseClass(request.ExpenseClass, category.Type);
 
         if (request.NameEn is not null)
             category.NameEn = request.NameEn;
@@ -278,28 +330,37 @@ public class CategoryService : ICategoryService
         return true;
     }
 
-    private static string NormalizeType(string type)
+    public async Task<bool> DeleteCustomCategoryAsync(
+        Guid customerId,
+        string categoryId,
+        CancellationToken cancellationToken = default)
     {
-        var normalized = type.Trim().ToLowerInvariant();
-        if (!AllowedTypes.Contains(normalized))
-            throw new ValidationException("Category type must be one of: income, expense.");
+        // Same ownership test as IsVisibleTo: a seeded cat_* category or a custom_* one this
+        // customer doesn't have an active override for isn't theirs to delete via this endpoint.
+        if (!categoryId.StartsWith(CustomCategoryIdPrefix, StringComparison.Ordinal))
+            return false;
 
-        return normalized;
-    }
+        var owns = await _dbContext.CustomerCategories.AnyAsync(
+            x => x.CustomerId == customerId && x.CategoryId == categoryId && x.IsActive,
+            cancellationToken);
+        if (!owns)
+            return false;
 
-    private static string? NormalizeExpenseClass(string? expenseClass, string type)
-    {
-        if (type == "income")
-            return null;
+        var category = await _dbContext.Categories
+            .FirstOrDefaultAsync(c => c.CategoryId == categoryId, cancellationToken);
+        if (category is null)
+            return false;
 
-        if (string.IsNullOrWhiteSpace(expenseClass))
-            throw new ValidationException("Expense class is required for expense categories.");
+        // Matches DeleteCategoryAsync's rule — don't let a deletion quietly turn transaction
+        // history "uncategorized".
+        var hasTransactions = await _dbContext.Transactions
+            .AnyAsync(t => t.CategoryId == categoryId, cancellationToken);
+        if (hasTransactions)
+            throw new ValidationException("Cannot delete category because it is referenced by transactions.");
 
-        var normalized = expenseClass.Trim().ToLowerInvariant();
-        if (!AllowedExpenseClasses.Contains(normalized))
-            throw new ValidationException("Expense class must be one of: needs, wants, savings.");
-
-        return normalized;
+        _dbContext.Categories.Remove(category);
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        return true;
     }
 
     private async Task<bool> CategoryNameExistsAsync(
@@ -319,7 +380,7 @@ public class CategoryService : ICategoryService
 
     private async Task<string> GenerateUniqueSlugAsync(string name, CancellationToken cancellationToken)
     {
-        var baseSlug = "cat_" + Slugify(name);
+        var baseSlug = "cat_" + CategoryRules.Slugify(name);
         var slug = baseSlug;
         var i = 2;
 
@@ -331,26 +392,6 @@ public class CategoryService : ICategoryService
 
         return slug;
     }
-
-    private static string Slugify(string value)
-    {
-        var normalized = value.Normalize(NormalizationForm.FormD);
-        var builder = new StringBuilder();
-
-        foreach (var c in normalized)
-        {
-            var category = CharUnicodeInfo.GetUnicodeCategory(c);
-            if (category != UnicodeCategory.NonSpacingMark)
-                builder.Append(c);
-        }
-
-        var ascii = builder.ToString().Normalize(NormalizationForm.FormC).ToLowerInvariant();
-        ascii = Regex.Replace(ascii, "[^a-z0-9]+", "_").Trim('_');
-        return string.IsNullOrWhiteSpace(ascii) ? Guid.NewGuid().ToString("N")[..8] : ascii;
-    }
-
-    private static string? FirstNonEmpty(params string?[] values)
-        => values.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v));
 
     private static CategoryResponse ToResponse(Category category, string? customerBucketOverride = null)
         => new()

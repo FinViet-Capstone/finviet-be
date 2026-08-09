@@ -13,10 +13,12 @@ namespace FinViet.Api.Controllers;
 public class ExtractController : ControllerBase
 {
     private readonly ITransactionExtractService _extract;
+    private readonly IReceiptOcrService _ocr;
 
-    public ExtractController(ITransactionExtractService extract)
+    public ExtractController(ITransactionExtractService extract, IReceiptOcrService ocr)
     {
         _extract = extract;
+        _ocr = ocr;
     }
 
     public class SmsExtractRequest
@@ -30,9 +32,16 @@ public class ExtractController : ControllerBase
         public int? MaxRows { get; set; }
     }
 
+    public class PhotoExtractFormRequest
+    {
+        public IFormFile File { get; set; } = null!;
+    }
+
     private const long MaxCsvFileBytes = 5 * 1024 * 1024; // 5 MB
+    private const long MaxPhotoFileBytes = 8 * 1024 * 1024; // 8 MB
     private const int MaxSmsTextLength = 20_000;
     private static readonly string[] AllowedCsvExtensions = { ".csv", ".xlsx", ".xls" };
+    private static readonly string[] AllowedPhotoExtensions = { ".jpg", ".jpeg", ".png", ".heic" };
 
     // POST /api/extract/sms — parse pasted SMS text → candidate rows + AI category suggestions
     [HttpPost("sms")]
@@ -89,6 +98,40 @@ public class ExtractController : ControllerBase
         await using var stream = request.File.OpenReadStream();
         var result = await _extract.ExtractCsvAsync(GetCustomerId(), stream, request.MaxRows, cancellationToken);
         return Ok(ApiResponse<ExtractResponse>.Ok(result, "File extracted successfully"));
+    }
+
+    // POST /api/extract/photo — OCR a receipt photo → a single candidate row (same ExtractResponse
+    // shape as SMS/CSV so the client reuses the same mapper). No OCR provider is wired in yet
+    // (IReceiptOcrService is a placeholder), so this currently always responds 503.
+    [HttpPost("photo")]
+    public async Task<ActionResult<ApiResponse<ExtractResponse>>> ExtractPhoto(
+        [FromForm] PhotoExtractFormRequest request, CancellationToken cancellationToken)
+    {
+        if (request.File == null || request.File.Length == 0)
+            return BadRequest(ApiResponse<ExtractResponse>.Fail("Vui lòng chọn ảnh hóa đơn để trích xuất."));
+
+        if (request.File.Length > MaxPhotoFileBytes)
+            return BadRequest(ApiResponse<ExtractResponse>.Fail(
+                $"Ảnh quá lớn (tối đa {MaxPhotoFileBytes / (1024 * 1024)} MB)."));
+
+        var extension = Path.GetExtension(request.File.FileName).ToLowerInvariant();
+        if (!AllowedPhotoExtensions.Contains(extension))
+            return BadRequest(ApiResponse<ExtractResponse>.Fail(
+                $"Định dạng ảnh không hợp lệ. Chỉ chấp nhận: {string.Join(", ", AllowedPhotoExtensions)}."));
+
+        await using var stream = request.File.OpenReadStream();
+        var row = await _ocr.ExtractAsync(stream, request.File.ContentType, cancellationToken);
+
+        var result = new ExtractResponse
+        {
+            Rows = row != null ? new List<ExtractedTransactionItem> { row } : new List<ExtractedTransactionItem>(),
+            TotalScanned = 1,
+            Skipped = row == null ? 1 : 0,
+        };
+
+        return Ok(ApiResponse<ExtractResponse>.Ok(result, row != null
+            ? "Đã nhận diện hóa đơn."
+            : "Không nhận diện được thông tin từ ảnh."));
     }
 
     private Guid GetCustomerId()

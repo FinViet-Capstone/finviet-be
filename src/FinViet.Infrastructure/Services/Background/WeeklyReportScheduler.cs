@@ -11,7 +11,7 @@ namespace FinViet.Infrastructure.Services.Background;
 /// Generates weekly AI reports every Monday at 07:00 Asia/Ho_Chi_Minh for the just-completed week
 /// (previous Mon–Sun). Runs each customer in its own DI scope with its own try/catch so one failure
 /// doesn't abort the batch. Idempotent via the unique (customer, period_start) constraints, so a
-/// restart mid-batch resumes safely. Gemini calls are spaced to avoid bursting rate limits.
+/// restart mid-batch resumes safely. AI provider calls are spaced to avoid bursting rate limits.
 /// </summary>
 public class WeeklyReportScheduler : BackgroundService
 {
@@ -93,7 +93,7 @@ public class WeeklyReportScheduler : BackgroundService
                 _logger.LogError(ex, "Failed generating weekly report for customer {CustomerId}.", customerId);
             }
 
-            // Space out Gemini calls so a large batch doesn't hit RPM limits.
+            // Space out AI provider calls so a large batch doesn't hit RPM limits.
             try { await Task.Delay(PerCustomerDelay, stoppingToken); }
             catch (OperationCanceledException) { break; }
         }

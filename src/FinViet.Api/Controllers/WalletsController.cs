@@ -13,16 +13,13 @@ namespace FinViet.Api.Controllers;
 public class WalletsController : ControllerBase
 {
     private readonly IWalletService _walletService;
-    private readonly IFinverseWalletService _finverseWalletService;
     private readonly ISepayWalletService _sepayWalletService;
 
     public WalletsController(
         IWalletService walletService,
-        IFinverseWalletService finverseWalletService,
         ISepayWalletService sepayWalletService)
     {
         _walletService = walletService;
-        _finverseWalletService = finverseWalletService;
         _sepayWalletService = sepayWalletService;
     }
 
@@ -168,68 +165,21 @@ public class WalletsController : ControllerBase
             "Wallet transactions retrieved successfully"));
     }
 
-    [HttpPost("finverse/link-token")]
-    public async Task<ActionResult<ApiResponse<FinverseLinkTokenResponse>>> CreateFinverseLinkToken(
-        [FromBody] CreateFinverseLinkRequest request,
-        CancellationToken cancellationToken)
+    // ── SePay ───────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Start the OAuth2 flow: returns the SePay authorization URL plus a signed <c>state</c> the
+    /// client must echo back when linking.
+    /// </summary>
+    [HttpGet("sepay/authorize-url")]
+    public ActionResult<ApiResponse<SepayAuthorizeUrlResponse>> GetSepayAuthorizeUrl()
     {
-        var result = await _finverseWalletService.CreateLinkTokenAsync(
-            User.GetCustomerId(),
-            request,
-            cancellationToken);
+        var result = _sepayWalletService.CreateAuthorizeUrl(User.GetCustomerId());
 
-        return Ok(ApiResponse<FinverseLinkTokenResponse>.Ok(
+        return Ok(ApiResponse<SepayAuthorizeUrlResponse>.Ok(
             result,
-            "Finverse link URL created successfully"));
+            "SePay authorization URL created successfully"));
     }
-
-    [HttpPost("finverse/complete-link")]
-    public async Task<ActionResult<ApiResponse<FinverseLinkResult>>> CompleteFinverseLink(
-        [FromBody] CompleteFinverseLinkRequest request,
-        CancellationToken cancellationToken)
-    {
-        var result = await _finverseWalletService.CompleteLinkAsync(
-            User.GetCustomerId(),
-            request,
-            cancellationToken);
-
-        return Ok(ApiResponse<FinverseLinkResult>.Ok(
-            result,
-            "Finverse accounts linked successfully"));
-    }
-
-    [AllowAnonymous]
-    [HttpPost("finverse/callback")]
-    [Consumes("application/x-www-form-urlencoded")]
-    public async Task<ActionResult<ApiResponse<FinverseLinkResult>>> FinverseCallback(
-        [FromForm] CompleteFinverseLinkRequest request,
-        CancellationToken cancellationToken)
-    {
-        var result = await _finverseWalletService.CompleteLinkCallbackAsync(
-            request,
-            cancellationToken);
-
-        return Ok(ApiResponse<FinverseLinkResult>.Ok(
-            result,
-            "Finverse accounts linked successfully"));
-    }
-
-    [HttpPost("{id:guid}/finverse-sync")]
-    public async Task<ActionResult<ApiResponse<FinverseWalletSyncResponse>>> SyncFinverseWallet(
-        [FromRoute] Guid id,
-        CancellationToken cancellationToken)
-    {
-        var result = await _finverseWalletService.SyncWalletAsync(
-            User.GetCustomerId(),
-            id,
-            cancellationToken);
-
-        return Ok(ApiResponse<FinverseWalletSyncResponse>.Ok(
-            result,
-            "Finverse wallet synchronized successfully"));
-    }
-
-    // ── SePay OAuth2 ────────────────────────────────────────────────────────────
 
     [HttpPost("sepay/link")]
     public async Task<ActionResult<ApiResponse<SepayLinkResult>>> LinkSepayAccount(
@@ -268,12 +218,26 @@ public class WalletsController : ControllerBase
     {
         var result = await _sepayWalletService.GetBankAccountsAsync(
             User.GetCustomerId(),
-            request.Code,
+            request,
             cancellationToken);
 
         return Ok(ApiResponse<IReadOnlyList<SepayBankAccountResponse>>.Ok(
             result,
             "SePay bank accounts retrieved successfully"));
+    }
+
+    /// <summary>Connection state of every SePay-linked wallet (bank, mask, last sync, re-link flag).</summary>
+    [HttpGet("sepay/links")]
+    public async Task<ActionResult<ApiResponse<IReadOnlyList<SepayLinkStatusResponse>>>> GetSepayLinks(
+        CancellationToken cancellationToken)
+    {
+        var result = await _sepayWalletService.GetLinksAsync(
+            User.GetCustomerId(),
+            cancellationToken);
+
+        return Ok(ApiResponse<IReadOnlyList<SepayLinkStatusResponse>>.Ok(
+            result,
+            "SePay links retrieved successfully"));
     }
 
     [HttpPost("{id:guid}/sepay-sync")]
@@ -291,4 +255,92 @@ public class WalletsController : ControllerBase
             "SePay wallet synchronized successfully"));
     }
 
+    /// <summary>Sync every SePay-linked wallet at once; per-wallet failures are reported, not fatal.</summary>
+    [HttpPost("sepay/sync-all")]
+    public async Task<ActionResult<ApiResponse<SepaySyncAllResponse>>> SyncAllSepayWallets(
+        CancellationToken cancellationToken)
+    {
+        var result = await _sepayWalletService.SyncAllWalletsAsync(
+            User.GetCustomerId(),
+            cancellationToken);
+
+        return Ok(ApiResponse<SepaySyncAllResponse>.Ok(
+            result,
+            "SePay wallets synchronized successfully"));
+    }
+
+    /// <summary>
+    /// Register this API's receiver as a webhook on SePay for a linked wallet, so transactions
+    /// arrive in real time. Idempotent — an existing registration for the same account and URL is
+    /// adopted instead of duplicated. Runs automatically on link when SePay:WebhookUrl is set.
+    /// </summary>
+    [HttpPost("{id:guid}/sepay-webhook")]
+    public async Task<ActionResult<ApiResponse<SepayWebhookRegistrationResponse>>> RegisterSepayWebhook(
+        [FromRoute] Guid id,
+        CancellationToken cancellationToken)
+    {
+        var result = await _sepayWalletService.RegisterWebhookAsync(
+            User.GetCustomerId(),
+            id,
+            cancellationToken);
+
+        return Ok(ApiResponse<SepayWebhookRegistrationResponse>.Ok(
+            result,
+            result.AlreadyExisted
+                ? "SePay webhook already registered"
+                : "SePay webhook registered successfully"));
+    }
+
+    /// <summary>Delete the webhook FinViet registered on SePay for this wallet.</summary>
+    [HttpDelete("{id:guid}/sepay-webhook")]
+    public async Task<ActionResult<ApiResponse<SepayWebhookRegistrationResponse>>> UnregisterSepayWebhook(
+        [FromRoute] Guid id,
+        CancellationToken cancellationToken)
+    {
+        var result = await _sepayWalletService.UnregisterWebhookAsync(
+            User.GetCustomerId(),
+            id,
+            cancellationToken);
+
+        return Ok(ApiResponse<SepayWebhookRegistrationResponse>.Ok(
+            result,
+            "SePay webhook unregistered successfully"));
+    }
+
+    /// <summary>Drop the SePay authorization and turn the wallet back into a manual one.</summary>
+    [HttpDelete("{id:guid}/sepay-link")]
+    public async Task<ActionResult<ApiResponse<SepayUnlinkResponse>>> UnlinkSepayWallet(
+        [FromRoute] Guid id,
+        CancellationToken cancellationToken)
+    {
+        var result = await _sepayWalletService.UnlinkWalletAsync(
+            User.GetCustomerId(),
+            id,
+            cancellationToken);
+
+        return Ok(ApiResponse<SepayUnlinkResponse>.Ok(
+            result,
+            "SePay bank account unlinked successfully"));
+    }
+
+    /// <summary>
+    /// SePay webhook receiver — called by SePay the moment the bank posts a transaction, so a
+    /// linked wallet stays current without waiting for a manual sync. Authenticated by the shared
+    /// <c>Authorization: Apikey &lt;SePay:WebhookApiKey&gt;</c> header, not by a customer JWT.
+    /// </summary>
+    [AllowAnonymous]
+    [HttpPost("sepay/webhook")]
+    public async Task<ActionResult<ApiResponse<SepayWebhookResult>>> SepayWebhook(
+        [FromBody] SepayWebhookRequest payload,
+        CancellationToken cancellationToken)
+    {
+        var result = await _sepayWalletService.HandleWebhookAsync(
+            Request.Headers.Authorization.ToString(),
+            payload,
+            cancellationToken);
+
+        return Ok(ApiResponse<SepayWebhookResult>.Ok(
+            result,
+            "SePay webhook processed successfully"));
+    }
 }

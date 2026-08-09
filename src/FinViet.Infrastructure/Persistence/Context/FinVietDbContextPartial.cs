@@ -14,6 +14,7 @@ public partial class FinVietDbContext
     public virtual DbSet<RefreshToken> RefreshTokens { get; set; }
     public virtual DbSet<EmailVerificationToken> EmailVerificationTokens { get; set; }
     public virtual DbSet<CustomerSetting> CustomerSettings { get; set; }
+    public virtual DbSet<IncomeAllocationSetting> IncomeAllocationSettings { get; set; }
 
     partial void OnModelCreatingPartial(ModelBuilder modelBuilder)
     {
@@ -45,23 +46,6 @@ public partial class FinVietDbContext
             entity.Property(e => e.IsLocked).HasDefaultValue(false).HasColumnName("is_locked");
         });
 
-        modelBuilder.Entity<FinverseLink>(entity =>
-        {
-            entity.HasKey(e => e.WalletId).HasName("finverse_links_pkey");
-            entity.ToTable("finverse_links");
-
-            entity.Property(e => e.WalletId).HasColumnName("wallet_id");
-            entity.Property(e => e.LoginIdentityId).HasColumnType("text").HasColumnName("login_identity_id");
-            entity.Property(e => e.AccessTokenProtected).HasColumnType("text").HasColumnName("access_token");
-            entity.Property(e => e.RefreshTokenProtected).HasColumnType("text").HasColumnName("refresh_token");
-            entity.Property(e => e.FinverseAccountId).HasColumnType("text").HasColumnName("finverse_account_id");
-            entity.Property(e => e.InstitutionName).HasColumnType("text").HasColumnName("institution_name");
-            entity.Property(e => e.AccountMask).HasColumnType("text").HasColumnName("account_mask");
-            entity.Property(e => e.LastSyncedAt).HasColumnName("last_synced_at");
-            entity.Property(e => e.CreatedAt).HasDefaultValueSql("now()").HasColumnName("created_at");
-            entity.Property(e => e.UpdatedAt).HasDefaultValueSql("now()").HasColumnName("updated_at");
-        });
-
         modelBuilder.Entity<SepayLink>(entity =>
         {
             entity.HasKey(e => e.WalletId).HasName("sepay_links_pkey");
@@ -76,6 +60,8 @@ public partial class FinVietDbContext
             entity.Property(e => e.BankShortName).HasColumnType("text").HasColumnName("bank_short_name");
             entity.Property(e => e.AccessTokenProtected).HasColumnType("text").HasColumnName("access_token");
             entity.Property(e => e.RefreshTokenProtected).HasColumnType("text").HasColumnName("refresh_token");
+            entity.Property(e => e.AccessTokenExpiresAt).HasColumnName("access_token_expires_at");
+            entity.Property(e => e.SepayWebhookId).HasColumnName("sepay_webhook_id");
             entity.Property(e => e.LastSyncedAt).HasColumnName("last_synced_at");
             entity.Property(e => e.CreatedAt).HasDefaultValueSql("now()").HasColumnName("created_at");
             entity.Property(e => e.UpdatedAt).HasDefaultValueSql("now()").HasColumnName("updated_at");
@@ -194,6 +180,35 @@ public partial class FinVietDbContext
                 .HasForeignKey(d => d.CustomerId)
                 .OnDelete(DeleteBehavior.Cascade)
                 .HasConstraintName("refresh_tokens_customer_id_fkey");
+        });
+
+        // ── IncomeAllocationSetting entity ───────────────────────
+        modelBuilder.Entity<IncomeAllocationSetting>(entity =>
+        {
+            entity.HasKey(e => e.Id).HasName("income_allocation_settings_pkey");
+            entity.ToTable("income_allocation_settings");
+
+            entity.HasIndex(e => new { e.CustomerId, e.EffectiveMonth }, "uq_income_allocation_customer_month")
+                .IsUnique();
+
+            entity.Property(e => e.Id)
+                .HasDefaultValueSql("gen_random_uuid()")
+                .HasColumnName("id");
+            entity.Property(e => e.CustomerId).HasColumnName("customer_id");
+            entity.Property(e => e.EffectiveMonth).HasMaxLength(7).HasColumnName("effective_month");
+            entity.Property(e => e.MonthlyIncome).HasPrecision(15, 2).HasColumnName("monthly_income");
+            entity.Property(e => e.NeedsPct).HasColumnName("needs_pct");
+            entity.Property(e => e.WantsPct).HasColumnName("wants_pct");
+            entity.Property(e => e.SavingsPct).HasColumnName("savings_pct");
+            entity.Property(e => e.CreatedAt)
+                .HasDefaultValueSql("now()")
+                .HasColumnName("created_at");
+
+            entity.HasOne(d => d.Customer)
+                .WithMany()
+                .HasForeignKey(d => d.CustomerId)
+                .OnDelete(DeleteBehavior.Cascade)
+                .HasConstraintName("income_allocation_settings_customer_id_fkey");
         });
 
         // ── EmailVerificationToken entity ────────────────────────

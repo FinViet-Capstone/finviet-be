@@ -18,6 +18,28 @@ public interface ICategoryService
         CreateCategoryRequest request,
         CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Customer-scoped category creation, no admin approval — inserts a real <c>Category</c> row
+    /// (id <c>custom_&lt;uuid&gt;</c>) so Transaction/Budget FKs resolve, and seeds an active
+    /// <c>CustomerCategory</c> override so it's immediately usable in the creator's chosen bucket.
+    /// The category is private to its creator (see <see cref="GetCategoriesAsync"/>).
+    /// </summary>
+    Task<CategoryResponse> CreateCustomCategoryAsync(
+        Guid customerId,
+        CreateCustomCategoryRequest request,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Deletes a customer's own custom category. Returns false (→ 404) for a seeded <c>cat_*</c>
+    /// category, one the customer doesn't own, or one that doesn't exist — same "doesn't exist to
+    /// you" framing as <see cref="GetCategoryByIdAsync"/>'s visibility scoping. Throws if the
+    /// category is referenced by transactions, matching <see cref="DeleteCategoryAsync"/>.
+    /// </summary>
+    Task<bool> DeleteCustomCategoryAsync(
+        Guid customerId,
+        string categoryId,
+        CancellationToken cancellationToken = default);
+
     Task<CategoryResponse?> UpdateCategoryAsync(
         string categoryId,
         UpdateCategoryRequest request,

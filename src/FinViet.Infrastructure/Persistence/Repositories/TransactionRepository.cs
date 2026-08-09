@@ -212,6 +212,7 @@ public class TransactionRepository : ITransactionRepository
         DateTime transactionDate,
         string? note,
         string? idempotencyKey,
+        string? entryMethod = null,
         CancellationToken cancellationToken = default)
     {
         await using var databaseTransaction = await _context.Database.BeginTransactionAsync(cancellationToken);
@@ -242,8 +243,7 @@ public class TransactionRepository : ITransactionRepository
         if (wallet is null || wallet.CustomerId != customerId || wallet.IsDeleted)
             throw new NotFoundException("Wallet", walletId);
 
-        if (string.Equals(wallet.WalletType, "finverse_linked", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(wallet.WalletType, "sepay_linked", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(wallet.WalletType, "sepay_linked", StringComparison.OrdinalIgnoreCase))
             throw new BusinessRuleException(
                 "Bank-linked wallets are read-only. Transactions are created by synchronization.",
                 "linked_wallet_read_only");
@@ -256,7 +256,7 @@ public class TransactionRepository : ITransactionRepository
             WalletId = walletId,
             CategoryId = categoryId,
             TransactionType = normalizedType,
-            EntryMethod = "manual",
+            EntryMethod = string.IsNullOrWhiteSpace(entryMethod) ? "manual" : entryMethod,
             Amount = amount,
             TransactionDate = transactionDate.Kind == DateTimeKind.Unspecified 
                 ? DateTime.SpecifyKind(transactionDate, DateTimeKind.Utc) 
@@ -330,8 +330,7 @@ public class TransactionRepository : ITransactionRepository
         if (target is null)
             return false;
 
-        if (string.Equals(target.EntryMethod, "finverse_sync", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(target.EntryMethod, "sepay_sync", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(target.EntryMethod, "sepay_sync", StringComparison.OrdinalIgnoreCase))
         {
             throw new BusinessRuleException(
                 "Provider-synced transactions cannot be deleted.",

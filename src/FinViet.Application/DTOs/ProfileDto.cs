@@ -15,4 +15,17 @@ public class ProfileDto
     public bool IsActive { get; set; }
     public bool OnboardingDone { get; set; }
     public DateTime? CreatedAt { get; set; }
+
+    // 50-30-20 budget bucket allocation — source of truth consumed by
+    // IBudgetService.GetBudgetBucketsAsync for bucket scoring. Defaults match the
+    // Customer entity's column defaults so admin profiles (which have no allocation)
+    // still serialize a sane value.
+    public int NeedsPct { get; set; } = 50;
+    public int WantsPct { get; set; } = 30;
+    public int SavingsPct { get; set; } = 20;
+
+    // Per-customer preferences (customer_settings) — default when the customer has no
+    // settings row yet (nothing writes one until UpdateProfileSettingsCommand is first called).
+    public AppTheme Theme { get; set; } = AppTheme.System;
+    public int[] NotifBudgetThresholds { get; set; } = { 80, 100 };
 }
