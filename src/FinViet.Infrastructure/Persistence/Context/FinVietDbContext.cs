@@ -442,6 +442,10 @@ public partial class FinVietDbContext : DbContext
             entity.Property(e => e.Note)
                 .HasMaxLength(255)
                 .HasColumnName("note");
+            entity.Property(e => e.Type)
+                .HasMaxLength(20)
+                .HasDefaultValue("contribution")
+                .HasColumnName("type");
 
             entity.HasOne(d => d.Goal).WithMany(p => p.SavingGoalContributions)
                 .HasForeignKey(d => d.GoalId)

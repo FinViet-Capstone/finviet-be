@@ -147,6 +147,13 @@ public class WalletService : IWalletService
         if (activeWalletCount <= 1)
             throw new BusinessRuleException("Cannot delete the last active wallet.", "last_wallet");
 
+        // Không cho xóa ví đã có giao dịch.
+        var hasTransactions = await _dbContext.Transactions
+            .AnyAsync(t => t.WalletId == walletId, cancellationToken);
+
+        if (hasTransactions)
+            throw new BusinessRuleException("Cannot delete a wallet that has transactions.", "wallet_has_transactions");
+
         // Soft delete — giữ lịch sử giao dịch (schema v3: wallets.is_deleted).
         wallet.IsDeleted = true;
         wallet.UpdatedAt = DateTime.UtcNow;

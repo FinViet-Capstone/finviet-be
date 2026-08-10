@@ -19,5 +19,8 @@ public partial class SavingGoalContribution
 
     public string? Note { get; set; }
 
+    /// <summary>"contribution" or "withdrawal" — direction comes from this, not the sign of Amount.</summary>
+    public string Type { get; set; } = "contribution";
+
     public virtual SavingGoal? Goal { get; set; }
 }
