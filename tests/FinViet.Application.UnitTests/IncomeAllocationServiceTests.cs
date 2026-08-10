@@ -1,5 +1,8 @@
+using FinViet.Application.Exceptions;
+using FinViet.Application.UnitTests.Infrastructure;
 using FinViet.Infrastructure.Persistence.Entities;
 using FinViet.Infrastructure.Services;
+using Microsoft.EntityFrameworkCore;
 
 namespace FinViet.Application.UnitTests;
 
@@ -89,5 +92,73 @@ public class IncomeAllocationServiceTests
         var key = IncomeAllocationService.MonthKey(utc);
 
         Assert.Equal(expectedMonthKey, key);
+    }
+
+    // TC-INCALLOC-09 — arbitrary-month lookup (docs/10-08-2026-be-todos.md §3)
+    [Theory]
+    [InlineData("2026-1", "2026-01")]
+    [InlineData(" 2026-07 ", "2026-07")]
+    [InlineData("2026-12", "2026-12")]
+    public void NormalizeMonth_ValidFormats_ReturnsZeroPaddedMonth(string input, string expected)
+    {
+        Assert.Equal(expected, IncomeAllocationService.NormalizeMonth(input));
+    }
+
+    // TC-INCALLOC-10
+    [Theory]
+    [InlineData("2026")]
+    [InlineData("2026-13")]
+    [InlineData("2026-00")]
+    [InlineData("abcd-ef")]
+    [InlineData("07-2026")]
+    public void NormalizeMonth_InvalidFormat_ThrowsValidationException(string input)
+    {
+        Assert.Throws<ValidationException>(() => IncomeAllocationService.NormalizeMonth(input));
+    }
+
+    // TC-INCALLOC-11
+    [Fact]
+    public async Task GetSummaryAsync_WithMonth_ResolvesCurrentForThatMonthAndPendingIsNull()
+    {
+        await using var db = TestDbContextFactory.Create();
+        var customerId = Guid.NewGuid();
+        db.Customers.Add(new Customer
+        {
+            CustomerId = customerId,
+            Email = "test@finviet.local",
+            FullName = "Test Customer",
+            IsActive = true
+        });
+        db.IncomeAllocationSettings.AddRange(
+            new IncomeAllocationSetting
+            {
+                Id = Guid.NewGuid(), CustomerId = customerId, EffectiveMonth = "2026-01",
+                MonthlyIncome = 10_000_000m, NeedsPct = 50, WantsPct = 30, SavingsPct = 20
+            },
+            // A "next real month" draft that must NOT leak into Pending when an explicit
+            // historical month is queried — Pending is only meaningful for the real current month.
+            new IncomeAllocationSetting
+            {
+                Id = Guid.NewGuid(), CustomerId = customerId,
+                EffectiveMonth = IncomeAllocationService.MonthKey(DateTime.UtcNow.AddMonths(1)),
+                MonthlyIncome = 99_000_000m, NeedsPct = 10, WantsPct = 10, SavingsPct = 80
+            });
+        await db.SaveChangesAsync();
+
+        var result = await new IncomeAllocationService(db).GetSummaryAsync(customerId, "2026-06");
+
+        Assert.Equal("2026-01", result.Current.EffectiveMonth); // carried forward from January
+        Assert.Equal(10_000_000m, result.Current.MonthlyIncome);
+        Assert.Null(result.Pending);
+    }
+
+    // TC-INCALLOC-12
+    [Fact]
+    public async Task GetSummaryAsync_WithInvalidMonth_ThrowsValidationException()
+    {
+        await using var db = TestDbContextFactory.Create();
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            new IncomeAllocationService(db).GetSummaryAsync(Guid.NewGuid(), "not-a-month"));
     }
 }

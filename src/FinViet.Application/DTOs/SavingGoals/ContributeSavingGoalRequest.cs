@@ -10,4 +10,6 @@ public class ContributeSavingGoalRequest
     /// funding wallet (if any) is used; otherwise the contribution only increments progress.
     /// </summary>
     public Guid? FundingWalletId { get; set; }
+
+    public string? Note { get; set; }
 }

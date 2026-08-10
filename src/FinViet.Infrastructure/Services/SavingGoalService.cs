@@ -177,8 +177,12 @@ public class SavingGoalService : ISavingGoalService
             ? new List<Transaction>()
             : await _dbContext.Transactions.Where(t => transactionIds.Contains(t.TransactionId)).ToListAsync(cancellationToken);
 
+        // Contributions (expense, money debited from a wallet into the goal) and withdrawals
+        // (income, money credited from the goal back to a wallet) are both valid ledger entries.
         if (generatedTransactions.Count != transactionIds.Length
-            || generatedTransactions.Any(t => t.CustomerId != customerId || t.TransactionType != "expense" || t.CategoryId != GoalCategoryId))
+            || generatedTransactions.Any(t => t.CustomerId != customerId
+                || t.CategoryId != GoalCategoryId
+                || (t.TransactionType != "expense" && t.TransactionType != "income")))
         {
             throw new BusinessRuleException("Goal contribution ledger is inconsistent and cannot be reversed safely.", "goal_ledger_invalid");
         }
@@ -194,7 +198,16 @@ public class SavingGoalService : ISavingGoalService
         foreach (var transaction in generatedTransactions)
         {
             var wallet = walletsById[transaction.WalletId];
-            wallet.Balance = (wallet.Balance ?? 0m) + transaction.Amount;
+            // A contribution debited the wallet to fund the goal — refund it back. A withdrawal
+            // already credited the wallet from the goal — undo that credit, so the net effect of
+            // deleting a goal always equals refunding exactly its still-unwithdrawn currentAmount.
+            var reversedBalance = (wallet.Balance ?? 0m) + ReversalDelta(transaction.TransactionType, transaction.Amount);
+            if (reversedBalance < 0)
+                throw new BusinessRuleException(
+                    "Cannot delete this goal because a previously withdrawn amount has already been spent from its destination wallet.",
+                    "goal_ledger_reversal_insufficient_balance");
+
+            wallet.Balance = reversedBalance;
             wallet.UpdatedAt = DateTime.UtcNow;
         }
 
@@ -234,7 +247,7 @@ public class SavingGoalService : ISavingGoalService
         if (request.Amount > goal.TargetAmount - previousAmount)
             throw new BusinessRuleException("Contribution amount exceeds the remaining goal amount.", "goal_remaining_exceeded");
 
-        await ApplyContributionAsync(goal, customerId, request.Amount, cancellationToken, request.FundingWalletId);
+        await ApplyContributionAsync(goal, customerId, request.Amount, cancellationToken, request.FundingWalletId, ValidateNote(request.Note));
         await _dbContext.SaveChangesAsync(cancellationToken);
 
         var response = ToResponse(goal);
@@ -246,12 +259,127 @@ public class SavingGoalService : ISavingGoalService
         return response;
     }
 
+    public async Task<SavingGoalResponse?> WithdrawAsync(
+        Guid customerId,
+        Guid goalId,
+        WithdrawSavingGoalRequest request,
+        string? idempotencyKey,
+        CancellationToken cancellationToken = default)
+    {
+        if (request.Amount <= 0)
+            throw new ValidationException("Withdrawal amount must be greater than zero.");
+        var note = ValidateNote(request.Note);
+
+        await using var databaseTransaction = await _dbContext.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted, cancellationToken);
+        var requestHash = IdempotencyStore.ComputeRequestHash(new { goalId, request.Amount, request.WalletId, note });
+        var idempotency = await IdempotencyStore.ClaimAsync(
+            _dbContext, customerId, $"saving-goal-withdraw:{goalId}", idempotencyKey, requestHash, cancellationToken);
+        if (idempotency.IsReplay)
+        {
+            await databaseTransaction.CommitAsync(cancellationToken);
+            return IdempotencyStore.ReadReplay<SavingGoalResponse?>(idempotency);
+        }
+
+        var goal = await LockGoalAsync(customerId, goalId, cancellationToken);
+        if (goal is null)
+            return null;
+
+        var currentAmount = goal.CurrentAmount ?? 0m;
+        if (request.Amount > currentAmount)
+            throw new BusinessRuleException(
+                "Cannot withdraw more than the goal's current saved amount.",
+                "goal_withdraw_exceeds_saved");
+
+        var wallet = (await LockWalletsAsync(new[] { request.WalletId }, cancellationToken)).SingleOrDefault();
+        if (wallet is null || wallet.CustomerId != customerId || wallet.IsDeleted)
+            throw new NotFoundException("Wallet not found.");
+        if (string.Equals(wallet.WalletType, "sepay_linked", StringComparison.OrdinalIgnoreCase))
+            throw new BusinessRuleException(
+                "Withdrawals can only go to a regular wallet, not a bank-linked one.",
+                "goal_withdraw_target_sepay_unsupported");
+
+        var now = DateTime.UtcNow;
+        var transaction = new Transaction
+        {
+            TransactionId = Guid.NewGuid(),
+            CustomerId = customerId,
+            WalletId = wallet.WalletId,
+            CategoryId = GoalCategoryId,
+            TransactionType = "income",
+            EntryMethod = "manual",
+            Amount = request.Amount,
+            Description = $"Rút mục tiêu: {goal.GoalName}",
+            TransactionDate = now,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+        wallet.Balance = (wallet.Balance ?? 0m) + request.Amount;
+        wallet.UpdatedAt = now;
+        _dbContext.Transactions.Add(transaction);
+        // Same ordering reason as ApplyContributionAsync: persist the ledger row before the
+        // contribution row that FKs to it, so Postgres enforces the FK without relying on EF
+        // batch ordering.
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        goal.CurrentAmount = currentAmount - request.Amount;
+        goal.IsCompleted = goal.CurrentAmount >= goal.TargetAmount;
+        goal.UpdatedAt = now;
+        _dbContext.SavingGoalContributions.Add(new SavingGoalContribution
+        {
+            ContributionId = Guid.NewGuid(),
+            GoalId = goal.GoalId,
+            TransactionId = transaction.TransactionId,
+            Amount = request.Amount,
+            Type = "withdrawal",
+            Note = note,
+            ContributionDate = now
+        });
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        var response = ToResponse(goal);
+        await IdempotencyStore.CompleteAsync(
+            _dbContext, customerId, $"saving-goal-withdraw:{goalId}", idempotencyKey!, response, cancellationToken);
+        await databaseTransaction.CommitAsync(cancellationToken);
+
+        return response;
+    }
+
+    public async Task<IReadOnlyList<SavingGoalContributionResponse>?> GetContributionsAsync(
+        Guid customerId,
+        Guid goalId,
+        CancellationToken cancellationToken = default)
+    {
+        var goalExists = await _dbContext.SavingGoals
+            .AsNoTracking()
+            .AnyAsync(g => g.CustomerId == customerId && g.GoalId == goalId && !g.IsDeleted, cancellationToken);
+        if (!goalExists)
+            return null;
+
+        var contributions = await _dbContext.SavingGoalContributions
+            .AsNoTracking()
+            .Where(c => c.GoalId == goalId)
+            .OrderByDescending(c => c.ContributionDate)
+            .ToListAsync(cancellationToken);
+
+        return contributions.Select(c => new SavingGoalContributionResponse
+        {
+            ContributionId = c.ContributionId,
+            GoalId = c.GoalId ?? goalId,
+            Amount = c.Amount,
+            Type = c.Type,
+            ContributedAt = c.ContributionDate ?? DateTime.UtcNow,
+            Note = c.Note,
+            TransactionId = c.TransactionId
+        }).ToList();
+    }
+
     private async Task ApplyContributionAsync(
         SavingGoal goal,
         Guid customerId,
         decimal amount,
         CancellationToken cancellationToken,
-        Guid? overrideWalletId = null)
+        Guid? overrideWalletId = null,
+        string? note = null)
     {
         var previousAmount = goal.CurrentAmount ?? 0m;
         if (amount > goal.TargetAmount - previousAmount)
@@ -266,6 +394,10 @@ public class SavingGoalService : ISavingGoalService
             var wallet = (await LockWalletsAsync(new[] { sourceWalletId.Value }, cancellationToken)).SingleOrDefault();
             if (wallet is null || wallet.CustomerId != customerId || wallet.IsDeleted)
                 throw new NotFoundException("Funding wallet not found.");
+            if (string.Equals(wallet.WalletType, "sepay_linked", StringComparison.OrdinalIgnoreCase))
+                throw new BusinessRuleException(
+                    "Contributions can only be funded from a regular wallet, not a bank-linked one.",
+                    "goal_funding_wallet_sepay_unsupported");
             if ((wallet.Balance ?? 0m) < amount)
                 throw new BusinessRuleException("Funding wallet does not have enough balance.", "insufficient_balance");
 
@@ -303,9 +435,32 @@ public class SavingGoalService : ISavingGoalService
             GoalId = goal.GoalId,
             TransactionId = transactionId,
             Amount = amount,
+            Type = "contribution",
+            Note = note,
             ContributionDate = DateTime.UtcNow
         });
     }
+
+    private const int MaxNoteLength = 255;
+
+    internal static string? ValidateNote(string? note)
+    {
+        if (string.IsNullOrWhiteSpace(note))
+            return null;
+
+        var trimmed = note.Trim();
+        if (trimmed.Length > MaxNoteLength)
+            throw new ValidationException($"Note must not exceed {MaxNoteLength} characters.");
+
+        return trimmed;
+    }
+
+    /// <summary>
+    /// A contribution (expense) debited a wallet, so reversing it means crediting the amount
+    /// back. A withdrawal (income) credited a wallet, so reversing it means debiting it back out.
+    /// </summary>
+    internal static decimal ReversalDelta(string transactionType, decimal amount)
+        => transactionType == "expense" ? amount : -amount;
 
     private async Task<SavingGoal?> LockGoalAsync(Guid customerId, Guid goalId, CancellationToken cancellationToken)
         => await _dbContext.SavingGoals

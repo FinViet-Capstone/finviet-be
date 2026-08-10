@@ -47,13 +47,17 @@ public class ProfileController : ControllerBase
         return Ok(ApiResponse<object>.Ok(result));
     }
 
-    /// <summary>Phân bổ thu nhập hiện tại (đã khóa) và bản nháp cho tháng sau, nếu có.</summary>
+    /// <summary>
+    /// Phân bổ thu nhập hiện tại (đã khóa) và bản nháp cho tháng sau, nếu có.
+    /// Truyền <c>month</c> (yyyy-MM) để tra cứu một tháng bất kỳ thay vì tháng hiện tại — khi đó
+    /// <c>pending</c> luôn là null (khái niệm "bản nháp tháng sau" chỉ có nghĩa với tháng hiện tại).
+    /// </summary>
     [HttpGet("income-allocation")]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
-    public async Task<IActionResult> GetIncomeAllocation(CancellationToken ct)
+    public async Task<IActionResult> GetIncomeAllocation([FromQuery] string? month, CancellationToken ct)
     {
         var customerId = User.GetCustomerId();
-        var result     = await _mediator.Send(new GetIncomeAllocationQuery(customerId), ct);
+        var result     = await _mediator.Send(new GetIncomeAllocationQuery(customerId, month), ct);
         return Ok(ApiResponse<object>.Ok(result));
     }
 

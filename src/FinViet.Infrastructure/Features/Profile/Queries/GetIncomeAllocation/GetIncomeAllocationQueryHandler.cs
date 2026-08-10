@@ -15,5 +15,5 @@ public class GetIncomeAllocationQueryHandler
 
     public Task<IncomeAllocationSummaryDto> Handle(
         GetIncomeAllocationQuery request, CancellationToken cancellationToken)
-        => _incomeAllocationService.GetSummaryAsync(request.CustomerId, cancellationToken);
+        => _incomeAllocationService.GetSummaryAsync(request.CustomerId, request.Month, cancellationToken);
 }
