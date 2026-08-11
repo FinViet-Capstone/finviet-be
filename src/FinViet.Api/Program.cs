@@ -155,12 +155,23 @@ if (reindexRequested)
 // Global exception handling (must be first)
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 
-if (app.Environment.IsDevelopment())
+var swaggerEnabled =
+    app.Environment.IsDevelopment() ||
+    builder.Configuration.GetValue<bool>("Swagger:Enabled");
+
+if (swaggerEnabled)
 {
     app.UseSwagger();
-    app.UseSwaggerUI(c => c.SwaggerEndpoint("/swagger/v1/swagger.json", "FinViet API v1"));
-}
 
+    app.UseSwaggerUI(c =>
+    {
+        c.SwaggerEndpoint(
+            "/swagger/v1/swagger.json",
+            "FinViet API v1");
+
+        c.RoutePrefix = "swagger";
+    });
+}
 app.UseHttpsRedirection();
 
 // Serve avatar images from wwwroot/avatars/
@@ -172,5 +183,14 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
+app.MapGet("/", () => Results.Ok(new
+{
+    service = "FinViet API",
+    status = "running"
+}));
 
+app.MapGet("/health", () => Results.Ok(new
+{
+    status = "healthy"
+}));
 app.Run();
