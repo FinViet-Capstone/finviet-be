@@ -1,3 +1,4 @@
+using FinViet.Application.DTOs.Ai;
 using FinViet.Application.Interfaces;
 using FinViet.Infrastructure.Persistence.Context;
 using FinViet.Infrastructure.Persistence.Entities;
@@ -53,7 +54,10 @@ public class RagEmbeddingReindexService : IRagEmbeddingReindexService
 
             foreach (var row in batch)
             {
-                var values = await _embeddings.EmbedAsync(row.Content, cancellationToken);
+                var values = await _embeddings.EmbedAsync(
+                    row.Content,
+                    cancellationToken,
+                    new AiRequestContext("rag_reindex_embedding"));
                 var chunk = new RagChunk
                 {
                     Id = row.Id,

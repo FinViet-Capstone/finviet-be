@@ -14,9 +14,17 @@ public class CategorizationOutcome
 
     public bool IsAiClassified { get; set; }
 
-    /// <summary>True when the AI provider was unavailable and the transaction was queued for re-processing.</summary>
+    /// <summary>Retained for backward compatibility. No retry queue is currently exposed.</summary>
     public bool Queued { get; set; }
 
-    /// <summary>Source of the decision: RULE, AI, or FALLBACK.</summary>
+    public bool Applied { get; set; }
+
+    public string? SuggestedCategoryId { get; set; }
+
+    public string? SuggestedCategoryName { get; set; }
+
+    public string? Reason { get; set; }
+
+    /// <summary>Source: MANUAL, RULE, AI_AUTO, AI_SUGGESTION, OFF, or FALLBACK.</summary>
     public string Source { get; set; } = "FALLBACK";
 }

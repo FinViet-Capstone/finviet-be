@@ -24,6 +24,16 @@ public partial class FinVietDbContext : DbContext
 
     public virtual DbSet<AiWeeklyReport> AiWeeklyReports { get; set; }
 
+    public virtual DbSet<AiChatSession> AiChatSessions { get; set; }
+
+    public virtual DbSet<AiCustomerPreference> AiCustomerPreferences { get; set; }
+
+    public virtual DbSet<AiRateLimitWindow> AiRateLimitWindows { get; set; }
+
+    public virtual DbSet<AiUsageEvent> AiUsageEvents { get; set; }
+
+    public virtual DbSet<AiAuditEvent> AiAuditEvents { get; set; }
+
     public virtual DbSet<Bucket> Buckets { get; set; }
 
     public virtual DbSet<Budget> Budgets { get; set; }
@@ -209,6 +219,7 @@ public partial class FinVietDbContext : DbContext
                 .HasColumnName("id");
             entity.Property(e => e.CustomerId).HasColumnName("customer_id");
             entity.Property(e => e.Role)
+                .HasColumnType("chat_role")
                 .HasColumnName("role")
                 .HasConversion(PgEnumStringConverter.Create<ChatRole>());
             entity.Property(e => e.Content).HasColumnName("content");
@@ -221,6 +232,12 @@ public partial class FinVietDbContext : DbContext
                 .HasForeignKey(d => d.CustomerId)
                 .OnDelete(DeleteBehavior.Cascade)
                 .HasConstraintName("ai_chat_messages_customer_id_fkey");
+
+            entity.HasOne(d => d.Session).WithMany(p => p.Messages)
+                .HasForeignKey(d => new { d.SessionId, d.CustomerId })
+                .HasPrincipalKey(p => new { p.SessionId, p.CustomerId })
+                .OnDelete(DeleteBehavior.Cascade)
+                .HasConstraintName("ai_chat_messages_session_customer_fkey");
         });
 
         modelBuilder.Entity<Customer>(entity =>
@@ -581,9 +598,19 @@ public partial class FinVietDbContext : DbContext
             entity.Ignore(e => e.SourceChannel);
             entity.Ignore(e => e.Note);
             entity.Ignore(e => e.BeneficiaryName);
-            entity.Ignore(e => e.IsAiClassified);
-            entity.Ignore(e => e.AiConfidence);
-            entity.Ignore(e => e.AiCategoryGuess);
+            entity.Property(e => e.IsAiClassified)
+                .HasDefaultValue(false)
+                .HasColumnName("is_ai_classified");
+            entity.Property(e => e.AiConfidence)
+                .HasPrecision(5, 4)
+                .HasColumnName("ai_confidence");
+            entity.Property(e => e.AiCategoryGuess)
+                .HasMaxLength(40)
+                .HasColumnName("ai_category_guess");
+            entity.Property(e => e.AiClassificationSource)
+                .HasMaxLength(30)
+                .HasColumnName("ai_classification_source");
+            entity.Property(e => e.AiClassifiedAt).HasColumnName("ai_classified_at");
 
             entity.HasOne(d => d.Category).WithMany(p => p.Transactions)
                 .HasForeignKey(d => d.CategoryId)
@@ -663,6 +690,7 @@ public partial class FinVietDbContext : DbContext
                 .HasColumnName("id");
             entity.Property(e => e.CustomerId).HasColumnName("customer_id");
             entity.Property(e => e.View)
+                .HasColumnType("score_view")
                 .HasColumnName("view")
                 .HasConversion(PgEnumStringConverter.Create<ScoreView>());
             entity.Property(e => e.Score).HasColumnName("score");
@@ -670,6 +698,7 @@ public partial class FinVietDbContext : DbContext
             entity.Property(e => e.BudgetScore).HasColumnName("budget_score");
             entity.Property(e => e.SavingsScore).HasColumnName("savings_score");
             entity.Property(e => e.Color)
+                .HasColumnType("score_color")
                 .HasColumnName("color")
                 .HasConversion(PgEnumStringConverter.Create<ScoreColor>());
             entity.Property(e => e.VerdictVi)

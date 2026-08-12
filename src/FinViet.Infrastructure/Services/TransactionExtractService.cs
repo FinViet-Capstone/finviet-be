@@ -89,7 +89,7 @@ public class TransactionExtractService : ITransactionExtractService
                     // 2) Fall back to AI categorization.
                     try
                     {
-                        var suggestion = await _categorization.PreviewAsync(row.Note, ct);
+                        var suggestion = await _categorization.PreviewAsync(customerId, row.Note, ct);
                         item.CategoryName = suggestion.CategoryName;
                         item.Confidence = suggestion.Confidence;
                     }

@@ -30,7 +30,14 @@ public class BeneficiaryRuleService : IBeneficiaryRuleService
             throw new ForbiddenException("You do not own this transaction.");
 
         var newCategory = await _db.Categories
-            .FirstOrDefaultAsync(c => c.CategoryId == request.CategoryId, cancellationToken)
+            .FirstOrDefaultAsync(
+                c => c.CategoryId == request.CategoryId
+                     && (!c.CategoryId.StartsWith("custom_")
+                         || _db.CustomerCategories.Any(cc =>
+                             cc.CustomerId == customerId
+                             && cc.CategoryId == c.CategoryId
+                             && cc.IsActive)),
+                cancellationToken)
             ?? throw new NotFoundException("Category", request.CategoryId);
 
         var transaction = txn.Txn;
@@ -52,6 +59,8 @@ public class BeneficiaryRuleService : IBeneficiaryRuleService
         transaction.CategoryId = request.CategoryId;
         transaction.IsAiClassified = false;
         transaction.AiConfidence = null;
+        transaction.AiClassificationSource = "manual";
+        transaction.AiClassifiedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync(cancellationToken);
 
         return new CategorizationOutcome
@@ -62,6 +71,7 @@ public class BeneficiaryRuleService : IBeneficiaryRuleService
             Confidence = null,
             IsAiClassified = false,
             Queued = false,
+            Applied = true,
             Source = "MANUAL"
         };
     }

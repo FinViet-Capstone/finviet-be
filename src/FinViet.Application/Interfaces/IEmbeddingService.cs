@@ -5,5 +5,8 @@ namespace FinViet.Application.Interfaces;
 /// callers can fall back gracefully.</summary>
 public interface IEmbeddingService
 {
-    Task<float[]> EmbedAsync(string text, CancellationToken cancellationToken = default);
+    Task<float[]> EmbedAsync(
+        string text,
+        CancellationToken cancellationToken = default,
+        DTOs.Ai.AiRequestContext? requestContext = null);
 }

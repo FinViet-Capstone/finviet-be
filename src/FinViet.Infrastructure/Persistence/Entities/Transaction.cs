@@ -57,6 +57,10 @@ public partial class Transaction
 
     public string? AiCategoryGuess { get; set; }
 
+    public string? AiClassificationSource { get; set; }
+
+    public DateTime? AiClassifiedAt { get; set; }
+
     public virtual Category? Category { get; set; }
 
     public virtual ICollection<CategoryCorrectionLog> CategoryCorrectionLogs { get; set; } = new List<CategoryCorrectionLog>();

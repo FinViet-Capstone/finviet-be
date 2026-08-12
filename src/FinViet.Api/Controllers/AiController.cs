@@ -8,7 +8,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace FinViet.Api.Controllers;
 
 [ApiController]
-[Authorize]
+[Authorize(Roles = "Customer")]
 [Route("api/ai")]
 public class AiController : ControllerBase
 {
@@ -17,22 +17,19 @@ public class AiController : ControllerBase
     private readonly ISpendingScoreService _score;
     private readonly IWeeklyReportService _reports;
     private readonly IAiChatService _chat;
-    private readonly IDocumentIngestionService _ingestion;
 
     public AiController(
         IAiCategorizationService categorization,
         IBeneficiaryRuleService rules,
         ISpendingScoreService score,
         IWeeklyReportService reports,
-        IAiChatService chat,
-        IDocumentIngestionService ingestion)
+        IAiChatService chat)
     {
         _categorization = categorization;
         _rules = rules;
         _score = score;
         _reports = reports;
         _chat = chat;
-        _ingestion = ingestion;
     }
 
     // ── Categorization ───────────────────────────────────────────────────────────────
@@ -40,7 +37,8 @@ public class AiController : ControllerBase
     public async Task<ActionResult<ApiResponse<AiClassificationResult>>> Preview(
         [FromBody] CategorizePreviewRequest request, CancellationToken cancellationToken)
     {
-        var result = await _categorization.PreviewAsync(request.Input, cancellationToken);
+        var customerId = User.GetCustomerId();
+        var result = await _categorization.PreviewAsync(customerId, request.Input, cancellationToken);
         return Ok(ApiResponse<AiClassificationResult>.Ok(result, "Phân loại gợi ý thành công."));
     }
 
@@ -48,7 +46,11 @@ public class AiController : ControllerBase
     public async Task<ActionResult<ApiResponse<CategorizationOutcome>>> Categorize(
         [FromRoute] Guid transactionId, CancellationToken cancellationToken)
     {
-        var outcome = await _categorization.CategorizeTransactionAsync(transactionId, cancellationToken);
+        var customerId = User.GetCustomerId();
+        var outcome = await _categorization.CategorizeTransactionAsync(
+            customerId,
+            transactionId,
+            cancellationToken);
         return Ok(ApiResponse<CategorizationOutcome>.Ok(outcome, "Phân loại giao dịch hoàn tất."));
     }
 
@@ -119,35 +121,72 @@ public class AiController : ControllerBase
         [FromBody] ChatAskRequest request, CancellationToken cancellationToken)
     {
         var customerId = User.GetCustomerId();
-        var reply = await _chat.AskAsync(customerId, request.Question, cancellationToken);
+        var reply = await _chat.AskAsync(
+            customerId,
+            request.SessionId,
+            request.Question,
+            cancellationToken);
         return Ok(ApiResponse<ChatMessageResponse>.Ok(reply, "Phản hồi từ trợ lý."));
     }
 
     [HttpGet("chat/history")]
     public async Task<ActionResult<ApiResponse<IReadOnlyList<ChatMessageResponse>>>> GetChatHistory(
-        [FromQuery] int limit = 50, CancellationToken cancellationToken = default)
+        [FromQuery] Guid? sessionId,
+        [FromQuery] int limit = 50,
+        CancellationToken cancellationToken = default)
     {
         var customerId = User.GetCustomerId();
-        var history = await _chat.GetHistoryAsync(customerId, limit, cancellationToken);
+        var history = await _chat.GetHistoryAsync(customerId, sessionId, limit, cancellationToken);
         return Ok(ApiResponse<IReadOnlyList<ChatMessageResponse>>.Ok(history, "Lịch sử hội thoại."));
     }
 
-    // ── RAG knowledge documents (admin) ────────────────────────────────────────────
-    /// <summary>Ingest a finance PDF into the GLOBAL knowledge corpus the chatbot retrieves over.
-    /// Admin-only: these documents are visible to all customers' chats.</summary>
-    [HttpPost("documents")]
-    [Authorize(Roles = "Admin")]
-    [RequestSizeLimit(20 * 1024 * 1024)]
-    public async Task<ActionResult<ApiResponse<Guid>>> IngestDocument(
-        IFormFile file, [FromForm] string? title, CancellationToken cancellationToken)
+    [HttpPost("chat/sessions")]
+    public async Task<ActionResult<ApiResponse<ChatSessionResponse>>> CreateChatSession(
+        [FromBody] CreateChatSessionRequest request,
+        CancellationToken cancellationToken)
     {
-        if (file is null || file.Length == 0)
-            return BadRequest(ApiResponse<Guid>.Fail("Vui lòng chọn tệp PDF."));
-
-        await using var stream = file.OpenReadStream();
-        var documentId = await _ingestion.IngestPdfAsync(
-            stream, string.IsNullOrWhiteSpace(title) ? file.FileName : title, cancellationToken);
-
-        return Ok(ApiResponse<Guid>.Ok(documentId, "Đã nạp tài liệu vào kho tri thức."));
+        var customerId = User.GetCustomerId();
+        var session = await _chat.CreateSessionAsync(
+            customerId,
+            request.Title,
+            request.HistoryEnabled,
+            cancellationToken);
+        return Ok(ApiResponse<ChatSessionResponse>.Ok(session, "Đã tạo phiên trò chuyện."));
     }
+
+    [HttpGet("chat/sessions")]
+    public async Task<ActionResult<ApiResponse<IReadOnlyList<ChatSessionResponse>>>> GetChatSessions(
+        CancellationToken cancellationToken)
+    {
+        var customerId = User.GetCustomerId();
+        var sessions = await _chat.GetSessionsAsync(customerId, cancellationToken);
+        return Ok(ApiResponse<IReadOnlyList<ChatSessionResponse>>.Ok(sessions));
+    }
+
+    [HttpPatch("chat/sessions/{sessionId:guid}")]
+    public async Task<ActionResult<ApiResponse<ChatSessionResponse>>> UpdateChatSession(
+        [FromRoute] Guid sessionId,
+        [FromBody] UpdateChatSessionRequest request,
+        CancellationToken cancellationToken)
+    {
+        var customerId = User.GetCustomerId();
+        var session = await _chat.UpdateSessionAsync(
+            customerId,
+            sessionId,
+            request.Title,
+            request.HistoryEnabled,
+            cancellationToken);
+        return Ok(ApiResponse<ChatSessionResponse>.Ok(session, "Đã cập nhật phiên trò chuyện."));
+    }
+
+    [HttpDelete("chat/sessions/{sessionId:guid}")]
+    public async Task<IActionResult> DeleteChatSession(
+        [FromRoute] Guid sessionId,
+        CancellationToken cancellationToken)
+    {
+        var customerId = User.GetCustomerId();
+        await _chat.DeleteSessionAsync(customerId, sessionId, cancellationToken);
+        return NoContent();
+    }
+
 }

@@ -116,7 +116,7 @@ var reindexRequested = args.Contains("--reindex-rag", StringComparer.OrdinalIgno
 if (reindexRequested && !args.Contains("--confirm-reindex", StringComparer.OrdinalIgnoreCase))
 {
     app.Logger.LogError(
-        "RAG re-index was not started. Back up PostgreSQL, keep Ai:RagEnabled=false, then run with --reindex-rag --confirm-reindex.");
+        "RAG re-index was not started. Back up PostgreSQL, keep Gemini:RagEnabled=false, then run with --reindex-rag --confirm-reindex.");
     return;
 }
 
@@ -131,15 +131,16 @@ using (var scope = app.Services.CreateScope())
     }
     catch (Exception ex)
     {
-        logger.LogError(ex, "Database initialization failed: {Message}", ex.Message);
+        logger.LogCritical(ex, "Database initialization failed: {Message}", ex.Message);
+        throw;
     }
 }
 
 if (reindexRequested)
 {
-    if (builder.Configuration.GetValue<bool>("Ai:RagEnabled"))
+    if (builder.Configuration.GetValue<bool>("Gemini:RagEnabled"))
     {
-        app.Logger.LogError("Set Ai:RagEnabled=false before re-indexing to prevent mixed-vector retrieval.");
+        app.Logger.LogError("Set Gemini:RagEnabled=false before re-indexing to prevent mixed-vector retrieval.");
         return;
     }
 
@@ -147,7 +148,7 @@ if (reindexRequested)
     var reindexer = reindexScope.ServiceProvider.GetRequiredService<IRagEmbeddingReindexService>();
     var processed = await reindexer.ReindexAsync();
     app.Logger.LogInformation(
-        "Re-indexed {Processed} RAG chunks. Validate retrieval before setting Ai:RagEnabled=true.",
+        "Re-indexed {Processed} RAG chunks. Validate retrieval before setting Gemini:RagEnabled=true.",
         processed);
     return;
 }

@@ -19,9 +19,31 @@ public static class DbInitializer
         ILogger logger,
         CancellationToken cancellationToken = default)
     {
-        await ApplyMigrationsAsync(db, logger, cancellationToken);
-        await EnsureAdditiveTablesAsync(db, logger, cancellationToken);
-        await SeedAsync(db, logger, cancellationToken);
+        await db.Database.OpenConnectionAsync(cancellationToken);
+        try
+        {
+            await db.Database.ExecuteSqlRawAsync(
+                "SELECT pg_advisory_lock(hashtext('finviet_database_initializer'));",
+                Array.Empty<object>(),
+                cancellationToken);
+            try
+            {
+                await ApplyMigrationsAsync(db, logger, cancellationToken);
+                await EnsureAdditiveTablesAsync(db, logger, cancellationToken);
+                await SeedAsync(db, logger, cancellationToken);
+            }
+            finally
+            {
+                await db.Database.ExecuteSqlRawAsync(
+                    "SELECT pg_advisory_unlock(hashtext('finviet_database_initializer'));",
+                    Array.Empty<object>(),
+                    CancellationToken.None);
+            }
+        }
+        finally
+        {
+            await db.Database.CloseConnectionAsync();
+        }
     }
 
     /// <summary>
@@ -88,8 +110,55 @@ CREATE INDEX IF NOT EXISTS ix_rag_chunk_customer ON rag_chunk (customer_id);
 CREATE INDEX IF NOT EXISTS ix_rag_chunk_embedding
     ON rag_chunk USING hnsw (embedding vector_cosine_ops);";
 
-        await db.Database.ExecuteSqlRawAsync(sql, cancellationToken);
-        logger.LogInformation("Ensured additive tables (merchant_rules, rag_document, rag_chunk), dropped redundant AI tables, and dropped category_requests.");
+        await ExecuteSqlScriptAsync(db, sql, cancellationToken);
+        await EnsureGeminiSafeCopilotSchemaAsync(db, logger, cancellationToken);
+        logger.LogInformation(
+            "Ensured additive tables (merchant_rules, RAG, Gemini safe copilot) and removed retired tables.");
+    }
+
+    private static async Task EnsureGeminiSafeCopilotSchemaAsync(
+        FinVietDbContext db,
+        ILogger logger,
+        CancellationToken cancellationToken)
+    {
+        var migrationPath = Path.Combine(MigrationsFolder, "V25__gemini_safe_copilot.sql");
+        if (!File.Exists(migrationPath))
+        {
+            throw new FileNotFoundException(
+                "Gemini safe-copilot additive migration is missing from the application output.",
+                migrationPath);
+        }
+
+        var sql = await File.ReadAllTextAsync(migrationPath, cancellationToken);
+        await ExecuteSqlScriptAsync(db, sql, cancellationToken);
+        if (db.Database.GetDbConnection() is Npgsql.NpgsqlConnection npgsqlConnection)
+            await npgsqlConnection.ReloadTypesAsync();
+        logger.LogInformation("Ensured Gemini safe-copilot V25 schema.");
+    }
+
+    private static async Task ExecuteSqlScriptAsync(
+        FinVietDbContext db,
+        string sql,
+        CancellationToken cancellationToken)
+    {
+        var connection = db.Database.GetDbConnection();
+        var shouldClose = connection.State == System.Data.ConnectionState.Closed;
+
+        if (shouldClose)
+            await connection.OpenAsync(cancellationToken);
+
+        try
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = sql;
+            command.CommandTimeout = db.Database.GetCommandTimeout() ?? command.CommandTimeout;
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        finally
+        {
+            if (shouldClose)
+                await connection.CloseAsync();
+        }
     }
 
     private static async Task ApplyMigrationsAsync(
@@ -139,7 +208,7 @@ CREATE INDEX IF NOT EXISTS ix_rag_chunk_embedding
             try
             {
                 logger.LogInformation("Applying migration {Name}...", name);
-                await db.Database.ExecuteSqlRawAsync(sql, cancellationToken);
+                await ExecuteSqlScriptAsync(db, sql, cancellationToken);
                 logger.LogInformation("Migration {Name} applied successfully.", name);
             }
             catch (Exception ex)

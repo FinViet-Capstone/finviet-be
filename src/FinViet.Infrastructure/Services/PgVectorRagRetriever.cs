@@ -1,6 +1,6 @@
 using FinViet.Application.DTOs.Ai;
 using FinViet.Application.Interfaces;
-using FinViet.Infrastructure.ExternalServices.OpenAiCompatible;
+using FinViet.Infrastructure.ExternalServices.Gemini;
 using FinViet.Infrastructure.Persistence.Context;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -18,12 +18,12 @@ public class PgVectorRagRetriever : IRagRetriever
 {
     private readonly FinVietDbContext _db;
     private readonly IEmbeddingService _embeddings;
-    private readonly AiOptions _options;
+    private readonly GeminiOptions _options;
 
     public PgVectorRagRetriever(
         FinVietDbContext db,
         IEmbeddingService embeddings,
-        IOptions<AiOptions> options)
+        IOptions<GeminiOptions> options)
     {
         _db = db;
         _embeddings = embeddings;
@@ -36,13 +36,18 @@ public class PgVectorRagRetriever : IRagRetriever
         if (!_options.RagEnabled)
             return Array.Empty<RagHit>();
 
-        var values = await _embeddings.EmbedAsync(query, cancellationToken);
+        var values = await _embeddings.EmbedAsync(
+            query,
+            cancellationToken,
+            new AiRequestContext("rag_retrieval_embedding", customerId));
         var queryVector = new Vector(values);
 
+        var resultLimit = Math.Clamp(k, 1, 20);
+        var candidateLimit = Math.Min(resultLimit * 4, 80);
         var rows = await _db.RagChunks
             .Where(c => c.CustomerId == customerId || c.CustomerId == null)
             .OrderBy(c => c.Embedding.CosineDistance(queryVector))
-            .Take(k)
+            .Take(candidateLimit)
             .Select(c => new
             {
                 c.Content,
@@ -60,6 +65,8 @@ public class PgVectorRagRetriever : IRagRetriever
                 Title = r.Title,
                 Score = 1.0 - r.Distance
             })
+            .Where(hit => hit.Score >= _options.RagMinimumSimilarity)
+            .Take(resultLimit)
             .ToList();
     }
 }
