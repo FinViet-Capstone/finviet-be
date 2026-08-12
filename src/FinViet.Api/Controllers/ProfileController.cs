@@ -1,9 +1,11 @@
 using FinViet.Api.Common;
 using FinViet.Application.Common;
 using FinViet.Application.Features.Profile.Commands.ScheduleIncomeAllocationChange;
+using FinViet.Application.Features.Profile.Commands.UpdateAiPreferences;
 using FinViet.Application.Features.Profile.Commands.UpdateProfile;
 using FinViet.Application.Features.Profile.Commands.UpdateProfileSettings;
 using FinViet.Application.Features.Profile.Commands.UploadAvatar;
+using FinViet.Application.Features.Profile.Queries.GetAiPreferences;
 using FinViet.Application.Features.Profile.Queries.GetIncomeAllocation;
 using FinViet.Application.Features.Profile.Queries.GetProfile;
 using FinViet.Domain.Enums;
@@ -88,6 +90,39 @@ public class ProfileController : ControllerBase
         return Ok(ApiResponse<object>.Ok(result));
     }
 
+    /// <summary>Lấy cấu hình AI và phạm vi dữ liệu của khách hàng.</summary>
+    [HttpGet("ai-preferences")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetAiPreferences(CancellationToken ct)
+    {
+        var customerId = User.GetCustomerId();
+        var result = await _mediator.Send(new GetAiPreferencesQuery(customerId), ct);
+        return Ok(ApiResponse<object>.Ok(result));
+    }
+
+    /// <summary>Cập nhật một phần cấu hình AI; các field bỏ trống được giữ nguyên.</summary>
+    [HttpPatch("ai-preferences")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> UpdateAiPreferences(
+        [FromBody] UpdateAiPreferencesRequest request,
+        CancellationToken ct)
+    {
+        var customerId = User.GetCustomerId();
+        var result = await _mediator.Send(new UpdateAiPreferencesCommand(
+            customerId,
+            request.CategorizationMode,
+            request.AutoCategorizationThreshold,
+            request.DefaultHistoryEnabled,
+            request.WeeklyReportEnabled,
+            request.ShareBalances,
+            request.ShareTransactions,
+            request.ShareBudgets,
+            request.ShareGoals,
+            request.ShareReports,
+            request.RagEnabled), ct);
+        return Ok(ApiResponse<object>.Ok(result));
+    }
+
     /// <summary>Upload ảnh đại diện (JPEG/PNG/WebP, tối đa 5MB).</summary>
     [HttpPost("avatar")]
     [ProducesResponseType(typeof(ApiResponse<string>), StatusCodes.Status200OK)]
@@ -128,3 +163,15 @@ public record ScheduleIncomeAllocationRequest(
 public record UpdateProfileSettingsRequest(
     AppTheme? Theme = null,
     int[]? NotifBudgetThresholds = null);
+
+public record UpdateAiPreferencesRequest(
+    string? CategorizationMode = null,
+    decimal? AutoCategorizationThreshold = null,
+    bool? DefaultHistoryEnabled = null,
+    bool? WeeklyReportEnabled = null,
+    bool? ShareBalances = null,
+    bool? ShareTransactions = null,
+    bool? ShareBudgets = null,
+    bool? ShareGoals = null,
+    bool? ShareReports = null,
+    bool? RagEnabled = null);

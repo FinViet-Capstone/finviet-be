@@ -68,8 +68,9 @@ public class WeeklyReportScheduler : BackgroundService
         using (var scope = _scopeFactory.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<FinVietDbContext>();
-            customerIds = await db.Customers
-                .Where(c => c.IsActive)
+            customerIds = await db.Customers.AsNoTracking()
+                .Where(c => c.IsActive
+                            && (c.AiPreference == null || c.AiPreference.WeeklyReportEnabled))
                 .Select(c => c.CustomerId)
                 .ToListAsync(stoppingToken);
         }

@@ -1,6 +1,8 @@
 using FinViet.Application.Common.Exceptions;
 using FinViet.Application.Features.Account.Commands.DeactivateAccount;
 using FinViet.Application.Features.Account.Commands.DeleteAccount;
+using FinViet.Application.DTOs.Ai;
+using FinViet.Application.Features.Profile.Commands.UpdateAiPreferences;
 using FinViet.Application.Features.Profile.Commands.UpdateProfile;
 using FinViet.Application.Features.Profile.Commands.UploadAvatar;
 using FinViet.Application.Features.Profile.Queries.GetProfile;
@@ -9,6 +11,7 @@ using FinViet.Application.UnitTests.Infrastructure;
 using FinViet.Domain.Enums;
 using FinViet.Infrastructure.Features.Account.Commands.DeactivateAccount;
 using FinViet.Infrastructure.Features.Account.Commands.DeleteAccount;
+using FinViet.Infrastructure.Features.Profile.Commands.UpdateAiPreferences;
 using FinViet.Infrastructure.Features.Profile.Commands.UpdateProfile;
 using FinViet.Infrastructure.Features.Profile.Commands.UploadAvatar;
 using FinViet.Infrastructure.Features.Profile.Queries.GetProfile;
@@ -134,6 +137,40 @@ public sealed class ProfileAndAccountHandlerTests
         Assert.Equal("/avatars/new.png", result);
         Assert.Equal("/avatars/new.png", (await db.Customers.SingleAsync()).AvatarUrl);
         avatar.VerifyAll();
+    }
+
+    [Fact]
+    public async Task UpdateAiPreferences_PersistsPatchAndAuditsOnlyChangedFieldNames()
+    {
+        await using var db = TestDbContextFactory.Create();
+        var customer = TestData.Customer();
+        db.Customers.Add(customer);
+        await db.SaveChangesAsync();
+        var telemetry = new Mock<IAiTelemetryRecorder>(MockBehavior.Strict);
+        AiAuditRecord? audit = null;
+        telemetry.Setup(x => x.RecordAuditAsync(
+                It.IsAny<AiAuditRecord>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<AiAuditRecord, CancellationToken>((record, _) => audit = record)
+            .Returns(Task.CompletedTask);
+        var handler = new UpdateAiPreferencesCommandHandler(db, telemetry.Object);
+
+        var result = await handler.Handle(
+            new UpdateAiPreferencesCommand(
+                customer.CustomerId,
+                CategorizationMode: "high_confidence_auto",
+                ShareBalances: false),
+            CancellationToken.None);
+
+        Assert.Equal("high_confidence_auto", result.CategorizationMode);
+        Assert.False(result.ShareBalances);
+        Assert.NotNull(audit);
+        Assert.Equal("ai_preference_updated", audit!.EventType);
+        var metadataJson = System.Text.Json.JsonSerializer.Serialize(audit.Metadata);
+        Assert.Contains("categorizationMode", metadataJson);
+        Assert.Contains("shareBalances", metadataJson);
+        Assert.DoesNotContain("high_confidence_auto", metadataJson);
+        Assert.DoesNotContain("false", metadataJson, StringComparison.OrdinalIgnoreCase);
     }
 
     // TC-ACC-U01

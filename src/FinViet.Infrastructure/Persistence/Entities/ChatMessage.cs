@@ -23,4 +23,6 @@ public partial class ChatMessage
     public DateTime CreatedAt { get; set; }
 
     public virtual Customer? Customer { get; set; }
+
+    public virtual AiChatSession? Session { get; set; }
 }

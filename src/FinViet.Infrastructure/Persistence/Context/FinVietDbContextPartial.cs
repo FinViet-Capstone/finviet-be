@@ -154,6 +154,130 @@ public partial class FinVietDbContext
                 .HasConstraintName("customer_categories_category_id_fkey");
         });
 
+        // ── AI safe-copilot persistence ──────────────────────────
+        modelBuilder.Entity<AiChatSession>(entity =>
+        {
+            entity.HasKey(e => e.SessionId).HasName("ai_chat_sessions_pkey");
+            entity.HasAlternateKey(e => new { e.SessionId, e.CustomerId })
+                .HasName("uq_ai_chat_sessions_id_customer");
+            entity.ToTable("ai_chat_sessions");
+
+            entity.HasIndex(e => new { e.CustomerId, e.LastMessageAt, e.CreatedAt },
+                    "ix_ai_chat_sessions_customer_recent")
+                .HasFilter("deleted_at IS NULL");
+            entity.HasIndex(e => e.CustomerId, "ux_ai_chat_sessions_customer_default")
+                .IsUnique()
+                .HasFilter("is_default = true AND deleted_at IS NULL");
+            entity.Property(e => e.SessionId)
+                .HasDefaultValueSql("gen_random_uuid()")
+                .HasColumnName("id");
+            entity.Property(e => e.CustomerId).HasColumnName("customer_id");
+            entity.Property(e => e.Title).HasMaxLength(120).HasColumnName("title");
+            entity.Property(e => e.HistoryEnabled).HasDefaultValue(true).HasColumnName("history_enabled");
+            entity.Property(e => e.IsDefault).HasDefaultValue(false).HasColumnName("is_default");
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql("now()").HasColumnName("created_at");
+            entity.Property(e => e.UpdatedAt).HasDefaultValueSql("now()").HasColumnName("updated_at");
+            entity.Property(e => e.LastMessageAt).HasColumnName("last_message_at");
+            entity.Property(e => e.DeletedAt).HasColumnName("deleted_at");
+
+            entity.HasOne(e => e.Customer).WithMany(c => c.AiChatSessions)
+                .HasForeignKey(e => e.CustomerId)
+                .OnDelete(DeleteBehavior.Cascade)
+                .HasConstraintName("ai_chat_sessions_customer_id_fkey");
+        });
+
+        modelBuilder.Entity<AiCustomerPreference>(entity =>
+        {
+            entity.HasKey(e => e.CustomerId).HasName("ai_customer_preferences_pkey");
+            entity.ToTable("ai_customer_preferences");
+
+            entity.Property(e => e.CustomerId).HasColumnName("customer_id");
+            entity.Property(e => e.CategorizationMode).HasMaxLength(30).HasColumnName("categorization_mode");
+            entity.Property(e => e.AutoCategorizationThreshold)
+                .HasPrecision(5, 4)
+                .HasColumnName("auto_categorization_threshold");
+            entity.Property(e => e.DefaultHistoryEnabled).HasColumnName("default_history_enabled");
+            entity.Property(e => e.WeeklyReportEnabled).HasColumnName("weekly_report_enabled");
+            entity.Property(e => e.ShareBalances).HasColumnName("share_balances");
+            entity.Property(e => e.ShareTransactions).HasColumnName("share_transactions");
+            entity.Property(e => e.ShareBudgets).HasColumnName("share_budgets");
+            entity.Property(e => e.ShareGoals).HasColumnName("share_goals");
+            entity.Property(e => e.ShareReports).HasColumnName("share_reports");
+            entity.Property(e => e.RagEnabled).HasColumnName("rag_enabled");
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql("now()").HasColumnName("created_at");
+            entity.Property(e => e.UpdatedAt).HasDefaultValueSql("now()").HasColumnName("updated_at");
+
+            entity.HasOne(e => e.Customer).WithOne(c => c.AiPreference)
+                .HasForeignKey<AiCustomerPreference>(e => e.CustomerId)
+                .OnDelete(DeleteBehavior.Cascade)
+                .HasConstraintName("ai_customer_preferences_customer_id_fkey");
+        });
+
+        modelBuilder.Entity<AiRateLimitWindow>(entity =>
+        {
+            entity.HasKey(e => new { e.CustomerId, e.Feature, e.WindowType, e.WindowStart })
+                .HasName("ai_rate_limit_windows_pkey");
+            entity.ToTable("ai_rate_limit_windows");
+
+            entity.Property(e => e.CustomerId).HasColumnName("customer_id");
+            entity.Property(e => e.Feature).HasMaxLength(40).HasColumnName("feature");
+            entity.Property(e => e.WindowType).HasMaxLength(10).HasColumnName("window_type");
+            entity.Property(e => e.WindowStart).HasColumnName("window_start");
+            entity.Property(e => e.RequestCount).HasDefaultValue(0).HasColumnName("request_count");
+            entity.Property(e => e.UpdatedAt).HasDefaultValueSql("now()").HasColumnName("updated_at");
+
+            entity.HasOne(e => e.Customer).WithMany(c => c.AiRateLimitWindows)
+                .HasForeignKey(e => e.CustomerId)
+                .OnDelete(DeleteBehavior.Cascade)
+                .HasConstraintName("ai_rate_limit_windows_customer_id_fkey");
+        });
+
+        modelBuilder.Entity<AiUsageEvent>(entity =>
+        {
+            entity.HasKey(e => e.Id).HasName("ai_usage_events_pkey");
+            entity.ToTable("ai_usage_events");
+
+            entity.Property(e => e.Id).HasDefaultValueSql("gen_random_uuid()").HasColumnName("id");
+            entity.Property(e => e.CustomerId).HasColumnName("customer_id");
+            entity.Property(e => e.SessionId).HasColumnName("session_id");
+            entity.Property(e => e.Feature).HasMaxLength(40).HasColumnName("feature");
+            entity.Property(e => e.Provider).HasMaxLength(40).HasColumnName("provider");
+            entity.Property(e => e.Model).HasMaxLength(120).HasColumnName("model");
+            entity.Property(e => e.Outcome).HasMaxLength(30).HasColumnName("outcome");
+            entity.Property(e => e.InputTokens).HasColumnName("input_tokens");
+            entity.Property(e => e.OutputTokens).HasColumnName("output_tokens");
+            entity.Property(e => e.TotalTokens).HasColumnName("total_tokens");
+            entity.Property(e => e.LatencyMs).HasColumnName("latency_ms");
+            entity.Property(e => e.ProviderRequestId).HasMaxLength(255).HasColumnName("provider_request_id");
+            entity.Property(e => e.Metadata).HasColumnType("jsonb").HasColumnName("metadata");
+            entity.Property(e => e.OccurredAt).HasDefaultValueSql("now()").HasColumnName("occurred_at");
+
+            entity.HasOne(e => e.Customer).WithMany(c => c.AiUsageEvents)
+                .HasForeignKey(e => e.CustomerId)
+                .OnDelete(DeleteBehavior.SetNull)
+                .HasConstraintName("ai_usage_events_customer_id_fkey");
+        });
+
+        modelBuilder.Entity<AiAuditEvent>(entity =>
+        {
+            entity.HasKey(e => e.Id).HasName("ai_audit_events_pkey");
+            entity.ToTable("ai_audit_events");
+
+            entity.Property(e => e.Id).HasDefaultValueSql("gen_random_uuid()").HasColumnName("id");
+            entity.Property(e => e.CustomerId).HasColumnName("customer_id");
+            entity.Property(e => e.SessionId).HasColumnName("session_id");
+            entity.Property(e => e.ActorType).HasMaxLength(20).HasColumnName("actor_type");
+            entity.Property(e => e.EventType).HasMaxLength(80).HasColumnName("event_type");
+            entity.Property(e => e.CorrelationId).HasColumnName("correlation_id");
+            entity.Property(e => e.Metadata).HasColumnType("jsonb").HasColumnName("metadata");
+            entity.Property(e => e.OccurredAt).HasDefaultValueSql("now()").HasColumnName("occurred_at");
+
+            entity.HasOne(e => e.Customer).WithMany(c => c.AiAuditEvents)
+                .HasForeignKey(e => e.CustomerId)
+                .OnDelete(DeleteBehavior.SetNull)
+                .HasConstraintName("ai_audit_events_customer_id_fkey");
+        });
+
         // ── RefreshToken entity ───────────────────────────────────
         modelBuilder.Entity<RefreshToken>(entity =>
         {

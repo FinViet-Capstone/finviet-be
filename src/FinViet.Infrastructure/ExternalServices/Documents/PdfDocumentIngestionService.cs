@@ -1,5 +1,6 @@
 using System.Text;
 using FinViet.Application.Common.Exceptions;
+using FinViet.Application.DTOs.Ai;
 using FinViet.Application.Interfaces;
 using FinViet.Infrastructure.Persistence.Context;
 using FinViet.Infrastructure.Persistence.Entities;
@@ -91,7 +92,10 @@ public class PdfDocumentIngestionService : IDocumentIngestionService
     {
         foreach (var chunk in Chunk(text))
         {
-            var values = await _embeddings.EmbedAsync(chunk, ct);
+            var values = await _embeddings.EmbedAsync(
+                chunk,
+                ct,
+                new AiRequestContext("rag_document_embedding", customerId));
             _db.RagChunks.Add(new RagChunk
             {
                 Id = Guid.NewGuid(),

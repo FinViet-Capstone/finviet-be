@@ -521,20 +521,24 @@ Only computed when `deadline` is set. `monthsRemaining` = whole calendar months 
 
 ## AI — `api/ai` (auth required)
 
-> No FluentValidation validators or data annotations exist anywhere in the AI DTOs. Several important **behaviors differ from what the interface names/comments suggest** — flagged explicitly below since the mobile client should build error handling and UI copy against actual behavior, not the interface doc comments.
+> Customer AI endpoints are class-level Customer-only. The document-ingestion action is exposed separately as Admin-only. AI preference PATCH uses FluentValidation through MediatR; chat/session validation is enforced in the service.
 
 | Method | Path | Role | Request | Response |
 |---|---|---|---|---|
-| POST | `/categorize/preview` | any | `CategorizePreviewRequest` | `ApiResponse<AiClassificationResult>` |
-| POST | `/categorize/{transactionId:guid}` | any | — | `ApiResponse<CategorizationOutcome>` |
-| POST | `/transactions/{transactionId:guid}/override` | any | `OverrideCategoryRequest` | `ApiResponse<CategorizationOutcome>` |
-| GET | `/score?period=WEEKLY\|MONTHLY` | any | query `period` (default `WEEKLY`) | `ApiResponse<SpendingScoreResult>` |
-| GET | `/reports` | any | — | `ApiResponse<WeeklyReportResponse[]>` |
-| GET | `/reports/{reportId:guid}` | any | — | `ApiResponse<WeeklyReportResponse>` (404) |
-| POST | `/reports/generate` | any | — | `ApiResponse<WeeklyReportResponse>` |
-| POST | `/chat` | any | `ChatAskRequest` | `ApiResponse<ChatMessageResponse>` |
-| GET | `/chat/history?limit=50` | any | query `limit` (default 50) | `ApiResponse<ChatMessageResponse[]>` |
-| POST | `/documents` | **Admin** | multipart: `file` (PDF, ≤20 MB) + `title?` | `ApiResponse<Guid>` (documentId) |
+| POST | `/categorize/preview` | Customer | `CategorizePreviewRequest` | `ApiResponse<AiClassificationResult>` |
+| POST | `/categorize/{transactionId:guid}` | Customer | — | `ApiResponse<CategorizationOutcome>` |
+| POST | `/transactions/{transactionId:guid}/override` | Customer | `OverrideCategoryRequest` | `ApiResponse<CategorizationOutcome>` |
+| GET | `/score?period=WEEKLY\|MONTHLY` | Customer | query `period` (default `WEEKLY`) | `ApiResponse<SpendingScoreResult>` |
+| GET | `/reports` | Customer | — | `ApiResponse<WeeklyReportResponse[]>` |
+| GET | `/reports/{reportId:guid}` | Customer | — | `ApiResponse<WeeklyReportResponse>` (404) |
+| POST | `/reports/generate` | Customer | — | `ApiResponse<WeeklyReportResponse>` |
+| POST | `/chat` | Customer | `ChatAskRequest` | `ApiResponse<ChatMessageResponse>` |
+| GET | `/chat/history?sessionId=&limit=50` | Customer | optional session and limit | `ApiResponse<ChatMessageResponse[]>` |
+| POST | `/chat/sessions` | Customer | `CreateChatSessionRequest` | `ApiResponse<ChatSessionResponse>` |
+| GET | `/chat/sessions` | Customer | — | `ApiResponse<ChatSessionResponse[]>` |
+| PATCH | `/chat/sessions/{sessionId:guid}` | Customer | `UpdateChatSessionRequest` | `ApiResponse<ChatSessionResponse>` |
+| DELETE | `/chat/sessions/{sessionId:guid}` | Customer | — | 204 |
+| POST | `/documents` | Admin | multipart: `file` (PDF, ≤20 MB) + `title?` | `ApiResponse<Guid>` (documentId) |
 
 **CategorizePreviewRequest**: `{ input: string }` — no length limit anywhere.
 **OverrideCategoryRequest**: `{ categoryId: string }` — no format validation.
@@ -543,27 +547,33 @@ Only computed when `deadline` is set. `monthsRemaining` = whole calendar months 
 ```ts
 {
   transactionId, categoryId?, categoryName?, confidence?, isAiClassified,
-  queued: boolean,   // ALWAYS false — see note below, not implemented
-  source: "AI" | "FALLBACK" | "MANUAL"   // correction: "RULE" is never produced, see note
+  queued: false,
+  applied: boolean,
+  suggestedCategoryId?, suggestedCategoryName?, reason?,
+  source: "MANUAL" | "RULE" | "AI_AUTO" | "AI_SUGGESTION" | "OFF" | "FALLBACK"
 }
 ```
 **SpendingScoreResult**: `{ periodType, periodStart, periodEnd, finalScore, spikeScore?, budgetScore?, savingsScore?, weights, colorBadge: "GREEN"|"YELLOW"|"RED", comment? }`
 **WeeklyReportResponse**: `{ reportId, periodStart, periodEnd, narrative, finalScore?, colorBadge?, generatedAt }`
-**ChatAskRequest**: `{ question: string }` — only checked for blank, no max length.
-**ChatMessageResponse**: `{ messageId, senderType: "USER"|"AI", content, timestamp? }`
+**ChatAskRequest**: `{ sessionId?: uuid, question: string }` — question is trimmed and must contain 1–2,000 characters.
+**ChatMessageResponse**: `{ messageId, sessionId, senderType: "USER"|"AI", content, timestamp?, dataPeriod?, citations[], limitations[] }`
+**ChatSessionResponse**: `{ sessionId, title, historyEnabled, isDefault, createdAt, updatedAt, lastMessageAt? }`
+**AiPreferenceDto**: `{ categorizationMode, autoCategorizationThreshold, defaultHistoryEnabled, weeklyReportEnabled, shareBalances, shareTransactions, shareBudgets, shareGoals, shareReports, ragEnabled }`
 
 ### POST `/categorize/preview`
-**Validation**: none — `input` unbounded. If the AI provider is unreachable, the exception is **not caught**, so it falls through to the default handler branch → **HTTP 500** ("An unexpected error occurred."), not a graceful degrade like other AI-touching endpoints.
-**Business logic**: Loads the closed set of expense categories (excludes "Chưa phân loại" and `cat_savings_goal`) and calls the model directly (`ClassificationModel`, default `qwen3:4b`, via `/v1/chat/completions`, `response_format: json_object`, `temperature 0.2`) with a Vietnamese prompt including ride-hailing slang examples. Returned category name must case-insensitively match an allowed category or `categoryName` is nulled and `confidence` forced to 0.
+**Authorization/validation**: Customer-only. The allowed category set contains system expense categories and only active custom categories owned by the caller; it excludes "Chưa phân loại" and `cat_savings_goal`. When categorization mode is `off`, the endpoint returns an unresolved result without calling Gemini.
+**Business logic**: Calls the official Gemini SDK with a structured JSON schema, then validates the returned category against the backend's closed set and clamps confidence to `[0,1]`. Gemini/provider transport or parse failure maps to the AI provider-unavailable exception path.
 
 ### POST `/categorize/{transactionId}`
-**Validation**: `transactionId` route-constrained `:guid`; 404 if the transaction doesn't exist.
-**Business logic — important corrections vs. the service interface's doc comments**:
-- **There is no RULE path here** — despite `IAiCategorizationService`'s comment claiming it "checks beneficiary_rule first," the implementation goes straight to the AI call. `source` is therefore only ever `"AI"` or `"FALLBACK"` from this endpoint (never `"RULE"` — that value is never produced anywhere in the codebase).
-- Input text = `merchant` (trimmed) if present, else `description`; if both blank, the transaction is force-set Uncategorized (`source="FALLBACK"`).
-- On success, writes `categoryId`, `isAiClassified=true`, `aiConfidence`, `aiCategoryGuess` directly to the live transaction.
-- **`queued` is dead code and always `false`** — even the `catch` branch for an unavailable AI provider just sets the transaction Uncategorized; nothing is actually queued. There's a `ReprocessAsync` method intended for a background reprocessor, but the only registered background service in the app is `WeeklyReportScheduler` — nothing calls `ReprocessAsync`. **Do not build mobile UI around a "will retry" state for this flag.**
-- Accepting an AI category here never creates/updates a Rule.
+**Authorization/validation**: Customer-only; `transactionId` is route-constrained `:guid`. The query is scoped by both caller customer ID and transaction ID, so a missing or another customer's transaction returns the same 404.
+**Business logic**:
+- A transaction with manual provenance is locked against automatic overwrite.
+- A matching customer merchant rule is resolved before Gemini and is applied only when its category is customer-visible (`source="RULE"`).
+- `off`: no Gemini call and no category mutation (`source="OFF"`).
+- `suggest_only` (safe default): stores suggestion/confidence/provenance but does not replace `categoryId` (`source="AI_SUGGESTION"`).
+- `high_confidence_auto`: replaces `categoryId` only when the category is valid and `confidence >= customer threshold` (`source="AI_AUTO"`); an exact threshold match is accepted.
+- Empty/unresolved/provider-unavailable results use `FALLBACK` without clearing a pre-existing category.
+- `queued` remains `false`; no background retry is claimed.
 
 ### POST `/transactions/{transactionId}/override`
 **Validation**: `categoryId` unvalidated in format. 404 if transaction/category missing; **403** `ForbiddenException` if the transaction's wallet isn't owned by the caller.
@@ -577,21 +587,34 @@ Only computed when `deadline` is set. `monthsRemaining` = whole calendar months 
 - **savingsScore** (monthly only; needs income set and ≥3 months of history over a 6-month lookback, else `null`): `attainment = clamp(meanRate/0.20, 0, 1)`, `consistency = clamp(1-CV, 0, 1)`, `score = (attainment*0.6 + consistency*0.4)*100`.
 - **weights** are hardcoded constants (not config-driven): WEEKLY = spike 50/budget 50; MONTHLY = spike 30/budget 40/savings 30. Missing metrics are dropped and remaining weights renormalized to 100; `finalScore=50` (neutral) if none are available.
 - **colorBadge**: `>=80 → GREEN`, `>=50 → YELLOW`, else `RED`.
-- **comment**: separate AI call (`GenerationModel`, `temperature 0.7`, 1–2 Vietnamese sentences); on provider unavailability the comment is simply `null` (never fails the request).
+- **comment**: separate Gemini Flash generation call for 1–2 Vietnamese sentences; on provider unavailability the comment is `null` (never fails the request).
 - Whenever the weekly job persists a score snapshot, it's idempotent per `(customer, view, periodStart)`.
 
-### GET/POST `/reports`, POST `/reports/generate`
-**Business logic**: `WeeklyReportScheduler` (the app's only registered background service) sleeps until the next **Monday 07:00 Asia/Ho_Chi_Minh** (`SE Asia Standard Time`, with a fixed-UTC+7 fallback), then generates each active customer's just-completed Mon–Sun week's report, with a 500ms delay between customers to avoid AI rate-limit bursts; per-customer failures are caught so one bad customer doesn't abort the batch.
-`POST /reports/generate` computes the week boundary **in the controller using `DateTime.UtcNow`** (not the scheduler's VN-timezone logic) — `thisMonday = today - ((dayOfWeek+6)%7)`, `weekStart = thisMonday-7`, `weekEnd = thisMonday-1`. This can disagree with the scheduler's VN-local boundary near midnight VN time — worth knowing if the mobile client shows "which week" language.
-Generation is idempotent on `(customerId, weekStart)` (checked up front, guarded again against a race via the unique-index `DbUpdateException`). It snapshots the score, generates a 150–200 word Vietnamese narrative (canned fallback sentence if the AI call fails), sends a best-effort push notification, and indexes the narrative into the RAG corpus (best-effort, swallows errors).
+### GET `/reports`, GET `/reports/{reportId}`, POST `/reports/generate`
+**Business logic**: `WeeklyReportScheduler` sleeps until the next **Monday 07:00 Asia/Ho_Chi_Minh**, selects active customers whose AI preference row is absent or has `weeklyReportEnabled=true`, and isolates failures per customer. Generation is idempotent on `(customerId, weekStart)`, uses the durable `weekly_report` quota, and falls back to a deterministic narrative when quota/provider is unavailable. Budget overrun statements are based on backend-computed positive monthly overrun, not model arithmetic. Firebase delivery also enforces `CustomerSetting.NotifReport` (missing row defaults to enabled); RAG indexing is best-effort. Manual `POST /reports/generate` remains available even when scheduled reports are disabled.
 
 ### POST `/chat`, GET `/chat/history`
-**Validation**: `question` — blank check only (400 "Câu hỏi không được để trống."), no max length. `limit` on history has **no bounds enforcement** — passed straight into `Take(limit)`.
-**Business logic**: User turn persisted first. In-process sliding-window rate limit (`AiLimits:PerUserPerMinute=6`, `AiLimits:PerUserPerDay=100`); over the limit, a canned Vietnamese "rate limited" reply is persisted and returned rather than an HTTP error. Builds a deterministic aggregate financial context (income, total balance, spend by bucket/category, current score — **never raw transaction rows**). RAG retrieval (top 5, cosine distance over `rag_chunk`, filtered to the caller's own chunks or global ones) **only runs if `Ai:RagEnabled=true`** — the appsettings default is **`false`**, so retrieval is a no-op unless explicitly enabled. Includes the last 6 turns of conversation for context. Provider-unavailable → canned Vietnamese "unavailable" reply (persisted, not an HTTP error). `sessionId` is fixed to `customerId` — no multi-session support. History returned oldest-first (fetched newest-first internally, then reversed).
+**Validation**: Customer-only. Question is trimmed and must have 1–2,000 characters. History `limit` is clamped to 1–100. An explicit session must belong to the caller; another customer's session is indistinguishable from a missing session (404).
+**Business logic**: Uses durable PostgreSQL minute/day rate windows. Builds deterministic aggregate facts for balances, transactions/cash flow, category spending, true budget remaining/overrun, saving goals, score, and latest report; every group respects the corresponding customer data-scope preference. Responses include backend `dataPeriod`, citations and mandatory limitations. RAG is available only when global `Gemini:RagEnabled` and customer `ragEnabled` are both true; retrieval is customer/global scoped, filtered by `Gemini:RagMinimumSimilarity`, and failures degrade to deterministic context. Recent persisted history is limited to six turns. Provider unavailable/rate limit returns a friendly canned answer. Chat has no mutation command/service/tool execution.
+
+### Chat session endpoints
+- `POST /chat/sessions` — body `{ title?: string, historyEnabled?: boolean }`; title defaults to "Cuộc trò chuyện mới", max 120 characters.
+- `GET /chat/sessions` — lists caller-owned, non-deleted sessions newest-active first.
+- `PATCH /chat/sessions/{sessionId}` — partial title/history update, owner-scoped.
+- `DELETE /chat/sessions/{sessionId}` — owner-scoped; deletes the session and cascades message content deletion.
+- Omitting `sessionId` from chat/history uses or creates the backward-compatible default session.
+- `historyEnabled=false` means neither question nor answer nor recent turns are persisted/sent as history; only non-content session metadata may update.
+
+### AI preference endpoints (`/api/profile`)
+- `GET /api/profile/ai-preferences` — returns persisted values or safe defaults.
+- `PATCH /api/profile/ai-preferences` — partial first-write upsert.
+- `categorizationMode`: `off | suggest_only | high_confidence_auto`.
+- `autoCategorizationThreshold`: greater than 0 and at most 1.
+- Remaining booleans control default chat persistence, scheduled reports and balances/transactions/budgets/goals/reports/RAG scopes.
 
 ### POST `/documents` (Admin)
-**Validation**: `[RequestSizeLimit(20 MB)]` at the pipeline level (oversize → 413 before the handler runs). `file` null/empty → 400. **No content-type/extension check** — a non-PDF upload reaches the PDF parser directly, which throws an exception that is **not caught**, surfacing as an unhandled **500** rather than a friendly validation error (worth guarding client-side by only allowing `.pdf` picks). Empty extracted text → 400 "Không trích xuất được nội dung từ PDF."
-**Business logic**: Text extracted page-by-page (PdfPig), chunked into **800-char windows with 150-char overlap**, preferring to break on trailing whitespace. Each chunk embedded (`Ai:EmbeddingModel`, default `nomic-embed-text`); a returned vector whose length ≠ 768 throws (both `AiOptions.EmbeddingDimensions` and the actual embedding response are validated against the `rag_chunk.embedding` pgvector dimension, 768, at call time and at app startup via `.ValidateOnStart()`). Stored as `RagChunk` rows linked to a new `RagDocument` (`sourceType="pdf"`, `customerId=null` — global, visible in every customer's chat). The weekly-report indexing path reuses this same chunk/embed/store pipeline and is idempotent via a `report:{reportId}` marker (deleted-and-reinserted per call).
+**Authorization/validation**: Exposed by a separate Admin-only controller at the existing `/api/ai/documents` route, avoiding combined Customer+Admin authorization. `[RequestSizeLimit(20 MB)]`; null/empty file → 400. Empty extracted text → 400.
+**Business logic**: PdfPig extracts pages and chunks text into 800-character windows with 150-character overlap. `gemini-embedding-001` generates exactly 768 dimensions through the official SDK; wrong/empty output fails as provider unavailable. Documents are global (`customerId=null`). Existing Ollama vectors must be re-indexed before `Gemini:RagEnabled=true`; see `docs/gemini-setup.md`.
 
 ---
 
@@ -641,4 +664,4 @@ PagedResult<T>  = { page: number, pageSize: number, totalItems: number, totalPag
 
 Plain 400/404/409/403 errors (no `Code`, message-only) are noted inline in each endpoint's Validation/Business logic section above.
 
-**Migration note**: `V24__saving_goal_contribution_type.sql` (adds the `type` column backing `SavingGoalContributionResponse.type`) must be run manually against the target database before starting the API — same caveat as `V22`/`V23`, since `DbInitializer.ApplyMigrationsAsync` skips all numbered migration files once the v3 baseline schema is detected.
+**Migration note**: V25 (`V25__gemini_safe_copilot.sql`) is also executed by `DbInitializer`'s additive startup path because externally provisioned v3 databases skip numbered migrations. Validate the script against the target PostgreSQL schema before production rollout; it is additive and does not drop/recreate AI data.

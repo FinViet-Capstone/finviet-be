@@ -94,11 +94,16 @@ Status legend: ✅ Pass · ⏭️ Skipped-Known-Bug · 🚫 Not-Implemented · �
 |----|--------|--------------|-------|----------|--------|
 | TC-AI-01 | Spending Score | Logged-in | GET `/api/ai/score?period=WEEKLY` | 200, finalScore (weights 50/50) | ✅ |
 | TC-AI-02 | Spending Score | Logged-in | GET `/api/ai/score?period=MONTHLY` | 200, finalScore (30/40/30) | ✅ |
-| TC-AI-03 | Categorize | Logged-in, Ollama running | POST `/api/ai/categorize/preview` | 200 suggestion from local model | ⏳ Re-test after local AI migration |
-| TC-AI-04 | Weekly Report | Logged-in | GET `/api/ai/reports` | **Expected** 200 list | ⏭️ **BUG #A**: 500 `column a.report_id does not exist` |
-| TC-AI-05 | Weekly Report | Logged-in | POST `/api/ai/reports/generate` | **Expected** 2xx | ⏭️ **BUG #A**: 500 (v3 schema drift) |
-| TC-AI-06 | Chatbot | Logged-in | POST `/api/ai/chat` question | **Expected** 200 answer | ⏭️ **BUG #A**: 500, relation `chat_message` missing |
-| TC-AI-07 | Chatbot | Logged-in | GET `/api/ai/chat/history` | **Expected** 200 | ⏭️ **BUG #A**: 500, `chat_message` missing |
+| TC-AI-03 | Categorize | Logged-in, Gemini key configured | POST `/api/ai/categorize/preview` | 200 structured suggestion from allowed categories | 🧪 Unit covered; live Gemini pending |
+| TC-AI-04 | Weekly Report | Logged-in, V25 applied | GET `/api/ai/reports` | 200 list | 🧪 Build/unit covered; live DB pending |
+| TC-AI-05 | Weekly Report | Logged-in, V25 applied | POST `/api/ai/reports/generate` | 2xx report or deterministic fallback | 🧪 Build/unit covered; live DB pending |
+| TC-AI-06 | Chatbot | Logged-in, V25 applied | POST `/api/ai/chat` with session | 200 read-only answer + period/citations/limitations | 🧪 Unit covered; live Gemini pending |
+| TC-AI-07 | Chatbot | Logged-in | GET `/api/ai/chat/history?sessionId=...` | 200 owner-scoped history | 🧪 Unit covered; live API pending |
+| TC-AI-08 | Chat privacy | Session has `historyEnabled=false` | Ask then get history | No question/answer content persisted | ✅ Unit |
+| TC-AI-09 | AI preferences | Logged-in | GET then PATCH `/api/profile/ai-preferences` | Safe defaults and partial upsert | 🧪 Live API pending |
+| TC-AI-10 | Session ownership | Two customers | Customer B reads/updates A's session | 404, no existence leak | ✅ Unit |
+| TC-AI-11 | Categorization ownership | Two customers | Categorize another customer's transaction | 404, Gemini not called | ✅ Unit |
+| TC-AI-12 | Data scopes | All AI data scopes disabled | Ask chat | Disabled facts omitted; limitations returned | ✅ Unit |
 
 ## 10. Category Bucket Self-Service & Admin
 
@@ -151,10 +156,10 @@ bucket directly, no admin review step.
 
 | # | Severity | Area | Symptom | Root cause |
 |---|----------|------|---------|-----------|
-| A | High (blocks 2 required features) | AI Weekly Report + Chatbot | 500 on `/api/ai/reports*` and `/api/ai/chat*` | `DbInitializer` skips all SQL migrations when v3 schema detected → V8 (`ai_weekly_reports.report_id`, `chat_message`) never ran on `FinViet_update`; EF model drifted from DB. |
-| B | Resolved in code | AI categorization | Previous cloud API-key dependency | Replaced by local Ollama through an OpenAI-compatible client. |
+| A | Resolved in code; live DB validation pending | AI Weekly Report + Chatbot | Previous v3 schema drift caused 500s | V25 plus the v3 additive startup path repairs sessions/messages/reports/scores and related AI schema without dropping production data. |
+| B | Resolved in code; live provider validation pending | AI provider | Previous local Ollama dependency | Replaced by official `Google.GenAI` Gemini Flash and 768-dimensional Gemini embeddings. |
 | C | Medium | CSV import | 500 "Invalid file signature" on plain CSV | `BankStatementExcelParser` only reads Excel binaries; endpoint accepts `.csv` but cannot parse text CSV. Should be 400, and CSV should be supported per req. |
 
 ## Notes / deviations
-- **Tech stack:** Implementation is ASP.NET Core with a provider-neutral OpenAI-compatible client backed by local Ollama, PostgreSQL, and Monday `WeeklyReportScheduler`.
+- **Tech stack:** ASP.NET Core, PostgreSQL/pgvector, official `Google.GenAI` Gemini Flash + `gemini-embedding-001`, durable PostgreSQL AI quotas, and Monday `WeeklyReportScheduler`.
 - **How to re-run:** start API (`dotnet run --project src/FinViet.Api`), then `dotnet test tests/FinViet.Api.IntegrationTests`. Target/credentials override via env vars `FINVIET_TEST_BASEURL`, `FINVIET_TEST_CUST_EMAIL`, etc. If the API is down, the whole suite skips (not fails).

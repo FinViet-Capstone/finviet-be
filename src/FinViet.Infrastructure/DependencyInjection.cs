@@ -2,7 +2,7 @@ using FinViet.Application.Interfaces;
 using FinViet.Domain.Enums;
 using FinViet.Infrastructure.ExternalServices;
 using FinViet.Infrastructure.ExternalServices.Documents;
-using FinViet.Infrastructure.ExternalServices.OpenAiCompatible;
+using FinViet.Infrastructure.ExternalServices.Gemini;
 using FinViet.Infrastructure.ExternalServices.Notification;
 using FinViet.Infrastructure.ExternalServices.Ocr;
 using FinViet.Infrastructure.ExternalServices.TransactionImport;
@@ -18,6 +18,8 @@ using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Google.GenAI;
+using Google.GenAI.Types;
 using Npgsql;
 using Pgvector.EntityFrameworkCore;
 
@@ -45,19 +47,20 @@ public static class DependencyInjection
         dataSourceBuilder.MapEnum<NotificationType>("notification_type");
         dataSourceBuilder.MapEnum<NotificationEntityType>("notification_entity_type");
         dataSourceBuilder.MapEnum<SubscriptionStatus>("subscription_status");
+        dataSourceBuilder.MapEnum<ChatRole>("chat_role");
         dataSourceBuilder.MapEnum<ScoreView>("score_view");
         dataSourceBuilder.MapEnum<ScoreColor>("score_color");
-        dataSourceBuilder.MapEnum<ChatRole>("chat_role");
-        // The entities expose these enum columns as strings; an EF value converter
-        // (PgEnumStringConverter) binds them to the CLR enums mapped above so Npgsql sends the
-        // enum OID, not text. The remaining DB enums (chat_role, score_view, score_color) are not
-        // currently surfaced by any mapped EF column, so they need no mapping yet.
+        // String-backed enum properties use PgEnumStringConverter so Npgsql binds parameters
+        // with the PostgreSQL enum OID rather than as text. V25 creates the AI enum types before
+        // normal application queries run, and DbInitializer reloads the connection type metadata.
         dataSourceBuilder.EnableUnmappedTypes();
         dataSourceBuilder.UseVector();
         var dataSource = dataSourceBuilder.Build();
 
-        services.AddDbContext<FinVietDbContext>(options =>
-            options.UseNpgsql(dataSource, o => o.UseVector()));
+        void ConfigureDatabase(DbContextOptionsBuilder options) =>
+            options.UseNpgsql(dataSource, o => o.UseVector());
+
+        services.AddDbContext<FinVietDbContext>(ConfigureDatabase);
 
         services.AddMemoryCache();
         services.AddDataProtection().SetApplicationName("FinViet");
@@ -125,42 +128,60 @@ public static class DependencyInjection
         // LoginCommandHandler exposed as scoped service for GoogleLoginCommandHandler to reuse
         services.AddScoped<LoginCommandHandler>();
 
-        // ── AI feature suite ──────────────────────────────────────────────────────
-        services.AddOptions<AiOptions>()
-            .Bind(configuration.GetSection(AiOptions.SectionName))
-            .Validate(options => Uri.TryCreate(options.BaseUrl, UriKind.Absolute, out _),
-                "Ai:BaseUrl must be an absolute URL.")
-            .Validate(options => !string.IsNullOrWhiteSpace(options.ClassificationModel),
-                "Ai:ClassificationModel is required.")
-            .Validate(options => !string.IsNullOrWhiteSpace(options.GenerationModel),
-                "Ai:GenerationModel is required.")
+        // ── AI feature suite (Gemini Developer API) ──────────────────────────────
+        services.AddOptions<GeminiOptions>()
+            .Bind(configuration.GetSection(GeminiOptions.SectionName))
+            .Validate(options => !string.IsNullOrWhiteSpace(options.ApiKey),
+                "Gemini:ApiKey is required. Supply it through user-secrets or Gemini__ApiKey.")
+            .Validate(options => !string.IsNullOrWhiteSpace(options.FlashModel),
+                "Gemini:FlashModel is required.")
             .Validate(options => !string.IsNullOrWhiteSpace(options.EmbeddingModel),
-                "Ai:EmbeddingModel is required.")
-            .Validate(options => options.EmbeddingDimensions == AiOptions.RequiredEmbeddingDimensions,
-                $"Ai:EmbeddingDimensions must be {AiOptions.RequiredEmbeddingDimensions} to match rag_chunk.embedding.")
+                "Gemini:EmbeddingModel is required.")
+            .Validate(options => options.EmbeddingDimensions == GeminiOptions.RequiredEmbeddingDimensions,
+                $"Gemini:EmbeddingDimensions must be {GeminiOptions.RequiredEmbeddingDimensions} to match rag_chunk.embedding.")
             .Validate(options => options.TimeoutSeconds is >= 5 and <= 600,
-                "Ai:TimeoutSeconds must be between 5 and 600.")
+                "Gemini:TimeoutSeconds must be between 5 and 600.")
+            .Validate(options => options.RagMinimumSimilarity is >= 0 and <= 1,
+                "Gemini:RagMinimumSimilarity must be between 0 and 1.")
             .ValidateOnStart();
         services.Configure<AiLimitsOptions>(configuration.GetSection(AiLimitsOptions.SectionName));
 
-        services.AddHttpClient<IAiModelClient, OpenAiCompatibleAiModelClient>((sp, http) =>
+        services.AddSingleton(sp =>
         {
-            ConfigureAiHttpClient(http, sp.GetRequiredService<IOptions<AiOptions>>().Value);
+            var options = sp.GetRequiredService<IOptions<GeminiOptions>>().Value;
+            return new Client(
+                apiKey: options.ApiKey,
+                httpOptions: new HttpOptions
+                {
+                    Timeout = options.TimeoutSeconds * 1000
+                });
         });
+        services.AddSingleton<IGeminiSdkClient, GeminiSdkClient>();
+        services.AddScoped<IAiTelemetryRecorder, AiTelemetryRecorder>();
+        services.AddSingleton<IDbContextFactory<FinVietDbContext>>(
+            new FinVietDbContextFactory(dataSource));
+        services.AddScoped<IAiModelClient>(sp => new GeminiAiModelClient(
+            sp.GetRequiredService<IGeminiSdkClient>(),
+            sp.GetRequiredService<IOptions<GeminiOptions>>(),
+            sp.GetRequiredService<IAiTelemetryRecorder>(),
+            sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<GeminiAiModelClient>>()));
 
         services.AddScoped<IAiCategorizationService, AiCategorizationService>();
         services.AddScoped<IBeneficiaryRuleService, BeneficiaryRuleService>();
         services.AddScoped<ISpendingScoreService, SpendingScoreService>();
+        services.AddScoped<IFinancialContextService, FinancialContextService>();
         services.AddScoped<IWeeklyReportService, WeeklyReportService>();
         services.AddScoped<IAiChatService, AiChatService>();
         services.AddScoped<IAiReportNotifier, FirebaseAiReportNotifier>();
 
-        // ── RAG layer (pgvector + configured 768-dimensional embeddings) ──────────
-        services.AddHttpClient<IEmbeddingService, OpenAiCompatibleEmbeddingService>((sp, http) =>
-        {
-            ConfigureAiHttpClient(http, sp.GetRequiredService<IOptions<AiOptions>>().Value);
-        });
-        services.AddSingleton<IAiRateLimiter, InMemoryAiRateLimiter>();
+        // ── RAG layer (pgvector + Gemini 768-dimensional embeddings) ──────────────
+        services.AddScoped<IEmbeddingService>(sp => new GeminiEmbeddingService(
+            sp.GetRequiredService<IGeminiSdkClient>(),
+            sp.GetRequiredService<IOptions<GeminiOptions>>(),
+            sp.GetRequiredService<IAiRateLimiter>(),
+            sp.GetRequiredService<IAiTelemetryRecorder>(),
+            sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<GeminiEmbeddingService>>()));
+        services.AddScoped<IAiRateLimiter, PostgresAiRateLimiter>();
         services.AddScoped<IRagRetriever, PgVectorRagRetriever>();
         services.AddScoped<IRagEmbeddingReindexService, RagEmbeddingReindexService>();
         services.AddScoped<IDocumentIngestionService, PdfDocumentIngestionService>();
@@ -170,9 +191,4 @@ public static class DependencyInjection
         return services;
     }
 
-    private static void ConfigureAiHttpClient(HttpClient http, AiOptions options)
-    {
-        http.BaseAddress = new Uri($"{options.BaseUrl.TrimEnd('/')}/");
-        http.Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds);
-    }
 }

@@ -98,7 +98,7 @@ public class SpendingScoreService : ISpendingScoreService
         };
 
         if (includeComment)
-            result.Comment = await TryGenerateCommentAsync(result, cancellationToken);
+            result.Comment = await TryGenerateCommentAsync(customerId, result, cancellationToken);
 
         if (persist)
             await SnapshotAsync(customerId, result, cancellationToken);
@@ -342,7 +342,10 @@ public class SpendingScoreService : ISpendingScoreService
         return (decimal)Math.Round(score, 2);
     }
 
-    private async Task<string?> TryGenerateCommentAsync(SpendingScoreResult r, CancellationToken ct)
+    private async Task<string?> TryGenerateCommentAsync(
+        Guid customerId,
+        SpendingScoreResult r,
+        CancellationToken ct)
     {
         try
         {
@@ -350,7 +353,10 @@ public class SpendingScoreService : ISpendingScoreService
                 $"Điểm tổng: {r.FinalScore}/100 (xếp loại {r.ColorBadge}). " +
                 $"Spike: {Fmt(r.SpikeScore)}, Budget: {Fmt(r.BudgetScore)}, Savings: {Fmt(r.SavingsScore)}. " +
                 $"Kỳ: {r.PeriodType}.";
-            return await _aiModel.GenerateScoreCommentAsync(ctx, ct);
+            return await _aiModel.GenerateScoreCommentAsync(
+                ctx,
+                ct,
+                new AiRequestContext("score_comment", customerId));
         }
         catch (AiProviderUnavailableException ex)
         {

@@ -61,6 +61,16 @@ public partial class Customer
 
     public virtual ICollection<ChatMessage> ChatMessages { get; set; } = new List<ChatMessage>();
 
+    public virtual ICollection<AiChatSession> AiChatSessions { get; set; } = new List<AiChatSession>();
+
+    public virtual AiCustomerPreference? AiPreference { get; set; }
+
+    public virtual ICollection<AiRateLimitWindow> AiRateLimitWindows { get; set; } = new List<AiRateLimitWindow>();
+
+    public virtual ICollection<AiUsageEvent> AiUsageEvents { get; set; } = new List<AiUsageEvent>();
+
+    public virtual ICollection<AiAuditEvent> AiAuditEvents { get; set; } = new List<AiAuditEvent>();
+
     public virtual ICollection<CustomerSubscription> CustomerSubscriptions { get; set; } = new List<CustomerSubscription>();
 
     public virtual ICollection<Notification> Notifications { get; set; } = new List<Notification>();

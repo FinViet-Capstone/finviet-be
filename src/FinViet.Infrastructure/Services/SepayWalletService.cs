@@ -238,7 +238,7 @@ internal sealed class SepayWalletService : ISepayWalletService
             await databaseTransaction.CommitAsync(cancellationToken);
         }
 
-        await CategorizeAsync(createdExpenseIds, cancellationToken);
+        await CategorizeAsync(customerId, createdExpenseIds, cancellationToken);
         await TryAutoRegisterWebhookAsync(customerId, wallet.WalletId, cancellationToken);
 
         return new SepayLinkResult
@@ -405,7 +405,7 @@ internal sealed class SepayWalletService : ISepayWalletService
             await databaseTransaction.CommitAsync(cancellationToken);
         }
 
-        await CategorizeAsync(createdExpenseIds, cancellationToken);
+        await CategorizeAsync(customerId, createdExpenseIds, cancellationToken);
 
         return new SepayLinkResult
         {
@@ -596,7 +596,7 @@ internal sealed class SepayWalletService : ISepayWalletService
             }
 
             // AI categorization for new expenses (outside the DB transaction).
-            await CategorizeAsync(createdExpenseIds, cancellationToken);
+            await CategorizeAsync(customerId, createdExpenseIds, cancellationToken);
 
             return new SepayWalletSyncResponse
             {
@@ -936,7 +936,7 @@ internal sealed class SepayWalletService : ISepayWalletService
         }
 
         if (outcome.Inserted && outcome.IsExpense)
-            await CategorizeAsync([outcome.TransactionId], cancellationToken);
+            await CategorizeAsync(customerId, [outcome.TransactionId], cancellationToken);
 
         return new SepayWebhookResult
         {
@@ -1182,13 +1182,19 @@ internal sealed class SepayWalletService : ISepayWalletService
     /// Runs AI categorization for newly created expenses. A categorization failure never rolls back
     /// an already-committed sync — the transactions simply stay uncategorized.
     /// </summary>
-    private async Task CategorizeAsync(IReadOnlyCollection<Guid> transactionIds, CancellationToken cancellationToken)
+    private async Task CategorizeAsync(
+        Guid customerId,
+        IReadOnlyCollection<Guid> transactionIds,
+        CancellationToken cancellationToken)
     {
         foreach (var transactionId in transactionIds)
         {
             try
             {
-                await _categorizationService.CategorizeTransactionAsync(transactionId, cancellationToken);
+                await _categorizationService.CategorizeTransactionAsync(
+                    customerId,
+                    transactionId,
+                    cancellationToken);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
