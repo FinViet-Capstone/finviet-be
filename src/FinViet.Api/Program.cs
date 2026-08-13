@@ -14,6 +14,9 @@ using System.Text;
 AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
 var builder = WebApplication.CreateBuilder(args);
 
+// Binds options from the "Sentry" config section (appsettings.json).
+builder.WebHost.UseSentry();
+
 // ── Services ─────────────────────────────────────────────────────────────────
 // Application layer (FluentValidation + ValidationBehavior)
 builder.Services.AddApplicationServices();
@@ -194,4 +197,7 @@ app.MapGet("/health", () => Results.Ok(new
 {
     status = "healthy"
 }));
+
+app.MapGet("/sentry-test", object () => throw new Exception("Sentry test event"));
+
 app.Run();
