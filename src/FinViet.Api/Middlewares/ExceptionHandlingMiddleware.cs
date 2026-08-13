@@ -2,6 +2,7 @@ using FinViet.Application.Common;
 using FinViet.Application.Common.Exceptions;
 using FluentValidation;
 using Microsoft.AspNetCore.Hosting;
+using Sentry;
 using System.Text.Json;
 
 namespace FinViet.Api.Middlewares;
@@ -56,6 +57,8 @@ public class ExceptionHandlingMiddleware
                     "Unhandled exception while processing {Method} {Path}",
                     context.Request.Method,
                     context.Request.Path);
+
+                SentrySdk.CaptureException(ex);
             }
 
             await HandleExceptionAsync(context, ex);
