@@ -38,6 +38,17 @@ Every endpoint below documents **Validation** (exact field-level rules — Fluen
 
 ---
 
+## Health / Status
+
+> Two minimal APIs registered directly in `Program.cs` (not a controller, no `api/` prefix, no auth). Not part of the versioned `ApiResponse<T>` envelope — for uptime checks / load balancer probes, not client consumption.
+
+| Method | Path | Auth | Response |
+|---|---|---|---|
+| GET | `/` | Anonymous | `{ service: "FinViet API", status: "running" }` |
+| GET | `/health` | Anonymous | `{ status: "healthy" }` |
+
+---
+
 ## Auth — `api/auth`
 
 > Most endpoints are **anonymous**. `/change-password` requires a Customer JWT. Password hashing = **BCrypt** everywhere. JWT access-token TTL = `Jwt:AccessTokenExpiryMinutes` config (default 15 min); refresh-token TTL = `Jwt:RefreshTokenExpiryDays` (default 7 days). Verification/reset codes are 6 characters, uniqueness-checked against active tokens before persisting.
