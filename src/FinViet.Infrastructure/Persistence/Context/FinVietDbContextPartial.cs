@@ -130,7 +130,7 @@ public partial class FinVietDbContext
             entity.Property(e => e.CategoryId).HasMaxLength(40).HasColumnName("category_id");
             entity.Property(e => e.BucketId).HasMaxLength(20).HasColumnName("bucket_id");
             entity.Property(e => e.Source)
-                .HasDefaultValue("system")
+                .HasDefaultValue("persona")
                 .HasColumnName("source")
                 .HasConversion(PgEnumStringConverter.Create<CategorySource>());
             entity.Property(e => e.IsActive).HasDefaultValue(true).HasColumnName("is_active");

@@ -51,8 +51,8 @@ public static class DependencyInjection
         dataSourceBuilder.MapEnum<ScoreView>("score_view");
         dataSourceBuilder.MapEnum<ScoreColor>("score_color");
         // String-backed enum properties use PgEnumStringConverter so Npgsql binds parameters
-        // with the PostgreSQL enum OID rather than as text. V25 creates the AI enum types before
-        // normal application queries run, and DbInitializer reloads the connection type metadata.
+        // with the PostgreSQL enum OID rather than as text. DbInitializer runs embedded DbUp
+        // migrations through a separate raw connection before this data source is first opened.
         dataSourceBuilder.EnableUnmappedTypes();
         dataSourceBuilder.UseVector();
         var dataSource = dataSourceBuilder.Build();
