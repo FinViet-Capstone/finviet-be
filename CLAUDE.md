@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-FinViet is a personal finance management API: .NET 8 / ASP.NET Core Web API backend (`FinViet.Api`) over PostgreSQL, with an AI feature suite (transaction categorization, weekly reports, RAG chat) speaking an OpenAI-compatible API (Ollama locally, or a hosted provider), plus SePay bank-account linking.
+FinViet is a personal finance management API: .NET 8 / ASP.NET Core Web API backend (`FinViet.Api`) over PostgreSQL, with a read-only AI copilot suite (transaction categorization, weekly reports, multi-session RAG chat) using the official Google Gemini API, plus SePay bank-account linking.
 
 ## Commands
 
@@ -39,7 +39,7 @@ If the server isn't reachable, the whole suite self-skips (via `SkippableFact`/`
 dotnet run --project src/FinViet.Api -- --reindex-rag --confirm-reindex
 ```
 
-Regenerates all `rag_chunk` embeddings in place (needed after switching embedding models/providers — vectors from different models aren't semantically compatible even at the same dimension). Refuses to run without `--confirm-reindex`, and refuses if `Ai:RagEnabled=true` (must be `false` during re-index). See [docs/ollama-setup.md](docs/ollama-setup.md) for the full local-Ollama re-index runbook, including a `pg_dump` backup step.
+Regenerates all `rag_chunk` embeddings in place (needed after switching embedding models/providers — vectors from different models aren't semantically compatible even at the same dimension). Refuses to run without `--confirm-reindex`, and refuses if `Gemini:RagEnabled=true` (must be `false` during re-index). See [docs/gemini-setup.md](docs/gemini-setup.md) for the Gemini configuration and re-index runbook, including a `pg_dump` backup step.
 
 ## Architecture
 
@@ -47,7 +47,7 @@ Four projects, referenced top-to-bottom (`Api → Infrastructure/Application →
 
 - **`FinViet.Api`** — `Controllers/`, `Middlewares/`, `Common/`, `wwwroot/` (static avatars). `Filters/` is currently empty — cross-cutting concerns go through MediatR pipeline behaviors or middleware instead of action filters.
 - **`FinViet.Application`** — CQRS layer. `Features/{Feature}/Commands|Queries/`, `DTOs/{Feature}/`, `Interfaces/` (repository/service contracts, `I`-prefixed), `Behaviors/` (MediatR pipeline behaviors), `Common/Exceptions/` (app-level exceptions, current), `Exceptions/` (legacy, see Error Handling below).
-- **`FinViet.Infrastructure`** — EF Core, external services, and **most MediatR handlers** (even though handlers logically belong to Application, they're registered from here — see `Program.cs` comment on `AddMediatR`). `Persistence/Entities/` (EF-scaffolded partial classes), `Persistence/Repositories/`, `Persistence/Context/`, `Persistence/Configurations/`, `Persistence/Migrations/` (raw versioned SQL, see Database below), `ExternalServices/{Provider}/` (SePay, OpenAiCompatible, Payment, Notification, Documents, TransactionImport), `Services/`, `Services/Background/`, `Features/{Feature}/Commands|Queries/{CommandName}/{CommandName}Handler.cs`.
+- **`FinViet.Infrastructure`** — EF Core, external services, and **most MediatR handlers** (even though handlers logically belong to Application, they're registered from here — see `Program.cs` comment on `AddMediatR`). `Persistence/Entities/` (EF-scaffolded partial classes), `Persistence/Repositories/`, `Persistence/Context/`, `Persistence/Configurations/`, `Persistence/Migrations/` (raw versioned SQL, see Database below), `ExternalServices/{Provider}/` (SePay, Gemini, Payment, Notification, Documents, TransactionImport), `Services/`, `Services/Background/`, `Features/{Feature}/Commands|Queries/{CommandName}/{CommandName}Handler.cs`.
 - **`FinViet.Domain`** — currently just `Enums/`. EF entities live in `Infrastructure/Persistence/Entities`, not here — an intentional, known deviation from "pure" Clean Architecture (pragmatic choice for an EF-scaffolded schema), not a bug to fix incidentally. `Entities/`/`Exceptions/`/`ValueObjects/` folders exist but are empty.
 
 Services are registered from `AddApplicationServices()` (Application) and `AddInfrastructureServices(config)` (Infrastructure), both called from `Program.cs`. MediatR is told to scan the **Infrastructure** assembly because that's where most handlers live.
@@ -113,7 +113,7 @@ Standard responses wrap in `ApiResponse<T> = { success, message?, data? }`. `Tra
 
 ### AI / RAG suite
 
-`Infrastructure/ExternalServices/OpenAiCompatible/` talks to any OpenAI-compatible chat+embedding API, configured via the `Ai:*` section (`BaseUrl`, `ClassificationModel`, `GenerationModel`, `EmbeddingModel`, `EmbeddingDimensions`, `RagEnabled`, ...), validated at startup (`AddOptions<AiOptions>().ValidateOnStart()`). `EmbeddingDimensions` must equal `rag_chunk.embedding`'s pgvector dimension (768, backed by `nomic-embed-text` locally). Local dev typically runs this against Ollama — see [docs/ollama-setup.md](docs/ollama-setup.md) for setup, model pulls, and the re-index runbook. Switching embedding providers/models requires the `--reindex-rag` flow above; vectors from different models aren't compatible even at matching dimensions.
+`Infrastructure/ExternalServices/Gemini/` uses the official `Google.GenAI` SDK for generation and embeddings, configured through `Gemini:*` (`ApiKey`, `FlashModel`, `EmbeddingModel`, `EmbeddingDimensions`, `RagEnabled`, `RagMinimumSimilarity`, ...), validated at startup with `ValidateOnStart()`. The API key must come from user-secrets or `Gemini__ApiKey`; never add it to tracked configuration. `EmbeddingDimensions` must remain 768 to match `rag_chunk.embedding`; the default embedding model is `gemini-embedding-001`. See [docs/gemini-setup.md](docs/gemini-setup.md). Switching embedding models requires the confirmed `--reindex-rag` flow above because vectors from different models aren't compatible even at matching dimensions. Chat is intentionally read-only: do not inject mutation commands/repositories, `IdempotencyStore`, or Gemini function/tool execution into the chat flow.
 
 ### Background work
 

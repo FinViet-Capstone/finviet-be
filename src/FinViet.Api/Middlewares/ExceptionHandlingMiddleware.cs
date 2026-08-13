@@ -38,6 +38,7 @@ public class ExceptionHandlingMiddleware
                 or BusinessRuleException
                 or ExternalServiceException
                 or IntegrationUnavailableException
+                or FinViet.Application.Exceptions.AiProviderUnavailableException
                 or ValidationException
                 or FinViet.Application.Exceptions.NotFoundException
                 or FinViet.Application.Exceptions.ValidationException)
@@ -86,6 +87,8 @@ public class ExceptionHandlingMiddleware
                                          (StatusCodes.Status502BadGateway, ese.Message, null, ese.Code),
             IntegrationUnavailableException iue =>
                                          (StatusCodes.Status503ServiceUnavailable, iue.Message, null, iue.Code),
+            FinViet.Application.Exceptions.AiProviderUnavailableException aue =>
+                                         (StatusCodes.Status502BadGateway, aue.Message, null, "ai_provider_unavailable"),
 
             BadRequestException bre   => (StatusCodes.Status400BadRequest,   bre.Message, null, null),
             NotFoundException nfe     => (StatusCodes.Status404NotFound,      nfe.Message, null, null),

@@ -2,46 +2,55 @@
 
 <!-- Feature name and short description -->
 
-Income allocation: arbitrary-month lookup on `GET /profile/income-allocation` (item 3 of
-`docs/10-08-2026-be-todos.md`, added by the user after discovering the gap while wiring the
-mobile budgets screen).
+Gemini Flash safe copilot: replace local Ollama/OpenAI-compatible AI with the official Google
+Gemini API and close the current chatbot's control, personalization, grounding, privacy, and
+schema gaps without granting chat any money- or data-mutating capability.
 
 ## Status
 
 <!-- Not Started | In Progress | Completed -->
 
-Completed — awaiting commit approval
+In Progress
 
 ## Goals
 
 <!-- Goals and requirements -->
 
-- Add an optional `month` (`yyyy-MM`) query param to `GET /profile/income-allocation`, running
-  the same `IncomeAllocationService.ResolveEffectiveRow` carry-forward logic against that
-  arbitrary month instead of only ever resolving today's.
-- Default to today's month when `month` is omitted, preserving the exact existing response
-  shape/behavior (`current` for today + `pending` for next real calendar month).
-- When `month` is given, `pending` is always `null` — "next real calendar month's draft" isn't a
-  meaningful concept relative to an arbitrary queried month.
-- Update `docs/api-reference.md` (Profile section) once implemented.
+- Replace the Ollama/OpenAI-compatible generation and embedding clients with the official
+  `Google.GenAI` .NET SDK, using a configurable stable Gemini Flash model and 768-dimensional
+  Gemini text embeddings.
+- Keep chat strictly read-only while adding trusted system instructions, deterministic financial
+  context, evidence/citations, limitations, RAG relevance filtering, and graceful provider fallback.
+- Add per-customer AI preferences for classification mode/confidence, chat-history defaults,
+  weekly reports, and allowed financial-data scopes.
+- Secure AI categorization by transaction ownership and customer-visible categories; deterministic
+  merchant/manual decisions must take precedence over Gemini.
+- Add customer-owned chat sessions with create/list/rename/delete, backward-compatible default
+  sessions, and a no-content-persistence mode.
+- Add durable multi-instance rate limits plus privacy-preserving usage/audit metadata.
+- Repair AI schema drift on externally-provisioned v3 databases through both an idempotent V25 SQL
+  migration and the startup additive-schema path.
+- Update unit/integration tests, API/configuration documentation, and the Gemini/RAG rollout runbook.
 
 ## Notes
 
 <!-- Any extra notes -->
 
-- Spec source: `docs/10-08-2026-be-todos.md` §3 — the user added this section directly to the
-  shared TODO doc (confirmed by the user) after discovering, while wiring the FE, that
-  `app/(tabs)/budgets/index.tsx` had to route through `GET /budgets/buckets?month=` instead of
-  the profile endpoint for a past-month lookup.
-- `IIncomeAllocationService.GetEffectiveAsync(customerId, month, ct)` already accepted an
-  arbitrary month — the resolver logic itself needed no changes. The only gap was that
-  `GetSummaryAsync`/`GET /profile/income-allocation` never exposed a way to pass a month in from
-  the API surface.
-- Month-format validation (`NormalizeMonth`) mirrors `BudgetService.ResolveMonthWindow`'s
-  existing `yyyy-MM` parsing and error message ("Month must use yyyy-MM format.") for
-  consistency with `GET /budgets?month=`/`GET /budgets/buckets?month=`, rather than inventing a
-  second validation style for the same shape of parameter.
+- Confirmed product scope: "Copilot an toàn trước" — analysis and recommendations only. Tool calls,
+  action proposals, transaction/budget/goal mutations, and financial execution from chat are out of scope.
+- Confirmed history model: multiple sessions with rename/delete and an option not to persist content.
+- Gemini API keys must be supplied only through .NET user-secrets or environment variables; no key
+  is committed to source control.
+- Existing RAG vectors from Ollama are incompatible with Gemini embeddings even at 768 dimensions.
+  Re-indexing remains destructive-adjacent and will not be run without a separate explicit confirmation.
 - No commit or push without explicit user permission.
+- 2026-08-11 implementation verification so far: solution build succeeds and all 183 Application
+  unit tests pass. Privacy-safe Gemini usage metadata and best-effort AI audit coverage are implemented;
+  classification and customer-scoped embedding calls now use durable quotas. V25 is serialized with
+  an advisory lock, repairs partial table shapes, fails startup closed on incompatible/duplicate legacy
+  data, and no longer deletes duplicate financial reports or scores automatically. Live Gemini-key
+  verification, disposable PostgreSQL V25 validation, real-server integration tests, and RAG re-index
+  remain outstanding; no re-index was run.
 
 ## History
 
@@ -70,3 +79,4 @@ Completed — awaiting commit approval
 - 2026-08-10 — Implemented item 1: `UpdateTransactionDto`/`UpdateTransactionCommand` extended from `{ categoryId? }` to `{ categoryId?, amount?, merchant?, transactionDate? }` with partial-update semantics (null = unchanged) on all four fields, including `categoryId` (a small compatible tightening from the old always-overwrite-with-null behavior — see Notes). New `TransactionRules.EnsureEditableFieldsAllowed` rejects `amount`/`merchant`/`transactionDate` on a `sepay_linked`-wallet transaction with 422 `synced_transaction_fields_locked` (checked unlocked in the handler via `IWalletRepository.GetByIdAsync`, since wallet type is immutable post-creation — no lock/race needed). New `ITransactionRepository.EditForCustomerAsync` mirrors the create/delete row-lock pattern: locks the wallet only when a synced field is actually being edited, reverses the old balance delta and applies the new one on amount change (422 `insufficient_balance`, reused code), writes merchant/date/category directly otherwise. `PATCH /classify` left untouched (still single-purpose set/clear, no lock, no field restriction). Added `InternalsVisibleTo` on `FinViet.Application` (matching the existing `FinViet.Infrastructure` pattern) so `TransactionRules` could be unit-tested directly; 7 new tests (`TC-TXN-U01..05`) cover `EnsureEditableFieldsAllowed`'s branches. All 143 unit tests pass, `dotnet build` 0 errors (2 pre-existing nullable warnings, unchanged). Balance-math/lock behavior in `EditForCustomerAsync` itself is not unit-testable (raw `FOR UPDATE` SQL needs real Postgres, same gap already accepted for `CreateManualForCustomerAsync`/`DeleteForCustomerAsync`) — verified instead by booting the API to confirm DI resolves cleanly (no local Postgres DB available in this environment to exercise the full path). `docs/api-reference.md` updated (Transactions DTO/PUT/PATCH sections split apart, new error code added to the table). Committed (`683780e`), merged into `khoi` (fast-forward), branch deleted, per explicit user instruction.
 - 2026-08-10 — User said "go ahead, item 2." Branch `feature/saving-goal-ledger-rework` created from `khoi`. Discovered while reading `SavingGoalService.cs` that 2c (per-action wallet choice on contribute) was **already implemented** on `khoi` — `ContributeSavingGoalRequest.FundingWalletId` and `ApplyContributionAsync`'s request-wallet-then-goal-wallet fallback already existed; the only real gap against 2c's own validation bullet was that the resolved funding wallet was never checked for `sepay_linked`. Implemented the rest: 2a `GET /saving-goals/{id}/contributions` (`SavingGoalContributionResponse[]`, newest first, 404 via null for a goal not owned by the caller); 2b `POST /saving-goals/{id}/withdraw` (`WithdrawSavingGoalRequest{amount,walletId,note?}`, required `Idempotency-Key`, 422 `goal_withdraw_exceeds_saved`/`goal_withdraw_target_sepay_unsupported`, books an `income` transaction crediting the wallet and a `SavingGoalContribution` row with `type="withdrawal"`); 2c's sepay gap closed with new 422 `goal_funding_wallet_sepay_unsupported` on both create's and contribute's funding-wallet resolution; 2d `note?` added to `ContributeSavingGoalRequest`/`WithdrawSavingGoalRequest`, persisted via a new `internal static SavingGoalService.ValidateNote` (255-char cap, matching the existing `savings_goal_contributions.note` column — no migration needed for that column, it already existed and was already EF-mapped, just never written to). New migration `V24__saving_goal_contribution_type.sql` adds the `type` column (`'contribution'` default, backfills existing rows, CHECK constraint) — same "run manually before starting the API" caveat as `V22`/`V23` (v3-schema skip in `DbInitializer`). **Necessary fix beyond the spec**: `DeleteGoalAsync` previously assumed every ledger entry was an `expense`/contribution and both rejected (`goal_ledger_invalid`) anything else and always reversed by adding the amount back — both wrong once `income`/withdrawal entries exist. Fixed to accept both types and reverse each with the correct sign via new `internal static SavingGoalService.ReversalDelta`, guarded by a new 422 `goal_ledger_reversal_insufficient_balance` if undoing a withdrawal would drive its wallet negative (the withdrawn cash already spent). 10 new unit tests (`TC-GOAL-U01..08`, one `[Theory]` with 3 cases) cover `GetContributionsAsync` (InMemory-testable, no DB locking involved) plus the two extracted pure helpers; the locked/transactional paths (`WithdrawAsync`, updated `ApplyContributionAsync`, updated `DeleteGoalAsync`) remain integration-only (raw `FOR UPDATE` SQL, same accepted gap as `CreateManualForCustomerAsync`). All 153 unit tests pass, `dotnet build` 0 errors (2 pre-existing nullable warnings, unchanged); API boots cleanly (DI resolves; DB init itself fails locally, no Postgres DB in this environment — same known gap as item 1). `docs/api-reference.md` updated (Saving Goals section: two new endpoints, two new DTOs, all four existing endpoints' validation/business-logic notes revised, 6 new error codes, migration note). Committed (`a7529af`), merged into `khoi` (fast-forward), branch deleted, per explicit user instruction.
 - 2026-08-10 — While staging item 2's commit, found `docs/10-08-2026-be-todos.md` had picked up a new §3 (income allocation arbitrary-month lookup) that hadn't been there when first read. Flagged it to the user; user confirmed they added it themselves and said to implement it. Branch `feature/income-allocation-month-lookup` created from `khoi`. Implemented: `GetIncomeAllocationQuery` gained an optional `Month` positional param; `ProfileController.GetIncomeAllocation` takes `[FromQuery] string? month`; `IIncomeAllocationService.GetSummaryAsync`/`IncomeAllocationService.GetSummaryAsync` gained an optional `string? month = null` — when given, resolves `Current` via the existing `GetEffectiveAsync(customerId, month, ct)` against that month instead of today's, and always returns `Pending = null`; when omitted, behavior is byte-for-byte the same as before. New `internal static IncomeAllocationService.NormalizeMonth` validates/zero-pads `yyyy-MM`, deliberately copying `BudgetService.ResolveMonthWindow`'s exact parsing rule and error message ("Month must use yyyy-MM format.") rather than inventing a second month-validation style. 10 new unit tests (`TC-INCALLOC-09..12`): pure `NormalizeMonth` cases (no DB) plus two InMemory-DB `GetSummaryAsync` tests proving the carried-forward-month resolution and that a real "next month" draft row never leaks into `Pending` when an explicit historical month is queried. All 163 unit tests pass, `dotnet build` 0 errors/0 warnings. `docs/api-reference.md` updated (Profile section: `GET /income-allocation` table row + endpoint doc revised for the new query param).
+- 2026-08-11 — Implemented Gemini Flash safe-copilot scope on `feature/gemini-safe-copilot`: official `Google.GenAI` provider and 768-dimensional embeddings; V25 plus v3 additive startup schema; durable PostgreSQL quotas; customer AI preferences; owner-scoped categorization with manual/rule precedence and off/suggest/threshold modes; customer-owned chat sessions with history-off privacy; deterministic scoped financial context, citations/limitations and RAG threshold; weekly-report preference/quota/true-overrun/notification handling; Admin-only document route separation. Replaced the Ollama runbook with `docs/gemini-setup.md` and updated API/test documentation. Added privacy-safe provider usage records (model, outcome, latency, SDK token counts/response ID where available) and best-effort audits for preferences, categorization, report fallbacks, RAG skips/failures, and session lifecycle; no prompts, answers, balances, or document content are copied into telemetry. Production-hardening review added caller-cancellation passthrough, classification/customer-embedding quotas, broader audit tests, serialized database initialization, fail-fast startup, partial-schema reconciliation, and explicit operator intervention instead of deleting duplicate reports/scores. Solution build and 183 Application unit tests pass; Domain test passes. The real-server integration suite still self-skips all 66 tests because no API is reachable. Live Gemini, disposable PostgreSQL V25, Swagger verification and RAG re-index remain pending; no re-index, commit or push performed.

@@ -47,7 +47,14 @@ public class MerchantRuleService : IMerchantRuleService
             throw new BadRequestException("Category id is required.");
 
         var category = await _db.Categories
-            .FirstOrDefaultAsync(c => c.CategoryId == request.CategoryId, cancellationToken)
+            .FirstOrDefaultAsync(
+                c => c.CategoryId == request.CategoryId
+                     && (!c.CategoryId.StartsWith("custom_")
+                         || _db.CustomerCategories.Any(cc =>
+                             cc.CustomerId == customerId
+                             && cc.CategoryId == c.CategoryId
+                             && cc.IsActive)),
+                cancellationToken)
             ?? throw new NotFoundException("Category", request.CategoryId);
 
         // cat_savings_goal is auto-only (goal contributions); it must not be assignable by a rule.
@@ -177,12 +184,17 @@ public class MerchantRuleService : IMerchantRuleService
 
             if (winner is null || winner.RuleId != newRule.RuleId)
                 continue;
+            if (string.Equals(txn.AiClassificationSource, "manual", StringComparison.Ordinal))
+                continue;
             if (string.Equals(txn.CategoryId, newRule.CategoryId, StringComparison.Ordinal))
                 continue;
 
             txn.CategoryId = newRule.CategoryId;
             txn.IsAiClassified = false;
             txn.AiConfidence = null;
+            txn.AiCategoryGuess = null;
+            txn.AiClassificationSource = "merchant_rule";
+            txn.AiClassifiedAt = DateTime.UtcNow;
             applied++;
         }
 

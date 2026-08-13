@@ -10,19 +10,23 @@ public interface IAiModelClient
     Task<AiClassificationResult> ClassifyAsync(
         string input,
         IReadOnlyList<string> allowedCategories,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        AiRequestContext? requestContext = null);
 
     Task<string> GenerateScoreCommentAsync(
         string scoreContext,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        AiRequestContext? requestContext = null);
 
     Task<string> GenerateReportAsync(
         string reportContext,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        AiRequestContext? requestContext = null);
 
     Task<string> ChatAsync(
         string contextBlock,
         IReadOnlyList<AiChatTurn> recentTurns,
         string question,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        AiRequestContext? requestContext = null);
 }

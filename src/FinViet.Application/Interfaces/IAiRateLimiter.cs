@@ -1,9 +1,10 @@
 namespace FinViet.Application.Interfaces;
 
-/// <summary>In-memory per-customer rate limiter for AI calls (sliding window), replacing
-/// the durable ai_usage_log. Resets on restart and is single-instance only — acceptable
-/// at MVP. Returns false when the customer has exceeded the per-minute or per-day limit.</summary>
+/// <summary>Durable per-customer and per-feature AI rate limiter shared by all app instances.</summary>
 public interface IAiRateLimiter
 {
-    bool TryAcquire(Guid customerId, string feature);
+    Task<bool> TryAcquireAsync(
+        Guid customerId,
+        string feature,
+        CancellationToken cancellationToken = default);
 }

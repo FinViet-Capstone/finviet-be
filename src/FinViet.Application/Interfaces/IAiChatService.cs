@@ -4,12 +4,37 @@ namespace FinViet.Application.Interfaces;
 
 public interface IAiChatService
 {
-    /// <summary>Answer a Vietnamese question using the customer's aggregated financial context and
-    /// recent conversation history. Persists both the user message and the AI reply.</summary>
     Task<ChatMessageResponse> AskAsync(
-        Guid customerId, string question, CancellationToken cancellationToken = default);
+        Guid customerId,
+        Guid? sessionId,
+        string question,
+        CancellationToken cancellationToken = default);
 
-    /// <summary>Return recent conversation history (oldest first) for replay on open.</summary>
     Task<IReadOnlyList<ChatMessageResponse>> GetHistoryAsync(
-        Guid customerId, int limit = 50, CancellationToken cancellationToken = default);
+        Guid customerId,
+        Guid? sessionId,
+        int limit = 50,
+        CancellationToken cancellationToken = default);
+
+    Task<ChatSessionResponse> CreateSessionAsync(
+        Guid customerId,
+        string? title,
+        bool? historyEnabled,
+        CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<ChatSessionResponse>> GetSessionsAsync(
+        Guid customerId,
+        CancellationToken cancellationToken = default);
+
+    Task<ChatSessionResponse> UpdateSessionAsync(
+        Guid customerId,
+        Guid sessionId,
+        string? title,
+        bool? historyEnabled,
+        CancellationToken cancellationToken = default);
+
+    Task DeleteSessionAsync(
+        Guid customerId,
+        Guid sessionId,
+        CancellationToken cancellationToken = default);
 }

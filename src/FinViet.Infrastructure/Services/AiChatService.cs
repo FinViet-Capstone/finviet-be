@@ -6,6 +6,7 @@ using FinViet.Application.Interfaces;
 using FinViet.Infrastructure.Persistence.Context;
 using FinViet.Infrastructure.Persistence.Entities;
 using Microsoft.EntityFrameworkCore;
+using NotFoundException = FinViet.Application.Common.Exceptions.NotFoundException;
 
 namespace FinViet.Infrastructure.Services;
 
@@ -25,147 +26,376 @@ public class AiChatService : IAiChatService
 
     private readonly FinVietDbContext _db;
     private readonly IAiModelClient _aiModel;
-    private readonly ISpendingScoreService _scoreService;
+    private readonly IFinancialContextService _financialContext;
     private readonly IRagRetriever _retriever;
     private readonly IAiRateLimiter _rateLimiter;
+    private readonly IAiTelemetryRecorder _telemetry;
 
     public AiChatService(
         FinVietDbContext db,
         IAiModelClient aiModel,
-        ISpendingScoreService scoreService,
+        IFinancialContextService financialContext,
         IRagRetriever retriever,
-        IAiRateLimiter rateLimiter)
+        IAiRateLimiter rateLimiter,
+        IAiTelemetryRecorder telemetry)
     {
         _db = db;
         _aiModel = aiModel;
-        _scoreService = scoreService;
+        _financialContext = financialContext;
         _retriever = retriever;
         _rateLimiter = rateLimiter;
+        _telemetry = telemetry;
     }
 
     public async Task<ChatMessageResponse> AskAsync(
-        Guid customerId, string question, CancellationToken cancellationToken = default)
+        Guid customerId,
+        Guid? sessionId,
+        string question,
+        CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(question))
-            throw new BadRequestException("Câu hỏi không được để trống.");
+        var normalizedQuestion = question?.Trim() ?? string.Empty;
+        if (normalizedQuestion.Length is < 1 or > 2000)
+            throw new BadRequestException("Câu hỏi phải có từ 1 đến 2.000 ký tự.");
 
-        // ai_chat_messages.session_id is required. The API has no session concept yet, so use a
-        // stable per-customer session (the customerId) — one continuous thread per customer (MVP).
-        var sessionId = customerId;
-
-        // Persist the user turn first.
-        var userMsg = new ChatMessage
+        var session = await ResolveSessionAsync(customerId, sessionId, cancellationToken);
+        if (!await _rateLimiter.TryAcquireAsync(customerId, "chat", cancellationToken))
         {
-            MessageId = Guid.NewGuid(),
-            CustomerId = customerId,
-            Role = RoleUser,
-            Content = question.Trim(),
-            SessionId = sessionId,
-            CreatedAt = DateTime.UtcNow
-        };
-        _db.ChatMessages.Add(userMsg);
-        await _db.SaveChangesAsync(cancellationToken);
+            await _telemetry.RecordUsageAsync(
+                new AiUsageRecord(
+                    "chat",
+                    "gemini",
+                    "rate_limited",
+                    customerId,
+                    session.SessionId),
+                cancellationToken);
+            return await CompleteTurnAsync(
+                session,
+                normalizedQuestion,
+                RateLimitedReply,
+                cancellationToken);
+        }
 
-        // In-memory rate limit (replaces the durable ai_usage_log). On limit, persist a
-        // friendly reply turn rather than throwing, matching the graceful-fallback pattern.
-        if (!_rateLimiter.TryAcquire(customerId, "chat"))
-            return await PersistAiReplyAsync(customerId, sessionId, RateLimitedReply, cancellationToken);
+        var financialContext = await _financialContext.BuildCurrentMonthAsync(customerId, cancellationToken);
+        var retrieved = await RetrieveKnowledgeAsync(customerId, normalizedQuestion, cancellationToken);
+        var recentTurns = session.HistoryEnabled
+            ? await RecentTurnsAsync(customerId, session.SessionId, cancellationToken)
+            : [];
 
-        var context = await BuildContextAsync(customerId, cancellationToken);
-        var retrieved = await RetrieveKnowledgeAsync(customerId, question.Trim(), cancellationToken);
-        var recentTurns = await RecentTurnsAsync(customerId, cancellationToken);
-
-        var contextBlock = string.IsNullOrEmpty(retrieved)
-            ? context
-            : $"{context}\n=== TÀI LIỆU & BÁO CÁO LIÊN QUAN ===\n{retrieved}";
+        var contextBlock = retrieved.Context.Length == 0
+            ? financialContext.Content
+            : $"{financialContext.Content}\n=== TÀI LIỆU THAM KHẢO KHÔNG TIN CẬY ===\n{retrieved.Context}";
 
         string answer;
         try
         {
-            answer = await _aiModel.ChatAsync(contextBlock, recentTurns, question.Trim(), cancellationToken);
+            answer = await _aiModel.ChatAsync(
+                contextBlock,
+                recentTurns,
+                normalizedQuestion,
+                cancellationToken,
+                new AiRequestContext("chat", customerId, session.SessionId));
         }
         catch (AiProviderUnavailableException)
         {
             answer = UnavailableReply;
         }
 
-        return await PersistAiReplyAsync(customerId, sessionId, answer, cancellationToken);
-    }
-
-    private async Task<ChatMessageResponse> PersistAiReplyAsync(
-        Guid customerId, Guid sessionId, string answer, CancellationToken ct)
-    {
-        var aiMsg = new ChatMessage
-        {
-            MessageId = Guid.NewGuid(),
-            CustomerId = customerId,
-            Role = RoleAssistant,
-            Content = answer,
-            SessionId = sessionId,
-            CreatedAt = DateTime.UtcNow
-        };
-        _db.ChatMessages.Add(aiMsg);
-        await _db.SaveChangesAsync(ct);
-
-        return new ChatMessageResponse
-        {
-            MessageId = aiMsg.MessageId,
-            SenderType = SenderAi,
-            Content = answer,
-            Timestamp = aiMsg.CreatedAt
-        };
-    }
-
-    /// <summary>Semantic retrieval over the customer's narratives + global knowledge docs.
-    /// Best-effort: if embedding/retrieval is unavailable, returns empty so chat still works
-    /// from the deterministic aggregate context alone.</summary>
-    private async Task<string> RetrieveKnowledgeAsync(Guid customerId, string question, CancellationToken ct)
-    {
-        try
-        {
-            var hits = await _retriever.RetrieveAsync(customerId, question, RetrievedChunks, ct);
-            if (hits.Count == 0)
-                return string.Empty;
-
-            var sb = new StringBuilder();
-            foreach (var hit in hits)
-                sb.AppendLine($"- ({hit.Title}) {hit.Content}");
-            return sb.ToString();
-        }
-        catch (AiProviderUnavailableException)
-        {
-            return string.Empty;
-        }
+        var response = await CompleteTurnAsync(
+            session,
+            normalizedQuestion,
+            answer,
+            cancellationToken);
+        response.DataPeriod = financialContext.DataPeriod;
+        response.Citations = financialContext.Citations
+            .Concat(retrieved.Citations)
+            .ToList();
+        var limitations = financialContext.Limitations.ToList();
+        if (retrieved.Citations.Count == 0)
+            limitations.Add("Không có tài liệu RAG đủ liên quan cho câu hỏi này.");
+        response.Limitations = limitations;
+        return response;
     }
 
     public async Task<IReadOnlyList<ChatMessageResponse>> GetHistoryAsync(
-        Guid customerId, int limit = 50, CancellationToken cancellationToken = default)
+        Guid customerId,
+        Guid? sessionId,
+        int limit = 50,
+        CancellationToken cancellationToken = default)
     {
-        var rows = await _db.ChatMessages
-            .Where(m => m.CustomerId == customerId)
+        var session = await ResolveSessionAsync(customerId, sessionId, cancellationToken);
+        var normalizedLimit = Math.Clamp(limit, 1, 100);
+        if (!session.HistoryEnabled)
+            return [];
+
+        var rows = await _db.ChatMessages.AsNoTracking()
+            .Where(m => m.CustomerId == customerId && m.SessionId == session.SessionId)
             .OrderByDescending(m => m.CreatedAt)
-            .Take(limit)
+            .Take(normalizedLimit)
             .ToListAsync(cancellationToken);
 
         return rows
             .OrderBy(m => m.CreatedAt)
-            .Select(m => new ChatMessageResponse
-            {
-                MessageId = m.MessageId,
-                SenderType = ToSender(m.Role),
-                Content = m.Content,
-                Timestamp = m.CreatedAt
-            })
+            .Select(m => ToMessageResponse(m, session.SessionId))
             .ToList();
     }
 
-    private async Task<IReadOnlyList<AiChatTurn>> RecentTurnsAsync(Guid customerId, CancellationToken ct)
+    public async Task<ChatSessionResponse> CreateSessionAsync(
+        Guid customerId,
+        string? title,
+        bool? historyEnabled,
+        CancellationToken cancellationToken = default)
     {
-        var rows = await _db.ChatMessages
-            .Where(m => m.CustomerId == customerId)
+        await EnsureCustomerAsync(customerId, cancellationToken);
+        var preferenceDefault = await _db.AiCustomerPreferences.AsNoTracking()
+            .Where(p => p.CustomerId == customerId)
+            .Select(p => (bool?)p.DefaultHistoryEnabled)
+            .FirstOrDefaultAsync(cancellationToken) ?? true;
+        var now = DateTime.UtcNow;
+        var session = new AiChatSession
+        {
+            SessionId = Guid.NewGuid(),
+            CustomerId = customerId,
+            Title = NormalizeTitle(title),
+            HistoryEnabled = historyEnabled ?? preferenceDefault,
+            IsDefault = false,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+        _db.AiChatSessions.Add(session);
+        await _db.SaveChangesAsync(cancellationToken);
+        await RecordSessionAuditAsync(
+            customerId,
+            session.SessionId,
+            "chat_session_created",
+            cancellationToken);
+        return ToSessionResponse(session);
+    }
+
+    public async Task<IReadOnlyList<ChatSessionResponse>> GetSessionsAsync(
+        Guid customerId,
+        CancellationToken cancellationToken = default)
+    {
+        return await _db.AiChatSessions.AsNoTracking()
+            .Where(s => s.CustomerId == customerId && s.DeletedAt == null)
+            .OrderByDescending(s => s.LastMessageAt ?? s.CreatedAt)
+            .Select(s => new ChatSessionResponse(
+                s.SessionId,
+                s.Title,
+                s.HistoryEnabled,
+                s.IsDefault,
+                s.CreatedAt,
+                s.UpdatedAt,
+                s.LastMessageAt))
+            .ToListAsync(cancellationToken);
+    }
+
+    public async Task<ChatSessionResponse> UpdateSessionAsync(
+        Guid customerId,
+        Guid sessionId,
+        string? title,
+        bool? historyEnabled,
+        CancellationToken cancellationToken = default)
+    {
+        var session = await OwnedSessionAsync(customerId, sessionId, cancellationToken);
+        if (title is not null)
+            session.Title = NormalizeTitle(title);
+        if (historyEnabled.HasValue)
+            session.HistoryEnabled = historyEnabled.Value;
+        session.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync(cancellationToken);
+        await RecordSessionAuditAsync(
+            customerId,
+            sessionId,
+            "chat_session_updated",
+            cancellationToken);
+        return ToSessionResponse(session);
+    }
+
+    public async Task DeleteSessionAsync(
+        Guid customerId,
+        Guid sessionId,
+        CancellationToken cancellationToken = default)
+    {
+        var session = await OwnedSessionAsync(customerId, sessionId, cancellationToken);
+        _db.AiChatSessions.Remove(session);
+        await _db.SaveChangesAsync(cancellationToken);
+        await RecordSessionAuditAsync(
+            customerId,
+            sessionId,
+            "chat_session_deleted",
+            cancellationToken);
+    }
+
+    private async Task<ChatMessageResponse> CompleteTurnAsync(
+        AiChatSession session,
+        string question,
+        string answer,
+        CancellationToken cancellationToken)
+    {
+        var now = DateTime.UtcNow;
+        var responseId = Guid.NewGuid();
+        if (session.HistoryEnabled)
+        {
+            _db.ChatMessages.AddRange(
+                new ChatMessage
+                {
+                    MessageId = Guid.NewGuid(),
+                    CustomerId = session.CustomerId,
+                    Role = RoleUser,
+                    Content = question,
+                    SessionId = session.SessionId,
+                    CreatedAt = now
+                },
+                new ChatMessage
+                {
+                    MessageId = responseId,
+                    CustomerId = session.CustomerId,
+                    Role = RoleAssistant,
+                    Content = answer,
+                    SessionId = session.SessionId,
+                    CreatedAt = now
+                });
+        }
+
+        session.LastMessageAt = now;
+        session.UpdatedAt = now;
+        await _db.SaveChangesAsync(cancellationToken);
+
+        return new ChatMessageResponse
+        {
+            MessageId = responseId,
+            SessionId = session.SessionId,
+            SenderType = SenderAi,
+            Content = answer,
+            Timestamp = now
+        };
+    }
+
+    private async Task<AiChatSession> ResolveSessionAsync(
+        Guid customerId,
+        Guid? sessionId,
+        CancellationToken cancellationToken)
+    {
+        if (sessionId.HasValue)
+            return await OwnedSessionAsync(customerId, sessionId.Value, cancellationToken);
+
+        var existing = await _db.AiChatSessions.FirstOrDefaultAsync(
+            s => s.CustomerId == customerId && s.IsDefault && s.DeletedAt == null,
+            cancellationToken);
+        if (existing is not null)
+            return existing;
+
+        await EnsureCustomerAsync(customerId, cancellationToken);
+        var historyEnabled = await _db.AiCustomerPreferences.AsNoTracking()
+            .Where(p => p.CustomerId == customerId)
+            .Select(p => (bool?)p.DefaultHistoryEnabled)
+            .FirstOrDefaultAsync(cancellationToken) ?? true;
+        var now = DateTime.UtcNow;
+        var session = new AiChatSession
+        {
+            SessionId = customerId,
+            CustomerId = customerId,
+            Title = "Trò chuyện mặc định",
+            HistoryEnabled = historyEnabled,
+            IsDefault = true,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+        _db.AiChatSessions.Add(session);
+        await _db.SaveChangesAsync(cancellationToken);
+        return session;
+    }
+
+    private async Task<AiChatSession> OwnedSessionAsync(
+        Guid customerId,
+        Guid sessionId,
+        CancellationToken cancellationToken)
+    {
+        return await _db.AiChatSessions.FirstOrDefaultAsync(
+                   s => s.SessionId == sessionId
+                        && s.CustomerId == customerId
+                        && s.DeletedAt == null,
+                   cancellationToken)
+               ?? throw new NotFoundException("Chat session", sessionId);
+    }
+
+    private async Task EnsureCustomerAsync(Guid customerId, CancellationToken cancellationToken)
+    {
+        if (!await _db.Customers.AsNoTracking().AnyAsync(
+                c => c.CustomerId == customerId && c.IsActive,
+                cancellationToken))
+        {
+            throw new NotFoundException("Customer", customerId);
+        }
+    }
+
+    private async Task<(string Context, IReadOnlyList<ChatCitation> Citations)> RetrieveKnowledgeAsync(
+        Guid customerId,
+        string question,
+        CancellationToken cancellationToken)
+    {
+        var ragAllowed = await _db.AiCustomerPreferences.AsNoTracking()
+            .Where(p => p.CustomerId == customerId)
+            .Select(p => (bool?)p.RagEnabled)
+            .FirstOrDefaultAsync(cancellationToken) ?? true;
+        if (!ragAllowed)
+        {
+            await RecordRagAuditAsync(customerId, "rag_skipped", "customer_disabled", cancellationToken);
+            return (string.Empty, []);
+        }
+
+        try
+        {
+            var hits = await _retriever.RetrieveAsync(
+                customerId,
+                question,
+                RetrievedChunks,
+                cancellationToken);
+            if (hits.Count == 0)
+            {
+                await RecordRagAuditAsync(customerId, "rag_skipped", "no_relevant_hits", cancellationToken);
+                return (string.Empty, []);
+            }
+
+            var context = new StringBuilder();
+            var citations = new List<ChatCitation>();
+            foreach (var hit in hits)
+            {
+                context.AppendLine($"- ({hit.Title}) {hit.Content}");
+                citations.Add(new ChatCitation(hit.SourceType, hit.Title, Similarity: hit.Score));
+            }
+            return (context.ToString(), citations);
+        }
+        catch (AiProviderUnavailableException)
+        {
+            await RecordRagAuditAsync(customerId, "rag_failed", "provider_unavailable", cancellationToken);
+            return (string.Empty, []);
+        }
+    }
+
+    private Task RecordRagAuditAsync(
+        Guid customerId,
+        string eventType,
+        string reason,
+        CancellationToken cancellationToken)
+        => _telemetry.RecordAuditAsync(
+            new AiAuditRecord(
+                eventType,
+                "system",
+                customerId,
+                Metadata: new Dictionary<string, object?> { ["reason"] = reason }),
+            cancellationToken);
+
+    private async Task<IReadOnlyList<AiChatTurn>> RecentTurnsAsync(
+        Guid customerId,
+        Guid sessionId,
+        CancellationToken cancellationToken)
+    {
+        var rows = await _db.ChatMessages.AsNoTracking()
+            .Where(m => m.CustomerId == customerId && m.SessionId == sessionId)
             .OrderByDescending(m => m.CreatedAt)
             .Take(RecentTurnsForPrompt)
-            .ToListAsync(ct);
+            .ToListAsync(cancellationToken);
 
         return rows
             .OrderBy(m => m.CreatedAt)
@@ -173,64 +403,46 @@ public class AiChatService : IAiChatService
             .ToList();
     }
 
-    /// <summary>Map the v3 chat_role label ("user"/"assistant") to the DTO sender ("USER"/"AI").</summary>
+    private static ChatMessageResponse ToMessageResponse(ChatMessage message, Guid sessionId) => new()
+    {
+        MessageId = message.MessageId,
+        SessionId = sessionId,
+        SenderType = ToSender(message.Role),
+        Content = message.Content,
+        Timestamp = message.CreatedAt
+    };
+
     private static string ToSender(string role) =>
         string.Equals(role, RoleAssistant, StringComparison.OrdinalIgnoreCase) ? SenderAi : SenderUser;
 
-    /// <summary>Aggregated financial summary for the current month — never raw transactions.</summary>
-    private async Task<string> BuildContextAsync(Guid customerId, CancellationToken ct)
+    private static string NormalizeTitle(string? title)
     {
-        var today = DateOnly.FromDateTime(DateTime.UtcNow);
-        var monthStart = DateRange.StartUtc(new DateOnly(today.Year, today.Month, 1));
-        var monthEnd = DateRange.EndUtc(today);
-
-        var income = await _db.Customers
-            .Where(c => c.CustomerId == customerId)
-            .Select(c => c.MonthlyIncomeExpected)
-            .FirstOrDefaultAsync(ct);
-
-        var totalBalance = await _db.Wallets
-            .Where(w => w.CustomerId == customerId)
-            .SumAsync(w => (decimal?)w.Balance, ct) ?? 0m;
-
-        var spendByCategory = await _db.Transactions
-            .Join(_db.Wallets, t => t.WalletId, w => w.WalletId, (t, w) => new { t, w.CustomerId })
-            .Where(x => x.CustomerId == customerId
-                        && x.t.TransactionType == "EXPENSE"
-                        && x.t.TransactionDate >= monthStart && x.t.TransactionDate <= monthEnd)
-            .Join(_db.Categories, x => x.t.CategoryId, c => c.CategoryId,
-                (x, c) => new { c.CategoryName, c.DefaultBucket, x.t.Amount })
-            .GroupBy(x => new { x.CategoryName, x.DefaultBucket })
-            .Select(g => new { g.Key.CategoryName, g.Key.DefaultBucket, Total = g.Sum(x => x.Amount) })
-            .ToListAsync(ct);
-
-        var totalSpent = spendByCategory.Sum(s => s.Total);
-        var byBucket = spendByCategory
-            .GroupBy(s => s.DefaultBucket ?? "Khác")
-            .ToDictionary(g => g.Key, g => g.Sum(x => x.Total));
-
-        var sb = new StringBuilder();
-        sb.AppendLine($"Tháng hiện tại: {today:MM/yyyy}.");
-        sb.AppendLine($"Thu nhập kỳ vọng hàng tháng: {(income.HasValue ? $"{income.Value:N0}đ" : "chưa thiết lập")}.");
-        sb.AppendLine($"Tổng số dư tất cả ví: {totalBalance:N0}đ.");
-        sb.AppendLine($"Tổng chi tiêu tháng này: {totalSpent:N0}đ.");
-        sb.AppendLine("Chi tiêu theo nhóm:");
-        foreach (var b in byBucket.OrderByDescending(x => x.Value))
-            sb.AppendLine($"- {b.Key}: {b.Value:N0}đ");
-        sb.AppendLine("Chi tiêu theo danh mục:");
-        foreach (var s in spendByCategory.OrderByDescending(x => x.Total).Take(8))
-            sb.AppendLine($"- {s.CategoryName}: {s.Total:N0}đ");
-
-        try
-        {
-            var score = await _scoreService.ComputeCurrentAsync(customerId, "MONTHLY", ct);
-            sb.AppendLine($"Điểm quản lý chi tiêu hiện tại: {score.FinalScore:0}/100 ({score.ColorBadge}).");
-        }
-        catch
-        {
-            // Score is best-effort context; ignore failures.
-        }
-
-        return sb.ToString();
+        var normalized = string.IsNullOrWhiteSpace(title) ? "Cuộc trò chuyện mới" : title.Trim();
+        if (normalized.Length > 120)
+            throw new BadRequestException("Tiêu đề phiên trò chuyện không được vượt quá 120 ký tự.");
+        return normalized;
     }
+
+    private static ChatSessionResponse ToSessionResponse(AiChatSession session) => new(
+        session.SessionId,
+        session.Title,
+        session.HistoryEnabled,
+        session.IsDefault,
+        session.CreatedAt,
+        session.UpdatedAt,
+        session.LastMessageAt);
+
+    private Task RecordSessionAuditAsync(
+        Guid customerId,
+        Guid sessionId,
+        string eventType,
+        CancellationToken cancellationToken)
+        => _telemetry.RecordAuditAsync(
+            new AiAuditRecord(
+                eventType,
+                "customer",
+                customerId,
+                sessionId),
+            cancellationToken);
+
 }

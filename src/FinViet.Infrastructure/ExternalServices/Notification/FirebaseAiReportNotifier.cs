@@ -1,7 +1,9 @@
 using FinViet.Application.Interfaces;
+using FinViet.Infrastructure.Persistence.Context;
 using FirebaseAdmin;
 using FirebaseAdmin.Messaging;
 using Google.Apis.Auth.OAuth2;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
@@ -14,11 +16,16 @@ namespace FinViet.Infrastructure.ExternalServices.Notification;
 /// </summary>
 public class FirebaseAiReportNotifier : IAiReportNotifier
 {
+    private readonly FinVietDbContext _db;
     private readonly ILogger<FirebaseAiReportNotifier> _logger;
     private readonly bool _enabled;
 
-    public FirebaseAiReportNotifier(IConfiguration config, ILogger<FirebaseAiReportNotifier> logger)
+    public FirebaseAiReportNotifier(
+        FinVietDbContext db,
+        IConfiguration config,
+        ILogger<FirebaseAiReportNotifier> logger)
     {
+        _db = db;
         _logger = logger;
 
         if (FirebaseApp.DefaultInstance is not null)
@@ -68,6 +75,13 @@ public class FirebaseAiReportNotifier : IAiReportNotifier
         Guid customerId, string title, string message, CancellationToken cancellationToken = default)
     {
         if (!_enabled)
+            return;
+
+        var notifyReport = await _db.CustomerSettings.AsNoTracking()
+            .Where(s => s.CustomerId == customerId)
+            .Select(s => (bool?)s.NotifReport)
+            .FirstOrDefaultAsync(cancellationToken) ?? true;
+        if (!notifyReport)
             return;
 
         try
