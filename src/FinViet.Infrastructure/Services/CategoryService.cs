@@ -104,9 +104,8 @@ public class CategoryService : ICategoryService
                 CustomerId = customerId,
                 CategoryId = categoryId,
                 BucketId = normalizedBucket,
-                // "request" now simply means "customer-set override" — the admin
-                // category-request approval flow that this label used to imply was removed.
-                Source = "request",
+                // A persona source denotes a customer-specific bucket override.
+                Source = "persona",
                 IsActive = true,
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
@@ -116,7 +115,7 @@ public class CategoryService : ICategoryService
         {
             customerCategory.BucketId = normalizedBucket;
             customerCategory.IsActive = true;
-            customerCategory.Source = "request";
+            customerCategory.Source = "persona";
             customerCategory.UpdatedAt = DateTime.UtcNow;
         }
 

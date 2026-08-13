@@ -23,6 +23,8 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{0AB3BF05
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FinViet.Api.IntegrationTests", "tests\FinViet.Api.IntegrationTests\FinViet.Api.IntegrationTests.csproj", "{96A00F86-BF19-4839-854F-2EFE7F9087F1}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FinViet.Infrastructure.IntegrationTests", "tests\FinViet.Infrastructure.IntegrationTests\FinViet.Infrastructure.IntegrationTests.csproj", "{6CB99854-64AE-477D-8F80-E8D5626D7F62}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -117,6 +119,18 @@ Global
 		{96A00F86-BF19-4839-854F-2EFE7F9087F1}.Release|x64.Build.0 = Release|Any CPU
 		{96A00F86-BF19-4839-854F-2EFE7F9087F1}.Release|x86.ActiveCfg = Release|Any CPU
 		{96A00F86-BF19-4839-854F-2EFE7F9087F1}.Release|x86.Build.0 = Release|Any CPU
+		{6CB99854-64AE-477D-8F80-E8D5626D7F62}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{6CB99854-64AE-477D-8F80-E8D5626D7F62}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{6CB99854-64AE-477D-8F80-E8D5626D7F62}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{6CB99854-64AE-477D-8F80-E8D5626D7F62}.Debug|x64.Build.0 = Debug|Any CPU
+		{6CB99854-64AE-477D-8F80-E8D5626D7F62}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{6CB99854-64AE-477D-8F80-E8D5626D7F62}.Debug|x86.Build.0 = Debug|Any CPU
+		{6CB99854-64AE-477D-8F80-E8D5626D7F62}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{6CB99854-64AE-477D-8F80-E8D5626D7F62}.Release|Any CPU.Build.0 = Release|Any CPU
+		{6CB99854-64AE-477D-8F80-E8D5626D7F62}.Release|x64.ActiveCfg = Release|Any CPU
+		{6CB99854-64AE-477D-8F80-E8D5626D7F62}.Release|x64.Build.0 = Release|Any CPU
+		{6CB99854-64AE-477D-8F80-E8D5626D7F62}.Release|x86.ActiveCfg = Release|Any CPU
+		{6CB99854-64AE-477D-8F80-E8D5626D7F62}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -130,5 +144,6 @@ Global
 		{9B9D0C16-C4B4-434A-901D-BCD29109E1FF} = {10C01991-9095-E759-DE9C-24FC505FD2FD}
 		{42F4B4AE-C57E-448A-B8C6-2F6BE260B90B} = {10C01991-9095-E759-DE9C-24FC505FD2FD}
 		{96A00F86-BF19-4839-854F-2EFE7F9087F1} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
+		{6CB99854-64AE-477D-8F80-E8D5626D7F62} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 	EndGlobalSection
 EndGlobal

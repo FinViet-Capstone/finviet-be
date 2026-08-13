@@ -5,6 +5,16 @@
 
 # dotenv files
 .env
+.env.*
+
+# Database backups and local schema comparison artifacts
+*.dump
+*.backup
+*.sql.diff
+schema-diff*/
+
+# Claude Code local worktrees and session files
+.claude/
 
 # User-specific files
 *.rsuser

@@ -664,4 +664,4 @@ PagedResult<T>  = { page: number, pageSize: number, totalItems: number, totalPag
 
 Plain 400/404/409/403 errors (no `Code`, message-only) are noted inline in each endpoint's Validation/Business logic section above.
 
-**Migration note**: V25 (`V25__gemini_safe_copilot.sql`) is also executed by `DbInitializer`'s additive startup path because externally provisioned v3 databases skip numbered migrations. Validate the script against the target PostgreSQL schema before production rollout; it is additive and does not drop/recreate AI data.
+**Migration note**: the current Gemini schema is included in the immutable `V0001__baseline_schema.sql`. Database changes are applied exactly once by DbUp and journaled in `public.schema_versions`; there is no additive V25 replay path. See [database-bootstrap.md](database-bootstrap.md) before fresh bootstrap, restored-database adoption, or production rollout.

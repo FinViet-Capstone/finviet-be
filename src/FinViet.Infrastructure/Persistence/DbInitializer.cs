@@ -1,442 +1,349 @@
+using DbUp;
 using FinViet.Infrastructure.Persistence.Context;
 using FinViet.Infrastructure.Persistence.Entities;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Npgsql;
 
 namespace FinViet.Infrastructure.Persistence;
 
 /// <summary>
-/// Runs raw SQL migrations from the Migrations/ folder, then seeds default data.
-/// Designed to be idempotent (uses IF NOT EXISTS / ON CONFLICT).
+/// Applies embedded DbUp migrations, validates the resulting PostgreSQL schema, and seeds
+/// environment-appropriate application accounts. Schema migrations are the only source of DDL.
 /// </summary>
 public static class DbInitializer
 {
-    private static readonly string MigrationsFolder =
-        Path.Combine(AppContext.BaseDirectory, "Persistence", "Migrations");
+    private const string MigrationResourceMarker = ".Persistence.Migrations.V";
+    private const string BaselineReferenceScript = "FinViet.Infrastructure.Persistence.Migrations.V0002__baseline_reference_data.sql";
+    private const int MinimumAdminPasswordLength = 12;
 
     public static async Task InitializeAsync(
+        string connectionString,
         FinVietDbContext db,
+        IConfiguration configuration,
+        IHostEnvironment environment,
         ILogger logger,
+        bool adoptBaseline = false,
+        bool adoptionConfirmed = false,
+        bool backupConfirmed = false,
         CancellationToken cancellationToken = default)
     {
-        await db.Database.OpenConnectionAsync(cancellationToken);
+        if (string.IsNullOrWhiteSpace(connectionString))
+            throw new InvalidOperationException("ConnectionStrings:DefaultConnection is not configured.");
+
+        await using var lockConnection = new NpgsqlConnection(connectionString);
+        await lockConnection.OpenAsync(cancellationToken);
+        await using var lockCommand = new NpgsqlCommand(
+            "SELECT pg_advisory_lock(hashtext('finviet_database_initializer'));",
+            lockConnection);
+        await lockCommand.ExecuteNonQueryAsync(cancellationToken);
+
         try
         {
-            await db.Database.ExecuteSqlRawAsync(
-                "SELECT pg_advisory_lock(hashtext('finviet_database_initializer'));",
-                Array.Empty<object>(),
-                cancellationToken);
-            try
+            if (adoptBaseline)
             {
-                await ApplyMigrationsAsync(db, logger, cancellationToken);
-                await EnsureAdditiveTablesAsync(db, logger, cancellationToken);
-                await SeedAsync(db, logger, cancellationToken);
+                await AdoptExistingBaselineAsync(
+                    connectionString,
+                    adoptionConfirmed,
+                    backupConfirmed,
+                    logger,
+                    cancellationToken);
             }
-            finally
-            {
-                await db.Database.ExecuteSqlRawAsync(
-                    "SELECT pg_advisory_unlock(hashtext('finviet_database_initializer'));",
-                    Array.Empty<object>(),
-                    CancellationToken.None);
-            }
+
+            RunMigrations(connectionString, logger);
+            await ValidateSchemaAsync(lockConnection, cancellationToken);
+            await SeedAsync(db, configuration, environment, logger, cancellationToken);
         }
         finally
         {
-            await db.Database.CloseConnectionAsync();
+            await using var unlockCommand = new NpgsqlCommand(
+                "SELECT pg_advisory_unlock(hashtext('finviet_database_initializer'));",
+                lockConnection);
+            await unlockCommand.ExecuteNonQueryAsync(CancellationToken.None);
         }
     }
 
-    /// <summary>
-    /// Idempotently creates additive tables that are NOT part of the externally-provisioned
-    /// v3 schema. The v3 path skips all SQL migrations (see <see cref="ApplyMigrationsAsync"/>),
-    /// so new tables introduced after v3 must be created here to exist on every environment.
-    /// </summary>
-    private static async Task EnsureAdditiveTablesAsync(
-        FinVietDbContext db, ILogger logger, CancellationToken cancellationToken)
+    private static void RunMigrations(string connectionString, ILogger logger)
     {
-        const string sql = @"
-CREATE TABLE IF NOT EXISTS merchant_rules (
-    rule_id          uuid         PRIMARY KEY DEFAULT gen_random_uuid(),
-    customer_id      uuid         NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
-    merchant_keyword varchar(255) NOT NULL,
-    category_id      varchar(40)  NOT NULL REFERENCES categories(id),
-    applied_count    integer      NOT NULL DEFAULT 0,
-    created_at       timestamptz  NOT NULL DEFAULT now()
-);
-CREATE UNIQUE INDEX IF NOT EXISTS ux_merchant_rules_customer_keyword
-    ON merchant_rules (customer_id, lower(merchant_keyword));
-CREATE INDEX IF NOT EXISTS ix_merchant_rules_customer
-    ON merchant_rules (customer_id);
+        var upgrader = BuildUpgradeEngine(connectionString);
+        var result = upgrader.PerformUpgrade();
 
--- ── RAG layer (pgvector) ────────────────────────────────────────────────────
--- Redundant AI tables removed: re-process is now a query over unclassified
--- transactions, rate limiting moved in-memory, and per-user bucket overrides are
--- superseded by customer_categories. Drops are idempotent (may not exist on v3).
-DROP TABLE IF EXISTS ai_classification_queue;
-DROP TABLE IF EXISTS ai_usage_log;
-DROP TABLE IF EXISTS user_category_buckets;
+        if (!result.Successful)
+            throw new InvalidOperationException("Database migration failed.", result.Error);
 
--- Category-request admin-approval flow removed: customers now reassign a category's
--- bucket directly (PUT /api/categories/:id/bucket), writing straight to
--- customer_categories with no admin review step needed.
-DROP TABLE IF EXISTS category_requests;
-DROP TYPE IF EXISTS category_request_status;
+        foreach (var script in result.Scripts)
+            logger.LogInformation("Applied database migration {ScriptName}.", script.Name);
+    }
 
--- pgvector extension must be installed on the Postgres server image.
-CREATE EXTENSION IF NOT EXISTS vector;
+    private static DbUp.Engine.UpgradeEngine BuildUpgradeEngine(string connectionString) =>
+        DeployChanges.To
+            .PostgresqlDatabase(connectionString)
+            .JournalToPostgresqlTable("public", "schema_versions")
+            .WithScriptsEmbeddedInAssembly(
+                typeof(DbInitializer).Assembly,
+                resourceName => resourceName.Contains(MigrationResourceMarker, StringComparison.Ordinal) &&
+                                resourceName.EndsWith(".sql", StringComparison.OrdinalIgnoreCase))
+            .WithTransactionPerScript()
+            .LogToNowhere()
+            .Build();
 
--- A document is either a global knowledge source (customer_id NULL, e.g. an
--- ingested finance PDF) or a per-customer narrative (weekly_report/monthly_summary).
-CREATE TABLE IF NOT EXISTS rag_document (
-    id          uuid         PRIMARY KEY DEFAULT gen_random_uuid(),
-    customer_id uuid         NULL REFERENCES customers(id) ON DELETE CASCADE,
-    source_type varchar(20)  NOT NULL,
-    title       varchar(255) NOT NULL,
-    uri         varchar(512) NULL,
-    created_at  timestamptz  NOT NULL DEFAULT now()
-);
+    private static async Task AdoptExistingBaselineAsync(
+        string connectionString,
+        bool adoptionConfirmed,
+        bool backupConfirmed,
+        ILogger logger,
+        CancellationToken cancellationToken)
+    {
+        if (!adoptionConfirmed || !backupConfirmed)
+        {
+            throw new InvalidOperationException(
+                "Baseline adoption requires both --confirm-adopt-baseline and --confirm-database-backup.");
+        }
 
--- The configured embedding model must produce 768-dimensional vectors.
-CREATE TABLE IF NOT EXISTS rag_chunk (
-    id          uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
-    document_id uuid        NOT NULL REFERENCES rag_document(id) ON DELETE CASCADE,
-    customer_id uuid        NULL,
-    content     text        NOT NULL,
-    embedding   vector(768) NOT NULL,
-    metadata    jsonb       NULL,
-    created_at  timestamptz NOT NULL DEFAULT now()
-);
-CREATE INDEX IF NOT EXISTS ix_rag_chunk_customer ON rag_chunk (customer_id);
-CREATE INDEX IF NOT EXISTS ix_rag_chunk_embedding
-    ON rag_chunk USING hnsw (embedding vector_cosine_ops);";
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await VerifyAdoptionFingerprintAsync(connection, cancellationToken);
 
-        await ExecuteSqlScriptAsync(db, sql, cancellationToken);
-        await EnsureGeminiSafeCopilotSchemaAsync(db, logger, cancellationToken);
+        var upgrader = BuildUpgradeEngine(connectionString);
+        var result = upgrader.MarkAsExecuted(BaselineReferenceScript);
+        if (!result.Successful)
+            throw new InvalidOperationException("Could not journal the adopted database baseline.", result.Error);
+
         logger.LogInformation(
-            "Ensured additive tables (merchant_rules, RAG, Gemini safe copilot) and removed retired tables.");
+            "Adopted existing equivalent database schema through {BaselineScript}.",
+            BaselineReferenceScript);
     }
 
-    private static async Task EnsureGeminiSafeCopilotSchemaAsync(
-        FinVietDbContext db,
-        ILogger logger,
+    private static async Task VerifyAdoptionFingerprintAsync(
+        NpgsqlConnection connection,
         CancellationToken cancellationToken)
     {
-        var migrationPath = Path.Combine(MigrationsFolder, "V25__gemini_safe_copilot.sql");
-        if (!File.Exists(migrationPath))
+        const string sql = """
+            SELECT
+                to_regclass('public.admins') IS NOT NULL
+                AND to_regclass('public.customers') IS NOT NULL
+                AND to_regclass('public.categories') IS NOT NULL
+                AND to_regclass('public.transactions') IS NOT NULL
+                AND to_regclass('public.wallets') IS NOT NULL
+                AND to_regclass('public.customer_settings') IS NOT NULL
+                AND to_regclass('public.ai_chat_sessions') IS NOT NULL
+                AND to_regclass('public.ai_chat_messages') IS NOT NULL
+                AND to_regclass('public.rag_document') IS NOT NULL
+                AND to_regclass('public.rag_chunk') IS NOT NULL
+                AND EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pgcrypto')
+                AND EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'vector')
+                AND (
+                    SELECT format_type(attribute.atttypid, attribute.atttypmod)
+                    FROM pg_attribute attribute
+                    WHERE attribute.attrelid = 'public.rag_chunk'::regclass
+                      AND attribute.attname = 'embedding'
+                      AND NOT attribute.attisdropped
+                ) = 'vector(768)'
+                AND EXISTS (
+                    SELECT 1
+                    FROM pg_indexes
+                    WHERE schemaname = 'public'
+                      AND indexname = 'ix_rag_chunk_embedding'
+                      AND indexdef ILIKE '%USING hnsw%'
+                      AND indexdef ILIKE '%vector_cosine_ops%'
+                )
+                AND (
+                    SELECT array_agg(enum_value.enumlabel ORDER BY enum_value.enumsortorder)::text
+                    FROM pg_type enum_type
+                    JOIN pg_namespace enum_namespace ON enum_namespace.oid = enum_type.typnamespace
+                    JOIN pg_enum enum_value ON enum_value.enumtypid = enum_type.oid
+                    WHERE enum_namespace.nspname = 'public'
+                      AND enum_type.typname = 'category_source'
+                ) = '{persona,system}'
+                AND (SELECT count(*) FROM public.buckets WHERE id IN ('needs', 'wants', 'savings')) = 3
+                AND (SELECT count(*) FROM public.categories WHERE id LIKE 'cat_%') >= 18;
+            """;
+
+        await using var command = new NpgsqlCommand(sql, connection);
+        var result = await command.ExecuteScalarAsync(cancellationToken);
+        if (result is not true)
         {
-            throw new FileNotFoundException(
-                "Gemini safe-copilot additive migration is missing from the application output.",
-                migrationPath);
+            throw new InvalidOperationException(
+                "The existing database does not match the reviewed FinViet baseline. " +
+                "Restore the correct backup or reconcile schema drift before adoption.");
         }
 
-        var sql = await File.ReadAllTextAsync(migrationPath, cancellationToken);
-        await ExecuteSqlScriptAsync(db, sql, cancellationToken);
-        if (db.Database.GetDbConnection() is Npgsql.NpgsqlConnection npgsqlConnection)
-            await npgsqlConnection.ReloadTypesAsync();
-        logger.LogInformation("Ensured Gemini safe-copilot V25 schema.");
+        await EnsureNoJournalExistsAsync(connection, cancellationToken);
     }
 
-    private static async Task ExecuteSqlScriptAsync(
-        FinVietDbContext db,
-        string sql,
+    private static async Task EnsureNoJournalExistsAsync(
+        NpgsqlConnection connection,
         CancellationToken cancellationToken)
     {
-        var connection = db.Database.GetDbConnection();
-        var shouldClose = connection.State == System.Data.ConnectionState.Closed;
-
-        if (shouldClose)
-            await connection.OpenAsync(cancellationToken);
-
-        try
+        const string sql = "SELECT to_regclass('public.schema_versions') IS NULL;";
+        await using var command = new NpgsqlCommand(sql, connection);
+        var result = await command.ExecuteScalarAsync(cancellationToken);
+        if (result is not true)
         {
-            await using var command = connection.CreateCommand();
-            command.CommandText = sql;
-            command.CommandTimeout = db.Database.GetCommandTimeout() ?? command.CommandTimeout;
-            await command.ExecuteNonQueryAsync(cancellationToken);
-        }
-        finally
-        {
-            if (shouldClose)
-                await connection.CloseAsync();
+            throw new InvalidOperationException(
+                "Baseline adoption is only valid for an unjournaled restored database.");
         }
     }
 
-    private static async Task ApplyMigrationsAsync(
-        FinVietDbContext db,
-        ILogger logger,
+    private static async Task ValidateSchemaAsync(
+        NpgsqlConnection connection,
         CancellationToken cancellationToken)
     {
-        if (!Directory.Exists(MigrationsFolder))
-        {
-            logger.LogWarning("Migrations folder not found at {Folder}. Skipping migrations.", MigrationsFolder);
-            return;
-        }
+        const string sql = """
+            SELECT
+                to_regclass('public.income_allocation_settings') IS NOT NULL
+                AND EXISTS (
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_schema = 'public'
+                      AND table_name = 'savings_goal_contributions'
+                      AND column_name = 'type'
+                      AND is_nullable = 'NO'
+                )
+                AND EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pgcrypto')
+                AND EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'vector')
+                AND (
+                    SELECT format_type(attribute.atttypid, attribute.atttypmod)
+                    FROM pg_attribute attribute
+                    WHERE attribute.attrelid = 'public.rag_chunk'::regclass
+                      AND attribute.attname = 'embedding'
+                      AND NOT attribute.attisdropped
+                ) = 'vector(768)'
+                AND EXISTS (
+                    SELECT 1
+                    FROM pg_indexes
+                    WHERE schemaname = 'public'
+                      AND indexname = 'ix_rag_chunk_embedding'
+                      AND indexdef ILIKE '%USING hnsw%'
+                      AND indexdef ILIKE '%vector_cosine_ops%'
+                );
+            """;
 
-        var files = Directory.GetFiles(MigrationsFolder, "*.sql")
-            .OrderBy(GetMigrationVersion)
-            .ThenBy(Path.GetFileName)
-            .ToArray();
-
-        // The externally-provisioned v3 database is maintained by explicit SQL scripts.
-        // In particular, PostgreSQL enum additions must be applied before the API starts
-        // and before Npgsql initializes its enum mappings. Never replay those scripts here.
-        if (await IsV3SchemaAppliedAsync(db, cancellationToken))
-        {
-            logger.LogInformation(
-                "v3 schema detected. Skipping startup SQL migrations; apply v3 migration scripts before starting the API.");
-            return;
-        }
-
-        // Once the v2.1 rename (V11) has run, the singular `category`/`transaction`
-        // tables no longer exist, so migrations V2–V10 (which ALTER them) would fail
-        // on every subsequent startup. Skip everything below the rename in that case.
-        else if (await IsCategoryTransactionV21AppliedAsync(db, cancellationToken))
-        {
-            files = files
-                .Where(file => GetMigrationVersion(file) >= 11)
-                .ToArray();
-        }
-
-        foreach (var file in files)
-        {
-            var name = Path.GetFileName(file);
-            var sql  = await File.ReadAllTextAsync(file, cancellationToken);
-
-            if (string.IsNullOrWhiteSpace(sql))
-                continue;
-
-            try
-            {
-                logger.LogInformation("Applying migration {Name}...", name);
-                await ExecuteSqlScriptAsync(db, sql, cancellationToken);
-                logger.LogInformation("Migration {Name} applied successfully.", name);
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Migration {Name} failed: {Message}", name, ex.Message);
-                throw;
-            }
-        }
-    }
-
-    private static int GetMigrationVersion(string file)
-    {
-        var fileName = Path.GetFileNameWithoutExtension(file);
-        if (string.IsNullOrWhiteSpace(fileName) ||
-            fileName[0] != 'V')
-        {
-            return int.MaxValue;
-        }
-
-        var separatorIndex = fileName.IndexOf("__", StringComparison.Ordinal);
-        var versionText = separatorIndex > 1
-            ? fileName[1..separatorIndex]
-            : fileName[1..];
-
-        return int.TryParse(versionText, out var version)
-            ? version
-            : int.MaxValue;
-    }
-
-    /// <summary>
-    /// True once the schema has been migrated to v2.1, i.e. the plural `categories`
-    /// table exists and the legacy singular `category` table has been renamed away.
-    /// </summary>
-    private static async Task<bool> IsCategoryTransactionV21AppliedAsync(
-        FinVietDbContext db,
-        CancellationToken cancellationToken)
-    {
-        var connection = db.Database.GetDbConnection();
-        var shouldClose = connection.State == System.Data.ConnectionState.Closed;
-
-        if (shouldClose)
-            await connection.OpenAsync(cancellationToken);
-
-        try
-        {
-            await using var command = connection.CreateCommand();
-            command.CommandText =
-                "SELECT to_regclass('public.categories') IS NOT NULL AND to_regclass('public.category') IS NULL";
-
-            var result = await command.ExecuteScalarAsync(cancellationToken);
-            return result is bool applied && applied;
-        }
-        finally
-        {
-            if (shouldClose)
-                await connection.CloseAsync();
-        }
-    }
-
-    /// <summary>
-    /// True when the database is on the v3 schema, identified by the plural
-    /// <c>public.customers</c> table. The v2.1 schema still used singular <c>customer</c>,
-    /// so this only matches the externally-provisioned v3 database.
-    /// </summary>
-    private static async Task<bool> IsV3SchemaAppliedAsync(
-        FinVietDbContext db,
-        CancellationToken cancellationToken)
-    {
-        var connection = db.Database.GetDbConnection();
-        var shouldClose = connection.State == System.Data.ConnectionState.Closed;
-
-        if (shouldClose)
-            await connection.OpenAsync(cancellationToken);
-
-        try
-        {
-            await using var command = connection.CreateCommand();
-            command.CommandText = "SELECT to_regclass('public.customers') IS NOT NULL";
-
-            var result = await command.ExecuteScalarAsync(cancellationToken);
-            return result is bool applied && applied;
-        }
-        finally
-        {
-            if (shouldClose)
-                await connection.CloseAsync();
-        }
+        await using var command = new NpgsqlCommand(sql, connection);
+        var result = await command.ExecuteScalarAsync(cancellationToken);
+        if (result is not true)
+            throw new InvalidOperationException("Database migration completed but schema validation failed.");
     }
 
     private static async Task SeedAsync(
         FinVietDbContext db,
+        IConfiguration configuration,
+        IHostEnvironment environment,
         ILogger logger,
         CancellationToken cancellationToken)
     {
-        await SeedAdminAsync(db, logger, cancellationToken);
-        // (merge origin/dev) Seed thư viện danh mục GLOBAL — BẮT BUỘC: mọi luồng transaction/
-        // budget/goal phụ thuộc category; thiếu là app vỡ. Idempotent theo CategoryId.
-        await SeedCategoriesAsync(db, logger, cancellationToken);
-        // (merge origin/dev) Demo customers (demo/alice/bob) cho môi trường dev/demo. Idempotent
-        // theo email. Local trước đây cố ý KHÔNG seed (tránh demo account vào mọi env); bật lại để
-        // khớp origin/dev và dữ liệu dev hiện có. Tắt dòng này nếu deploy production.
-        await SeedCustomersAsync(db, logger, cancellationToken);
-        await SeedWalletsAndTransactionsAsync(db, logger, cancellationToken);
+        await SeedAdminAsync(db, configuration, environment, logger, cancellationToken);
+
+        if (environment.IsDevelopment() && configuration.GetValue("Database:SeedDemoData", true))
+        {
+            await SeedCustomersAsync(db, logger, cancellationToken);
+            await SeedWalletsAndTransactionsAsync(db, logger, cancellationToken);
+        }
+
         await db.SaveChangesAsync(cancellationToken);
     }
 
-    private static async Task SeedAdminAsync(FinVietDbContext db, ILogger logger, CancellationToken ct)
+    private static async Task SeedAdminAsync(
+        FinVietDbContext db,
+        IConfiguration configuration,
+        IHostEnvironment environment,
+        ILogger logger,
+        CancellationToken cancellationToken)
     {
-        const string adminUsername = "admin";
-        var existing = await db.Admins.FirstOrDefaultAsync(a => a.Username == adminUsername, ct);
-        if (existing is not null) return;
+        if (await db.Admins.AnyAsync(cancellationToken))
+            return;
+
+        var password = configuration["Admin:DefaultPassword"];
+        if (string.IsNullOrWhiteSpace(password) && environment.IsDevelopment())
+            password = "Admin@123456";
+
+        if (string.IsNullOrWhiteSpace(password) || password.Length < MinimumAdminPasswordLength)
+        {
+            throw new InvalidOperationException(
+                $"Admin:DefaultPassword must be configured with at least {MinimumAdminPasswordLength} characters " +
+                "when the database has no administrator.");
+        }
+
+        var username = configuration["Admin:DefaultUsername"]?.Trim();
+        if (string.IsNullOrWhiteSpace(username))
+            username = "admin";
+
+        var email = configuration["Admin:DefaultEmail"]?.Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(email))
+            email = "admin@finviet.local";
 
         db.Admins.Add(new Admin
         {
-            AdminId      = Guid.NewGuid(),
-            Username     = adminUsername,
-            Email        = "admin@finviet.local",
-            PasswordHash = BCrypt.Net.BCrypt.HashPassword("Admin@123"),
-            CreatedAt    = DateTime.UtcNow
+            AdminId = Guid.NewGuid(),
+            Username = username,
+            Email = email,
+            PasswordHash = BCrypt.Net.BCrypt.HashPassword(password),
+            CreatedAt = DateTime.UtcNow
         });
 
-        logger.LogInformation("Seeded admin account: username={Username} password=Admin@123", adminUsername);
+        logger.LogInformation("Seeded initial administrator {Username}.", username);
     }
 
-    /// <summary>
-    /// (Merge của origin/dev `SeedCategoriesAsync`, đã chỉnh cho entity bản LOCAL.)
-    /// Khác biệt khi gộp: origin/dev dùng <c>Type = CategoryType.Expense</c> + <c>ExpenseClass</c>;
-    /// local dùng <c>Type</c> là string (qua PgEnumStringConverter&lt;CategoryType&gt; → pg enum
-    /// <c>category_type</c>) và field <c>DefaultBucket</c> (varchar, FK buckets: needs/wants/savings).
-    /// Vì vậy mọi <c>CategoryType.Expense</c> → <c>"expense"</c>, <c>CategoryType.Income</c> → <c>"income"</c>,
-    /// <c>ExpenseClass</c> → <c>DefaultBucket</c>. Income có <c>DefaultBucket = null</c>.
-    /// </summary>
-    private static async Task SeedCategoriesAsync(FinVietDbContext db, ILogger logger, CancellationToken ct)
-    {
-        var seedCategories = new[]
-        {
-            new Category { CategoryId = "cat_food",              CategoryName = "Ăn uống",              NameEn = "Food",                Type = "expense", Icon = "restaurant",      Color = "#4EDEA3", DefaultBucket = "needs",   SortOrder = 1 },
-            new Category { CategoryId = "cat_housing",           CategoryName = "Nhà ở & Tiện ích",     NameEn = "Housing & Utilities", Type = "expense", Icon = "home",            Color = "#D0BCFF", DefaultBucket = "needs",   SortOrder = 2 },
-            new Category { CategoryId = "cat_transport",         CategoryName = "Di chuyển",            NameEn = "Transport",           Type = "expense", Icon = "directions_car",  Color = "#90CAF9", DefaultBucket = "needs",   SortOrder = 3 },
-            new Category { CategoryId = "cat_health",            CategoryName = "Sức khỏe & Y tế",      NameEn = "Health",              Type = "expense", Icon = "local_hospital",  Color = "#EF9A9A", DefaultBucket = "needs",   SortOrder = 4 },
-            new Category { CategoryId = "cat_education",         CategoryName = "Giáo dục",             NameEn = "Education",           Type = "expense", Icon = "school",          Color = "#FFE082", DefaultBucket = "needs",   SortOrder = 5 },
-            new Category { CategoryId = "cat_family",            CategoryName = "Gửi tiền gia đình",    NameEn = "Family support",      Type = "expense", Icon = "family_restroom", Color = "#BCAAA4", DefaultBucket = "needs",   SortOrder = 6 },
-            new Category { CategoryId = "cat_entertain",         CategoryName = "Giải trí",             NameEn = "Entertainment",       Type = "expense", Icon = "sports_esports",  Color = "#CE93D8", DefaultBucket = "wants",   SortOrder = 7 },
-            new Category { CategoryId = "cat_beauty",            CategoryName = "Quần áo & Thời trang", NameEn = "Fashion",             Type = "expense", Icon = "checkroom",       Color = "#F8BBD0", DefaultBucket = "wants",   SortOrder = 8 },
-            new Category { CategoryId = "cat_shopping",          CategoryName = "Mua sắm online",       NameEn = "Shopping",            Type = "expense", Icon = "shopping_bag",    Color = "#FFB690", DefaultBucket = "wants",   SortOrder = 9 },
-            new Category { CategoryId = "cat_dining",            CategoryName = "Ăn ngoài & Cà phê",    NameEn = "Dining & Coffee",     Type = "expense", Icon = "local_cafe",      Color = "#FFCC80", DefaultBucket = "wants",   SortOrder = 10 },
-            new Category { CategoryId = "cat_savings",           CategoryName = "Tiết kiệm",            NameEn = "Savings",             Type = "expense", Icon = "savings",         Color = "#4EDEA3", DefaultBucket = "savings", SortOrder = 11 },
-            new Category { CategoryId = "cat_invest",            CategoryName = "Đầu tư",               NameEn = "Investment",          Type = "expense", Icon = "trending_up",     Color = "#A5D6A7", DefaultBucket = "savings", SortOrder = 12 },
-            new Category { CategoryId = "cat_savings_goal",      CategoryName = "Mục tiêu tiết kiệm",   NameEn = "Saving goal",         Type = "expense", Icon = "flag",            Color = "#80CBC4", DefaultBucket = "savings", SortOrder = 13 },
-            new Category { CategoryId = "cat_salary",            CategoryName = "Lương",                NameEn = "Salary",              Type = "income",  Icon = "payments",        Color = "#81C784", DefaultBucket = null,      SortOrder = 101 },
-            new Category { CategoryId = "cat_freelance",         CategoryName = "Freelance",            NameEn = "Freelance",           Type = "income",  Icon = "work",            Color = "#64B5F6", DefaultBucket = null,      SortOrder = 102 },
-            new Category { CategoryId = "cat_investment_return", CategoryName = "Lợi nhuận đầu tư",     NameEn = "Investment return",   Type = "income",  Icon = "trending_up",     Color = "#A5D6A7", DefaultBucket = null,      SortOrder = 103 },
-            new Category { CategoryId = "cat_gift",              CategoryName = "Quà tặng",             NameEn = "Gift",                Type = "income",  Icon = "redeem",          Color = "#F48FB1", DefaultBucket = null,      SortOrder = 104 },
-            new Category { CategoryId = "cat_income_other",      CategoryName = "Thu nhập khác",        NameEn = "Other income",        Type = "income",  Icon = "more_horiz",      Color = "#B0BEC5", DefaultBucket = null,      SortOrder = 105 },
-        };
-
-        var ids = seedCategories.Select(c => c.CategoryId).ToArray();
-        var existingIds = await db.Categories
-            .Where(c => ids.Contains(c.CategoryId))
-            .Select(c => c.CategoryId)
-            .ToListAsync(ct);
-
-        var added = 0;
-        foreach (var category in seedCategories)
-        {
-            if (existingIds.Contains(category.CategoryId)) continue;
-            db.Categories.Add(category);
-            added++;
-        }
-
-        if (added > 0)
-            logger.LogInformation("Seeded {Count} categories", added);
-    }
-
-    /// <summary>
-    /// (Merge của origin/dev `SeedCustomersAsync`.) Customer entity giống nhau ở cả hai bản nên
-    /// bê nguyên; idempotent theo email. NeedsPct/WantsPct/SavingsPct lấy default 50/30/20 của entity.
-    /// </summary>
-    private static async Task SeedCustomersAsync(FinVietDbContext db, ILogger logger, CancellationToken ct)
+    private static async Task SeedCustomersAsync(
+        FinVietDbContext db,
+        ILogger logger,
+        CancellationToken cancellationToken)
     {
         var seedCustomers = new[]
         {
-            new { Email = "demo@finviet.local",  FullName = "Demo User",    Password = "Demo@1234",  MonthlyIncomeExpected = 15_000_000m },
+            new { Email = "demo@finviet.local", FullName = "Demo User", Password = "Demo@1234", MonthlyIncomeExpected = 15_000_000m },
             new { Email = "alice@finviet.local", FullName = "Alice Nguyen", Password = "Alice@1234", MonthlyIncomeExpected = 20_000_000m },
-            new { Email = "bob@finviet.local",   FullName = "Bob Tran",     Password = "Bob@12345",  MonthlyIncomeExpected = 12_000_000m }
+            new { Email = "bob@finviet.local", FullName = "Bob Tran", Password = "Bob@12345", MonthlyIncomeExpected = 12_000_000m }
         };
 
-        foreach (var s in seedCustomers)
+        foreach (var seed in seedCustomers)
         {
-            var email = s.Email.ToLowerInvariant();
-            var exists = await db.Customers.AnyAsync(c => c.Email == email, ct);
-            if (exists) continue;
+            var email = seed.Email.ToLowerInvariant();
+            if (await db.Customers.AnyAsync(customer => customer.Email == email, cancellationToken))
+                continue;
 
             db.Customers.Add(new Customer
             {
-                CustomerId            = Guid.NewGuid(),
-                FullName              = s.FullName,
-                Email                 = email,
-                PasswordHash          = BCrypt.Net.BCrypt.HashPassword(s.Password),
-                IsEmailVerified       = true,
-                EmailVerifiedAt       = DateTime.UtcNow,
-                IsActive              = true,
-                MonthlyIncomeExpected = s.MonthlyIncomeExpected,
-                CreatedAt             = DateTime.UtcNow
+                CustomerId = Guid.NewGuid(),
+                FullName = seed.FullName,
+                Email = email,
+                PasswordHash = BCrypt.Net.BCrypt.HashPassword(seed.Password),
+                IsEmailVerified = true,
+                EmailVerifiedAt = DateTime.UtcNow,
+                IsActive = true,
+                MonthlyIncomeExpected = seed.MonthlyIncomeExpected,
+                CreatedAt = DateTime.UtcNow
             });
 
-            logger.LogInformation("Seeded customer: {Email}", email);
+            logger.LogInformation("Seeded development customer {Email}.", email);
         }
+
+        await db.SaveChangesAsync(cancellationToken);
     }
-    
-    private static async Task SeedWalletsAndTransactionsAsync(FinVietDbContext db, ILogger logger, CancellationToken ct)
+
+    private static async Task SeedWalletsAndTransactionsAsync(
+        FinVietDbContext db,
+        ILogger logger,
+        CancellationToken cancellationToken)
     {
         var emails = new[] { "demo@finviet.local", "alice@finviet.local", "bob@finviet.local" };
         var customers = await db.Customers
-            .Where(c => emails.Contains(c.Email))
-            .ToListAsync(ct);
+            .Where(customer => emails.Contains(customer.Email))
+            .ToListAsync(cancellationToken);
 
-        if (!customers.Any()) return;
-
-        var rand = new Random(42); // fixed seed for reproducible data
-
+        var random = new Random(42);
         foreach (var customer in customers)
         {
-            // Check if user already has a wallet
-            var existingWallet = await db.Wallets.FirstOrDefaultAsync(w => w.CustomerId == customer.CustomerId, ct);
-            if (existingWallet != null && await db.Transactions.AnyAsync(t => t.WalletId == existingWallet.WalletId, ct))
+            var existingWallet = await db.Wallets
+                .FirstOrDefaultAsync(wallet => wallet.CustomerId == customer.CustomerId, cancellationToken);
+            if (existingWallet is not null &&
+                await db.Transactions.AnyAsync(
+                    transaction => transaction.WalletId == existingWallet.WalletId,
+                    cancellationToken))
             {
-                continue; // Already seeded
+                continue;
             }
 
             var wallet = existingWallet ?? new Wallet
@@ -450,17 +357,12 @@ CREATE INDEX IF NOT EXISTS ix_rag_chunk_embedding
                 UpdatedAt = DateTime.UtcNow
             };
 
-            if (existingWallet == null)
-            {
+            if (existingWallet is null)
                 db.Wallets.Add(wallet);
-            }
 
-            // Generate 60 days of transactions
             var startDate = DateTime.UtcNow.Date.AddDays(-60);
             var transactions = new List<Transaction>();
-            decimal currentBalance = 10_000_000m; // Initial balance
-            
-            // Generate some initial balance transaction
+            decimal currentBalance = 10_000_000m;
             transactions.Add(new Transaction
             {
                 TransactionId = Guid.NewGuid(),
@@ -479,14 +381,12 @@ CREATE INDEX IF NOT EXISTS ix_rag_chunk_embedding
                 AiCategoryGuess = "cat_salary"
             });
 
-            for (int i = 0; i <= 60; i++)
+            for (var day = 0; day <= 60; day++)
             {
-                var currentDate = startDate.AddDays(i);
-                
-                // Add salary on the 1st of each month
+                var currentDate = startDate.AddDays(day);
                 if (currentDate.Day == 1)
                 {
-                    decimal salary = customer.MonthlyIncomeExpected ?? 15_000_000m;
+                    var salary = customer.MonthlyIncomeExpected ?? 15_000_000m;
                     transactions.Add(new Transaction
                     {
                         TransactionId = Guid.NewGuid(),
@@ -495,7 +395,7 @@ CREATE INDEX IF NOT EXISTS ix_rag_chunk_embedding
                         CategoryId = "cat_salary",
                         Amount = salary,
                         TransactionType = "income",
-                        Description = "Lương tháng " + currentDate.Month,
+                        Description = $"Lương tháng {currentDate.Month}",
                         Merchant = "Công ty TNHH ABC",
                         TransactionDate = currentDate.AddHours(9),
                         EntryMethod = "manual",
@@ -508,84 +408,105 @@ CREATE INDEX IF NOT EXISTS ix_rag_chunk_embedding
                     currentBalance += salary;
                 }
 
-                int numTxPerDay = 0;
-                
-                if (customer.Email == "demo@finviet.local")
+                var transactionCount = customer.Email switch
                 {
-                    // Balanced spending (1-3 tx per day)
-                    numTxPerDay = rand.Next(1, 4);
-                    for (int j = 0; j < numTxPerDay; j++)
-                    {
-                        var isNeed = rand.NextDouble() < 0.6; // 60% needs, 30% wants, 10% savings
-                        var isWant = !isNeed && rand.NextDouble() < 0.75;
-                        
-                        string cat = isNeed ? (rand.NextDouble() < 0.7 ? "cat_food" : "cat_transport") 
-                            : (isWant ? "cat_dining" : "cat_savings");
-                        
-                        decimal amount = isNeed ? rand.Next(30, 200) * 1000m : (isWant ? rand.Next(50, 300) * 1000m : rand.Next(500, 2000) * 1000m);
-                        
-                        transactions.Add(CreateExpense(customer.CustomerId, wallet.WalletId, cat, amount, currentDate.AddHours(rand.Next(8, 22)), rand));
-                        currentBalance -= amount;
-                    }
-                }
-                else if (customer.Email == "alice@finviet.local")
+                    "demo@finviet.local" => random.Next(1, 4),
+                    "alice@finviet.local" => random.Next(2, 6),
+                    _ => random.Next(0, 3)
+                };
+
+                for (var index = 0; index < transactionCount; index++)
                 {
-                    // High spending, lots of wants (2-5 tx per day)
-                    numTxPerDay = rand.Next(2, 6);
-                    for (int j = 0; j < numTxPerDay; j++)
-                    {
-                        var isWant = rand.NextDouble() < 0.7; // 70% wants
-                        
-                        string cat = isWant ? 
-                            (rand.NextDouble() < 0.4 ? "cat_shopping" : (rand.NextDouble() < 0.5 ? "cat_beauty" : "cat_dining")) : 
-                            (rand.NextDouble() < 0.8 ? "cat_food" : "cat_transport");
-                            
-                        decimal amount = isWant ? rand.Next(200, 1500) * 1000m : rand.Next(50, 300) * 1000m;
-                        
-                        transactions.Add(CreateExpense(customer.CustomerId, wallet.WalletId, cat, amount, currentDate.AddHours(rand.Next(9, 23)), rand));
-                        currentBalance -= amount;
-                    }
-                }
-                else if (customer.Email == "bob@finviet.local")
-                {
-                    // Frugal (0-2 tx per day, mostly needs)
-                    numTxPerDay = rand.Next(0, 3);
-                    for (int j = 0; j < numTxPerDay; j++)
-                    {
-                        var isNeed = rand.NextDouble() < 0.85; // 85% needs
-                        
-                        string cat = isNeed ? (rand.NextDouble() < 0.8 ? "cat_food" : "cat_housing") : "cat_invest";
-                        
-                        decimal amount = isNeed ? rand.Next(20, 100) * 1000m : rand.Next(1000, 3000) * 1000m;
-                        
-                        transactions.Add(CreateExpense(customer.CustomerId, wallet.WalletId, cat, amount, currentDate.AddHours(rand.Next(7, 20)), rand));
-                        currentBalance -= amount;
-                    }
+                    var categoryId = SelectDevelopmentCategory(customer.Email, random);
+                    var amount = SelectDevelopmentAmount(customer.Email, categoryId, random);
+                    transactions.Add(CreateExpense(
+                        customer.CustomerId,
+                        wallet.WalletId,
+                        categoryId,
+                        amount,
+                        currentDate.AddHours(random.Next(7, 23)),
+                        random));
+                    currentBalance -= amount;
                 }
             }
 
             wallet.Balance = currentBalance;
             db.Transactions.AddRange(transactions);
-            logger.LogInformation("Seeded wallet and {Count} transactions for customer {Email}", transactions.Count, customer.Email);
+            logger.LogInformation(
+                "Seeded development wallet and {Count} transactions for {Email}.",
+                transactions.Count,
+                customer.Email);
         }
     }
 
-    private static Transaction CreateExpense(Guid customerId, Guid walletId, string categoryId, decimal amount, DateTime date, Random rand)
+    private static string SelectDevelopmentCategory(string email, Random random)
     {
-        var merchants = new System.Collections.Generic.Dictionary<string, string[]>
+        if (email == "demo@finviet.local")
         {
-            { "cat_food", new[] { "VinMart", "Bách Hóa Xanh", "CoopMart", "Chợ", "Circle K" } },
-            { "cat_transport", new[] { "GrabBike", "Be", "Gojek", "Đổ xăng", "Taxi Mai Linh" } },
-            { "cat_housing", new[] { "Điện lực EVN", "Tiền nước", "Tiền mạng VNPT", "Tiền rác" } },
-            { "cat_dining", new[] { "Highlands Coffee", "The Coffee House", "Phúc Long", "Haidilao", "Golden Gate" } },
-            { "cat_shopping", new[] { "Shopee", "Lazada", "Tiki", "Zara", "Uniqlo" } },
-            { "cat_beauty", new[] { "Hasaki", "Guardian", "Hair Salon", "Spa" } },
-            { "cat_savings", new[] { "Gửi tiết kiệm online", "Heo đất" } },
-            { "cat_invest", new[] { "VNDirect", "TCBS", "Mua vàng" } }
+            var isNeed = random.NextDouble() < 0.6;
+            var isWant = !isNeed && random.NextDouble() < 0.75;
+            return isNeed
+                ? (random.NextDouble() < 0.7 ? "cat_food" : "cat_transport")
+                : (isWant ? "cat_dining" : "cat_savings");
+        }
+
+        if (email == "alice@finviet.local")
+        {
+            var isWant = random.NextDouble() < 0.7;
+            return isWant
+                ? (random.NextDouble() < 0.4
+                    ? "cat_shopping"
+                    : random.NextDouble() < 0.5 ? "cat_beauty" : "cat_dining")
+                : (random.NextDouble() < 0.8 ? "cat_food" : "cat_transport");
+        }
+
+        return random.NextDouble() < 0.85
+            ? (random.NextDouble() < 0.8 ? "cat_food" : "cat_housing")
+            : "cat_invest";
+    }
+
+    private static decimal SelectDevelopmentAmount(string email, string categoryId, Random random)
+    {
+        if (email == "alice@finviet.local")
+            return categoryId is "cat_shopping" or "cat_beauty" or "cat_dining"
+                ? random.Next(200, 1500) * 1000m
+                : random.Next(50, 300) * 1000m;
+
+        if (email == "bob@finviet.local")
+            return categoryId == "cat_invest"
+                ? random.Next(1000, 3000) * 1000m
+                : random.Next(20, 100) * 1000m;
+
+        return categoryId switch
+        {
+            "cat_food" or "cat_transport" => random.Next(30, 200) * 1000m,
+            "cat_dining" => random.Next(50, 300) * 1000m,
+            _ => random.Next(500, 2000) * 1000m
+        };
+    }
+
+    private static Transaction CreateExpense(
+        Guid customerId,
+        Guid walletId,
+        string categoryId,
+        decimal amount,
+        DateTime date,
+        Random random)
+    {
+        var merchants = new Dictionary<string, string[]>
+        {
+            ["cat_food"] = ["VinMart", "Bách Hóa Xanh", "CoopMart", "Chợ", "Circle K"],
+            ["cat_transport"] = ["GrabBike", "Be", "Gojek", "Đổ xăng", "Taxi Mai Linh"],
+            ["cat_housing"] = ["Điện lực EVN", "Tiền nước", "Tiền mạng VNPT", "Tiền rác"],
+            ["cat_dining"] = ["Highlands Coffee", "The Coffee House", "Phúc Long", "Haidilao", "Golden Gate"],
+            ["cat_shopping"] = ["Shopee", "Lazada", "Tiki", "Zara", "Uniqlo"],
+            ["cat_beauty"] = ["Hasaki", "Guardian", "Hair Salon", "Spa"],
+            ["cat_savings"] = ["Gửi tiết kiệm online", "Heo đất"],
+            ["cat_invest"] = ["VNDirect", "TCBS", "Mua vàng"]
         };
 
-        string merchant = merchants.ContainsKey(categoryId) 
-            ? merchants[categoryId][rand.Next(merchants[categoryId].Length)] 
+        var merchant = merchants.TryGetValue(categoryId, out var categoryMerchants)
+            ? categoryMerchants[random.Next(categoryMerchants.Length)]
             : "Chi tiêu";
 
         return new Transaction

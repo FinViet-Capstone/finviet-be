@@ -14,5 +14,9 @@
 **/appsettings.Development.json
 **/*firebase*.json
 **/*service-account*.json
+**/*.dump
+**/*.backup
+**/*.sql.diff
+**/schema-diff*
 
 tests

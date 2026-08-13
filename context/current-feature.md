@@ -2,59 +2,59 @@
 
 <!-- Feature name and short description -->
 
-Gemini Flash safe copilot: replace local Ollama/OpenAI-compatible AI with the official Google
-Gemini API and close the current chatbot's control, personalization, grounding, privacy, and
-schema gaps without granting chat any money- or data-mutating capability.
+Database baseline reset: replace the mixed Database-First/Code-First legacy migration chain
+and startup schema guessing with a reproducible baseline captured from the stable local
+PostgreSQL database, plus DbUp journaling for all future schema changes.
 
 ## Status
 
 <!-- Not Started | In Progress | Completed -->
 
-In Progress
+Completed
 
 ## Goals
 
 <!-- Goals and requirements -->
 
-- Replace the Ollama/OpenAI-compatible generation and embedding clients with the official
-  `Google.GenAI` .NET SDK, using a configurable stable Gemini Flash model and 768-dimensional
-  Gemini text embeddings.
-- Keep chat strictly read-only while adding trusted system instructions, deterministic financial
-  context, evidence/citations, limitations, RAG relevance filtering, and graceful provider fallback.
-- Add per-customer AI preferences for classification mode/confidence, chat-history defaults,
-  weekly reports, and allowed financial-data scopes.
-- Secure AI categorization by transaction ownership and customer-visible categories; deterministic
-  merchant/manual decisions must take precedence over Gemini.
-- Add customer-owned chat sessions with create/list/rename/delete, backward-compatible default
-  sessions, and a no-content-persistence mode.
-- Add durable multi-instance rate limits plus privacy-preserving usage/audit metadata.
-- Repair AI schema drift on externally-provisioned v3 databases through both an idempotent V25 SQL
-  migration and the startup additive-schema path.
-- Update unit/integration tests, API/configuration documentation, and the Gemini/RAG rollout runbook.
+- Treat the current stable local PostgreSQL database as the canonical schema after the project's
+  mixed Database-First/Code-First history.
+- Replace active legacy migrations V2–V25 and `DbInitializer`'s additive/shape-detection paths with
+  reviewed `V0001` schema and `V0002` reference-data baselines.
+- Use DbUp embedded migrations, a PostgreSQL journal, zero-padded versions, transactions, and the
+  existing advisory lock so each future migration executes exactly once.
+- Bootstrap a truly empty database from a clean checkout in one application start.
+- Adopt an already-restored equivalent database only through an explicit, confirmed baseline mode;
+  never infer or silently repair a partial schema during normal startup.
+- Keep mandatory reference data in SQL, require a configured admin secret when a non-Development
+  database has no admin, and restrict demo customer/wallet/transaction seed data to Development.
+- Document backup/restore, Render staging/cutover, Data Protection/SePay token implications, and
+  rollback; add PostgreSQL-backed bootstrap and schema-equivalence verification.
 
 ## Notes
 
 <!-- Any extra notes -->
 
-- Confirmed product scope: "Copilot an toàn trước" — analysis and recommendations only. Tool calls,
-  action proposals, transaction/budget/goal mutations, and financial execution from chat are out of scope.
-- Confirmed history model: multiple sessions with rename/delete and an option not to persist content.
-- Gemini API keys must be supplied only through .NET user-secrets or environment variables; no key
-  is committed to source control.
-- Existing RAG vectors from Ollama are incompatible with Gemini embeddings even at 768 dimensions.
-  Re-indexing remains destructive-adjacent and will not be run without a separate explicit confirmation.
-- No commit or push without explicit user permission.
-- 2026-08-11 implementation verification so far: solution build succeeds and all 183 Application
-  unit tests pass. Privacy-safe Gemini usage metadata and best-effort AI audit coverage are implemented;
-  classification and customer-scoped embedding calls now use durable quotas. V25 is serialized with
-  an advisory lock, repairs partial table shapes, fails startup closed on incompatible/duplicate legacy
-  data, and no longer deletes duplicate financial reports or scores automatically. Live Gemini-key
-  verification, disposable PostgreSQL V25 validation, real-server integration tests, and RAG re-index
-  remain outstanding; no re-index was run.
+- User selected the stable local database dump as the schema source of truth, DbUp as the future
+  migration engine, and reference data plus configured admin as the production bootstrap policy.
+- The baseline must include the current V25/Gemini tables, all mapped PostgreSQL enums, `pgcrypto`,
+  `vector`, `rag_chunk.embedding = vector(768)`, and the HNSW cosine index.
+- Full database dumps, schema-diff artifacts, `.env`, passwords, and provider credentials must remain
+  outside Git and the Docker build context.
+- Once released, baseline scripts are immutable; future migrations continue after the current
+  `V0003` and use zero-padded names.
+- Existing/restored databases require an explicit confirmed adoption command after schema fingerprint
+  validation; normal startup never marks an unknown schema current.
+- No RAG re-index, production cutover, commit, or push without separate explicit permission.
 
 ## History
 
 <!-- Keep this updated. Earliest to latest -->
+
+- 2026-08-13 — Started database baseline reset on branch `feature/database-baseline-dbup`. Approved direction: dump the stable local PostgreSQL schema, replace legacy V2–V25/additive startup DDL with `V0001`/`V0002`, and manage future changes through DbUp with a real journal and advisory lock.
+- 2026-08-13 — Captured verified full/schema-only backups outside the repository; generated exact `V0001` schema and `V0002` reference data; added `V0003` for active V22/V24 schema that the former initializer skipped. Replaced schema guessing/additive DDL with embedded DbUp migrations, `public.schema_versions`, per-script transactions, and the advisory lock. Added confirmed restored-database adoption, non-Development admin-secret enforcement, Development-only demo seeds, and canonical `category_source` alignment.
+- 2026-08-13 — Verified actual API bootstrap on disposable PostgreSQL: three scripts journaled, 3 buckets/18 categories/1 admin created, no demo business rows in Production, `/health` succeeded, and second startup was a no-op. Verified missing admin secret fails closed, confirmed adoption marks V0001/V0002 and applies V0003 while preserving seven customers, and a drifted HNSW index is rejected. Downgraded DbUp to `6.0.0-beta.13` because stable 6.x resolves incompatible Npgsql 9; the selected package resolves Npgsql 8.0.6 alongside EF provider 8.0.11. Removed legacy V2–V25 scripts and documented bootstrap/adoption/Render/rollback procedures.
+- 2026-08-13 — Added a dedicated PostgreSQL integration project with four disposable-database tests covering clean/repeat bootstrap, concurrent initialization, production admin-secret enforcement, and Development demo gating; all four passed against local PostgreSQL 18. Fixed demo wallet seeding to persist newly-added customers before querying them. Solution build passed with 0 errors; Domain tests passed 1/1; Application tests passed 184/184 after aligning stale `request` fixtures with canonical `persona`.
+- 2026-08-13 — Completed the database baseline reset. Final Debug solution build passed with 0 warnings/errors and Release API publish passed with only six pre-existing nullable warnings. Local API and PostgreSQL verification passed; Render staging rehearsal and production cutover remain operator deployment steps and were not run. No RAG re-index, commit, push, or production change was performed.
 
 - 2026-07-26 — Started. Branch `feature/remove-finverse` created.
 - 2026-07-26 — Implemented on branch `feature/remove-finverse`: deleted all Finverse-only files (entity, external-service client, wallet-sync service, DTOs, config example, unit test, docs page); removed the 4 Finverse actions from `WalletsController` and its DI registrations; removed the `FinverseLink` nav property/DbSet/entity config; added migration `V20__drop_finverse.sql` (drops `finverse_links` table only — kept `WalletType.FinverseLinked`/`EntryMethod.FinverseSync` CLR enum members per the `V15` precedent, since Postgres can't drop individual enum values); generalized `WalletService`'s withdraw/transfer read-only-linked-wallet checks and `WalletResponse`'s institution/mask/synced-at display fields from Finverse-only to SePay (they were never wired to SePay, which would have silently broken withdrawal and wallet-info display for the sole remaining provider); trimmed the now-dead `finverse_linked`/`finverse_sync` branches in `TransactionRepository`; updated `docs/api-reference.md`. `dotnet build` passed with 0 errors.
