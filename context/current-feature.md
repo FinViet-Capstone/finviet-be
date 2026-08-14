@@ -2,14 +2,14 @@
 
 <!-- Feature name and short description -->
 
-Saving-goal archive: require explicit withdrawal of all remaining savings, then archive the goal
-without reversing wallets or deleting its transaction/ledger audit trail.
+Saving-goal archive follow-up: prove archived contribution/withdrawal transactions remain in the
+paged transaction list and monthly summary, and make integration cleanup compatible with that audit trail.
 
 ## Status
 
 <!-- Not Started | In Progress | Completed -->
 
-Completed locally — branch `fix/saving-goal-archive`; integration test execution requires an explicitly prepared non-production API/database
+Implemented locally — archive audit-trail integration execution remains pending an explicitly prepared non-production API/database on branch `fix/saving-goal-archive`
 
 ## Goals
 
@@ -41,6 +41,13 @@ Completed locally — branch `fix/saving-goal-archive`; integration test executi
 - 2026-08-14 — Started after confirming current DELETE reverses every contribution/withdrawal,
   removes generated transactions and ledger rows, and physically deletes the goal. Approved
   replacement is locked zero-balance soft archive with preserved read-only history.
+- 2026-08-15 — Extended `SavingGoal_Lifecycle_Works` to prove archive preserves both linked
+  transaction directions through the paged collection endpoint and leaves monthly gross income and
+  expense unchanged; cleanup now removes those isolated transaction fixtures before the test wallet.
+  Application tests pass 200/200, the solution and API integration-test project compile, and
+  `git diff --check` is clean. The live integration test was not executed because no prepared
+  non-production API/database was explicitly approved; no commit, push, deployment, or database
+  operation run.
 
 - The reported response was a formatting meta-instruction rather than a financial answer. The exact
   text does not exist in repository prompts; Google.GenAI 1.17.0 documents that `response.Text`
