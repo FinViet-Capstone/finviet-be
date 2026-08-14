@@ -14,8 +14,13 @@ using System.Text;
 AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
 var builder = WebApplication.CreateBuilder(args);
 
-// Binds options from the "Sentry" config section (appsettings.json).
-builder.WebHost.UseSentry();
+// Enable Sentry only when a DSN is configured.
+var sentryDsn = builder.Configuration["Sentry:Dsn"];
+if (!string.IsNullOrWhiteSpace(sentryDsn))
+{
+    builder.WebHost.UseSentry();
+}
+
 
 // ── Services ─────────────────────────────────────────────────────────────────
 // Application layer (FluentValidation + ValidationBehavior)

@@ -5,6 +5,7 @@ public class SavingGoalResponse
     public Guid GoalId { get; set; }
     public Guid CustomerId { get; set; }
     public string GoalName { get; set; } = string.Empty;
+    public string? IconEmoji { get; set; }
     public decimal TargetAmount { get; set; }
     public decimal CurrentAmount { get; set; }
     public DateOnly? Deadline { get; set; }
@@ -15,6 +16,9 @@ public class SavingGoalResponse
     public decimal ProgressPercent { get; set; }
     public int? DaysRemaining { get; set; }
     public bool IsCompleted { get; set; }
+    public bool IsDeleted { get; set; }
+    public DateTime? CreatedAt { get; set; }
+    public DateTime? UpdatedAt { get; set; }
 
     // ── Auto-calculated monthly saving (function 43) ─────────
     /// <summary>Amount to set aside each month to reach the target by the deadline. Null if no deadline.</summary>
