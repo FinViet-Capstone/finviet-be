@@ -131,10 +131,25 @@ public static class DependencyInjection
         // ── AI feature suite (Gemini Developer API) ──────────────────────────────
         services.AddOptions<GeminiOptions>()
             .Bind(configuration.GetSection(GeminiOptions.SectionName))
+            .PostConfigure(options =>
+            {
+                if (options.GenerationFallbackModels is not { Length: 0 })
+                    return;
+
+                options.GenerationFallbackModels =
+                [
+                    "gemini-2.5-flash-lite",
+                    "gemini-3.1-flash-lite",
+                    "gemini-3-flash-preview",
+                    "gemini-2.5-pro"
+                ];
+            })
             .Validate(options => !string.IsNullOrWhiteSpace(options.ApiKey),
                 "Gemini:ApiKey is required. Supply it through user-secrets or Gemini__ApiKey.")
             .Validate(options => !string.IsNullOrWhiteSpace(options.FlashModel),
                 "Gemini:FlashModel is required.")
+            .Validate(options => options.TryGetGenerationModels(out _),
+                "Gemini:GenerationFallbackModels must contain at most four non-empty, unique models and must not repeat Gemini:FlashModel.")
             .Validate(options => !string.IsNullOrWhiteSpace(options.EmbeddingModel),
                 "Gemini:EmbeddingModel is required.")
             .Validate(options => options.EmbeddingDimensions == GeminiOptions.RequiredEmbeddingDimensions,

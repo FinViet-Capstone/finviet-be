@@ -1,3 +1,4 @@
+using System.Text;
 using Google.GenAI;
 using Google.GenAI.Types;
 
@@ -54,12 +55,31 @@ internal sealed class GeminiSdkClient : IGeminiSdkClient
             cancellationToken: cancellationToken);
 
         return new GeminiGenerationResult(
-            response.Text,
+            ExtractAnswerText(response.Parts),
             response.ModelVersion,
             response.ResponseId,
             response.UsageMetadata?.PromptTokenCount,
             response.UsageMetadata?.CandidatesTokenCount,
             response.UsageMetadata?.TotalTokenCount);
+    }
+
+    internal static string? ExtractAnswerText(IEnumerable<Part>? parts)
+    {
+        if (parts is null)
+            return null;
+
+        StringBuilder? answer = null;
+        foreach (var part in parts)
+        {
+            if (part.Thought is true || part.Text is null)
+                continue;
+
+            answer ??= new StringBuilder();
+            answer.Append(part.Text);
+        }
+
+        var text = answer?.ToString();
+        return string.IsNullOrWhiteSpace(text) ? null : text;
     }
 
     public async Task<GeminiEmbeddingResult> EmbedContentAsync(

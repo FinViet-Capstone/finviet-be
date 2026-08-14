@@ -5,6 +5,7 @@ using System.Text.Json;
 using FinViet.Application.DTOs.Ai;
 using FinViet.Application.Exceptions;
 using FinViet.Application.Interfaces;
+using Google.GenAI;
 using Google.GenAI.Types;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -256,7 +257,11 @@ public sealed class GeminiAiModelClient : IAiModelClient
                 Parts = [new Part { Text = systemInstruction }]
             },
             Temperature = temperature,
-            MaxOutputTokens = maxOutputTokens
+            MaxOutputTokens = maxOutputTokens,
+            ThinkingConfig = new ThinkingConfig
+            {
+                IncludeThoughts = false
+            }
         };
     }
 
@@ -267,47 +272,96 @@ public sealed class GeminiAiModelClient : IAiModelClient
         AiRequestContext requestContext,
         CancellationToken cancellationToken)
     {
-        var stopwatch = Stopwatch.StartNew();
-        GeminiGenerationResult? result = null;
-        try
+        if (!_options.TryGetGenerationModels(out var models))
         {
-            result = await _client.GenerateContentAsync(
-                _options.FlashModel,
-                prompt,
-                config,
-                cancellationToken);
-            if (string.IsNullOrWhiteSpace(result.Text))
-                throw new AiProviderUnavailableException($"Gemini returned an empty {operation} response.");
+            throw new AiProviderUnavailableException(
+                $"Gemini {operation} has no valid generation model configuration.");
+        }
 
-            cancellationToken.ThrowIfCancellationRequested();
-            await RecordUsageAsync(requestContext, "success", stopwatch, result, cancellationToken);
-            return result.Text.Trim();
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        for (var index = 0; index < models.Length; index++)
         {
-            throw;
+            var model = models[index];
+            var stopwatch = Stopwatch.StartNew();
+            GeminiGenerationResult? result = null;
+            try
+            {
+                result = await _client.GenerateContentAsync(
+                    model,
+                    prompt,
+                    config,
+                    cancellationToken);
+                if (string.IsNullOrWhiteSpace(result.Text))
+                {
+                    await RecordAttemptAsync("error", CancellationToken.None);
+                    throw new AiProviderUnavailableException(
+                        $"Gemini returned an empty {operation} response.");
+                }
+
+                cancellationToken.ThrowIfCancellationRequested();
+                await RecordAttemptAsync("success", cancellationToken);
+                return result.Text.Trim();
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (ClientError ex) when (ex.StatusCode == 429)
+            {
+                await RecordAttemptAsync("rate_limited", CancellationToken.None);
+                _logger.LogWarning(
+                    "Gemini {Operation} model {Model} returned HTTP {StatusCode}.",
+                    operation,
+                    model,
+                    ex.StatusCode);
+
+                if (index < models.Length - 1)
+                    continue;
+
+                throw new AiProviderUnavailableException(
+                    $"Gemini {operation} quota is temporarily exhausted across all configured models.",
+                    ex);
+            }
+            catch (AiProviderUnavailableException)
+            {
+                throw;
+            }
+            catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested)
+            {
+                _logger.LogWarning(
+                    "Gemini {Operation} model {Model} timed out.",
+                    operation,
+                    model);
+                await RecordAttemptAsync("error", CancellationToken.None);
+                throw new AiProviderUnavailableException($"Gemini {operation} timed out.", ex);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(
+                    "Gemini {Operation} model {Model} failed with {ErrorType}.",
+                    operation,
+                    model,
+                    ex.GetType().Name);
+                await RecordAttemptAsync("error", CancellationToken.None);
+                throw new AiProviderUnavailableException($"Gemini {operation} failed.", ex);
+            }
+
+            Task RecordAttemptAsync(string outcome, CancellationToken token)
+                => RecordUsageAsync(
+                    requestContext,
+                    model,
+                    outcome,
+                    stopwatch,
+                    result,
+                    token);
         }
-        catch (AiProviderUnavailableException)
-        {
-            await RecordUsageAsync(requestContext, "error", stopwatch, result, CancellationToken.None);
-            throw;
-        }
-        catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested)
-        {
-            _logger.LogWarning(ex, "Gemini {Operation} timed out.", operation);
-            await RecordUsageAsync(requestContext, "error", stopwatch, result, CancellationToken.None);
-            throw new AiProviderUnavailableException($"Gemini {operation} timed out.", ex);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Gemini {Operation} failed.", operation);
-            await RecordUsageAsync(requestContext, "error", stopwatch, result, CancellationToken.None);
-            throw new AiProviderUnavailableException($"Gemini {operation} failed.", ex);
-        }
+
+        throw new AiProviderUnavailableException(
+            $"Gemini {operation} has no configured generation model.");
     }
 
     private Task RecordUsageAsync(
         AiRequestContext context,
+        string attemptedModel,
         string outcome,
         Stopwatch stopwatch,
         GeminiGenerationResult? result,
@@ -322,7 +376,7 @@ public sealed class GeminiAiModelClient : IAiModelClient
                 outcome,
                 context.CustomerId,
                 context.SessionId,
-                result?.ModelVersion ?? _options.FlashModel,
+                result?.ModelVersion ?? attemptedModel,
                 result?.PromptTokenCount,
                 result?.CandidatesTokenCount,
                 result?.TotalTokenCount,
