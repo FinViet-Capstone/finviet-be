@@ -21,10 +21,11 @@ public class SavingGoalsController : ControllerBase
 
     [HttpGet]
     public async Task<ActionResult<ApiResponse<IReadOnlyList<SavingGoalResponse>>>> GetGoals(
-        CancellationToken cancellationToken)
+        [FromQuery] bool archived = false,
+        CancellationToken cancellationToken = default)
     {
         var customerId = GetCustomerId();
-        var goals = await _savingGoalService.GetGoalsAsync(customerId, cancellationToken);
+        var goals = await _savingGoalService.GetGoalsAsync(customerId, archived, cancellationToken);
 
         return Ok(ApiResponse<IReadOnlyList<SavingGoalResponse>>.Ok(
             goals,

@@ -2,34 +2,45 @@
 
 <!-- Feature name and short description -->
 
-Gemini thought-response filtering: prevent Gemini reasoning/meta-instruction parts from being
-returned to customers or persisted as assistant chat history.
+Saving-goal archive: require explicit withdrawal of all remaining savings, then archive the goal
+without reversing wallets or deleting its transaction/ledger audit trail.
 
 ## Status
 
 <!-- Not Started | In Progress | Completed -->
 
-Completed
+Completed locally — branch `fix/saving-goal-archive`; integration test execution requires an explicitly prepared non-production API/database
 
 ## Goals
 
 <!-- Goals and requirements -->
 
-- Extract generated answers only from non-thought text parts at the Google SDK boundary instead of
-  using the SDK's concatenated `GenerateContentResponse.Text` property.
-- Explicitly request `IncludeThoughts = false` while retaining server-side filtering as the required
-  defense when a model still returns thought parts.
-- Treat thought-only, whitespace-only, or otherwise empty filtered output as provider unavailable;
-  preserve the existing friendly chat fallback and HTTP 429-only model-switch policy.
-- Never log, record in telemetry, return, or persist thought text or thought signatures.
-- Avoid brittle keyword filtering and preserve structured classification, read-only chat, model
-  fallback, RAG embedding, API DTOs, and controller behavior.
-- Add focused provider-boundary and chat-persistence regression coverage, update the Gemini runbook,
-  pass the Application unit suite, and build the solution.
+- Change `DELETE /api/saving-goals/{id}` from physical deletion and ledger reversal to a soft
+  archive that succeeds only when `currentAmount == 0`.
+- Return 422 `goal_balance_must_be_withdrawn` while money remains; the customer must first use the
+  existing idempotent withdrawal endpoint and explicitly select a regular destination wallet.
+- Preserve every linked transaction and contribution/withdrawal row. Archiving must not change any
+  wallet balance.
+- Add active-versus-archived list filtering and allow owned archived detail/ledger reads for a
+  read-only mobile archive section; all mutations continue rejecting archived goals.
+- Return truthful goal fields (`iconEmoji`, `isDeleted`, `createdAt`, `updatedAt`, nullable deadline)
+  and persist the create request's icon.
+- Keep PATCH deadline semantics explicit: a non-null date sets it; omitted/null does not clear it.
+- Update focused/unit/integration coverage and API documentation.
 
 ## Notes
 
 <!-- Any extra notes -->
+
+- No schema migration is required: `savings_goals.is_deleted`, timestamps, icon, ledger, and
+  transaction links already exist.
+- No restore/unarchive or permanent purge endpoint is included.
+- Cross-repo mobile work is in `D:/SEP490/fe/mobile/finviet-mobile` on
+  `fix/saving-goal-archive-navigation`.
+- No commit, push, production database action, or deployment without explicit permission.
+- 2026-08-14 — Started after confirming current DELETE reverses every contribution/withdrawal,
+  removes generated transactions and ledger rows, and physically deletes the goal. Approved
+  replacement is locked zero-balance soft archive with preserved read-only history.
 
 - The reported response was a formatting meta-instruction rather than a financial answer. The exact
   text does not exist in repository prompts; Google.GenAI 1.17.0 documents that `response.Text`

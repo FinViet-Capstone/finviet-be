@@ -411,7 +411,7 @@ Every endpoint below documents **Validation** (exact field-level rules — Fluen
 
 | Method | Path | Request | Response |
 |---|---|---|---|
-| GET | `/` | — | `ApiResponse<SavingGoalResponse[]>` |
+| GET | `/` | `archived?` (default `false`) | `ApiResponse<SavingGoalResponse[]>` |
 | GET | `/{id:guid}` | — | `ApiResponse<SavingGoalResponse>` (404) |
 | POST | `/` | `CreateSavingGoalRequest` + `Idempotency-Key` | `ApiResponse<SavingGoalResponse>` (201) |
 | PATCH | `/{id:guid}` | `UpdateSavingGoalRequest` | `ApiResponse<SavingGoalResponse>` (404) |
@@ -420,11 +420,11 @@ Every endpoint below documents **Validation** (exact field-level rules — Fluen
 | POST | `/{id:guid}/withdraw` | `WithdrawSavingGoalRequest` + `Idempotency-Key` | `ApiResponse<SavingGoalResponse>` (404) |
 | GET | `/{id:guid}/contributions` | — | `ApiResponse<SavingGoalContributionResponse[]>` (404) |
 
-**CreateSavingGoalRequest**: `{ goalName, targetAmount, deadline?, initialAmount?, fundingWalletId? }`
-**UpdateSavingGoalRequest**: `{ goalName?, targetAmount?, deadline? }`
+**CreateSavingGoalRequest**: `{ goalName, iconEmoji?, targetAmount, deadline?, initialAmount?, fundingWalletId? }`
+**UpdateSavingGoalRequest**: `{ goalName?, targetAmount?, deadline? }` — only a non-null future date updates the deadline; omitted/null leaves it unchanged (clearing is not supported).
 **ContributeSavingGoalRequest**: `{ amount, fundingWalletId?, note? }`
 **WithdrawSavingGoalRequest**: `{ amount, walletId, note? }` — `walletId` is **required on every call**; a goal has no static withdrawal wallet (mirrors the per-action wallet choice on contribute — see below).
-**SavingGoalResponse**: `{ goalId, customerId, goalName, targetAmount, currentAmount, deadline?, fundingWalletId?, remainingAmount, progressPercent, daysRemaining?, isCompleted, monthlySavingNeeded?, monthsRemaining? }`
+**SavingGoalResponse**: `{ goalId, customerId, goalName, iconEmoji?, targetAmount, currentAmount, deadline?, fundingWalletId?, remainingAmount, progressPercent, daysRemaining?, isCompleted, isDeleted, createdAt?, updatedAt?, monthlySavingNeeded?, monthsRemaining? }`
 **SavingGoalContributionResponse**: `{ contributionId, goalId, amount, type: "contribution" | "withdrawal", contributedAt, note?, transactionId? }` — `amount` is always stored positive; direction comes from `type`. Backed by a new `type` column on `savings_goal_contributions` (migration `V24`, must be run manually — see Error codes section note); `note` reuses a `varchar(255)` column that already existed in the v3 baseline schema.
 
 ### POST `/` (create)
@@ -447,7 +447,7 @@ Every endpoint below documents **Validation** (exact field-level rules — Fluen
 **Business logic**: Reads `SavingGoalContribution` rows for the goal, ordered newest (`contributedAt`) first. Returns both contributions and withdrawals in one combined, chronologically-ordered ledger.
 
 ### DELETE `/{id}`
-**Business logic**: Runs in a DB transaction, row-locks the goal. All linked `SavingGoalContribution` rows and their `Transaction`s are found; each must be `cat_savings_goal` and either `expense` (contribution) or `income` (withdrawal), else 422 `goal_ledger_invalid`. Their wallets are locked and reversed **according to each entry's direction**: a contribution (expense) is refunded back (`wallet.balance += amount`); a withdrawal (income) has its credit undone (`wallet.balance -= amount`) — the net effect always equals refunding exactly the goal's still-unwithdrawn `currentAmount`. If undoing a withdrawal would drive its destination wallet negative (the withdrawn cash was already spent elsewhere) → 422 `goal_ledger_reversal_insufficient_balance`. A wallet deleted in the meantime → 422 `goal_wallet_missing`. Transactions, contributions, and the goal row are then all deleted together.
+**Business logic**: Runs in a DB transaction and row-locks the active goal. If `currentAmount != 0`, returns 422 `goal_balance_must_be_withdrawn`; the customer must first use `POST /{id}/withdraw` and explicitly select a regular destination wallet. At zero balance, deletion is a **soft archive** (`isDeleted=true`, `updatedAt=now`). Wallet balances, generated transactions, and contribution/withdrawal ledger rows are never reversed or removed. Active list calls omit archived goals; `GET /?archived=true` returns only archived goals, and owned archived detail/ledger remain readable for audit. All mutations continue to treat archived goals as unavailable.
 
 ### `monthlySavingNeeded` / `monthsRemaining`
 Only computed when `deadline` is set. `monthsRemaining` = whole calendar months to deadline (floored at 0, decremented by 1 if `deadline.Day < today.Day`). `remaining = max(0, targetAmount - currentAmount)`. `monthlySavingNeeded`: `0` if `remaining <= 0`; `remaining / monthsRemaining` (2dp) if `monthsRemaining >= 1`; else the whole `remaining` amount (due immediately, deadline within the current month).
@@ -665,9 +665,7 @@ PagedResult<T>  = { page: number, pageSize: number, totalItems: number, totalPag
 | `sepay_webhook_disabled` | 422/503 | Wallets | `SePay:WebhookApiKey` not configured server-side |
 | `sepay_webhook_url_missing` / `sepay_webhook_url_invalid` | 422 | Wallets | `SePay:WebhookUrl` missing, or not a public non-loopback http(s) URL |
 | `goal_remaining_exceeded` | 422 | SavingGoals | Contribution amount exceeds `targetAmount - currentAmount` |
-| `goal_ledger_invalid` | 422 | SavingGoals | Deleting a goal whose contribution ledger has an entry that isn't a `cat_savings_goal` `expense`/`income` transaction |
-| `goal_wallet_missing` | 422 | SavingGoals | Deleting a goal whose funding wallet was deleted before refund could complete |
-| `goal_ledger_reversal_insufficient_balance` | 422 | SavingGoals | Deleting a goal would need to undo a withdrawal's credit, but the destination wallet no longer has that balance (already spent) |
+| `goal_balance_must_be_withdrawn` | 422 | SavingGoals | Archiving a goal while `currentAmount != 0`; withdraw the full balance to an explicitly selected regular wallet first |
 | `goal_funding_wallet_sepay_unsupported` | 422 | SavingGoals | `fundingWalletId` (create or contribute) resolves to a `sepay_linked` wallet |
 | `goal_withdraw_exceeds_saved` | 422 | SavingGoals | `POST /saving-goals/{id}/withdraw` amount exceeds the goal's `currentAmount` |
 | `goal_withdraw_target_sepay_unsupported` | 422 | SavingGoals | `POST /saving-goals/{id}/withdraw` targeting a `sepay_linked` wallet |

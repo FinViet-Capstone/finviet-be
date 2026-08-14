@@ -49,19 +49,25 @@ public class SavingGoalServiceTests
 
     // TC-GOAL-U03
     [Fact]
-    public async Task GetContributions_DeletedGoal_ReturnsNull()
+    public async Task GetContributions_ArchivedGoal_ReturnsPreservedLedger()
     {
         await using var db = TestDbContextFactory.Create();
         var customerId = Guid.NewGuid();
-        var goal = Goal(customerId, "Gone");
+        var goal = Goal(customerId, "Archived");
         goal.IsDeleted = true;
         db.SavingGoals.Add(goal);
+        db.SavingGoalContributions.Add(Contribution(
+            goal.GoalId,
+            100m,
+            "contribution",
+            DateTime.UtcNow));
         await db.SaveChangesAsync();
 
         var result = await new SavingGoalService(db, Mock.Of<INotificationService>())
             .GetContributionsAsync(customerId, goal.GoalId);
 
-        Assert.Null(result);
+        Assert.NotNull(result);
+        Assert.Single(result!);
     }
 
     // TC-GOAL-U04
@@ -94,16 +100,51 @@ public class SavingGoalServiceTests
 
     // TC-GOAL-U07
     [Fact]
-    public void ReversalDelta_Contribution_IsPositive()
+    public async Task GetGoals_FiltersActiveAndArchivedGoals()
     {
-        Assert.Equal(100m, SavingGoalService.ReversalDelta("expense", 100m));
+        await using var db = TestDbContextFactory.Create();
+        var customerId = Guid.NewGuid();
+        var active = Goal(customerId, "Active");
+        var archived = Goal(customerId, "Archived");
+        archived.IsDeleted = true;
+        db.SavingGoals.AddRange(active, archived);
+        await db.SaveChangesAsync();
+
+        var service = new SavingGoalService(db, Mock.Of<INotificationService>());
+        var activeResult = await service.GetGoalsAsync(customerId);
+        var archivedResult = await service.GetGoalsAsync(customerId, archived: true);
+
+        Assert.Equal(active.GoalId, Assert.Single(activeResult).GoalId);
+        Assert.Equal(archived.GoalId, Assert.Single(archivedResult).GoalId);
+        Assert.True(archivedResult[0].IsDeleted);
     }
 
     // TC-GOAL-U08
     [Fact]
-    public void ReversalDelta_Withdrawal_IsNegative()
+    public async Task GetGoalById_ArchivedGoal_ReturnsTruthfulResponseFields()
     {
-        Assert.Equal(-100m, SavingGoalService.ReversalDelta("income", 100m));
+        await using var db = TestDbContextFactory.Create();
+        var customerId = Guid.NewGuid();
+        var createdAt = DateTime.UtcNow.AddDays(-2);
+        var updatedAt = DateTime.UtcNow.AddDays(-1);
+        var goal = Goal(customerId, "Archived");
+        goal.IconEmoji = "🎯";
+        goal.Deadline = null;
+        goal.IsDeleted = true;
+        goal.CreatedAt = createdAt;
+        goal.UpdatedAt = updatedAt;
+        db.SavingGoals.Add(goal);
+        await db.SaveChangesAsync();
+
+        var result = await new SavingGoalService(db, Mock.Of<INotificationService>())
+            .GetGoalByIdAsync(customerId, goal.GoalId);
+
+        Assert.NotNull(result);
+        Assert.Equal("🎯", result!.IconEmoji);
+        Assert.Null(result.Deadline);
+        Assert.True(result.IsDeleted);
+        Assert.Equal(createdAt, result.CreatedAt);
+        Assert.Equal(updatedAt, result.UpdatedAt);
     }
 
     private static SavingGoal Goal(Guid customerId, string name)

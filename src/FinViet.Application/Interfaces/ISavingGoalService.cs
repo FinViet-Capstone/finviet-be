@@ -6,6 +6,7 @@ public interface ISavingGoalService
 {
     Task<IReadOnlyList<SavingGoalResponse>> GetGoalsAsync(
         Guid customerId,
+        bool archived = false,
         CancellationToken cancellationToken = default);
 
     Task<SavingGoalResponse?> GetGoalByIdAsync(
