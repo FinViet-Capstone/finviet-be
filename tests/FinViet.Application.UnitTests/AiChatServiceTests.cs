@@ -1,4 +1,5 @@
 using FinViet.Application.DTOs.Ai;
+using FinViet.Application.Exceptions;
 using FinViet.Application.Interfaces;
 using FinViet.Application.UnitTests.Infrastructure;
 using FinViet.Infrastructure.Persistence.Entities;
@@ -94,6 +95,46 @@ public class AiChatServiceTests
         Assert.Contains("Không phải tư vấn đầu tư.", response.Limitations);
         Assert.DoesNotContain(response.Limitations, x => x.Contains("Không có tài liệu RAG"));
         Assert.Equal(2, db.ChatMessages.Count());
+    }
+
+    [Fact]
+    public async Task AskAsync_ProviderUnavailable_PersistsOnlyFriendlyFallback()
+    {
+        await using var db = TestDbContextFactory.Create();
+        var customerId = Guid.NewGuid();
+        var session = Session(customerId, historyEnabled: true);
+        db.Customers.Add(Customer(customerId));
+        db.AiChatSessions.Add(session);
+        await db.SaveChangesAsync();
+        const string leakedThought = "Wait, avoid markdown syntax and keep it plain text.";
+        var model = new Mock<IAiModelClient>(MockBehavior.Strict);
+        model.Setup(x => x.ChatAsync(
+                "trusted context",
+                It.IsAny<IReadOnlyList<AiChatTurn>>(),
+                "Ngân sách tháng này thế nào?",
+                It.IsAny<CancellationToken>(),
+                It.IsAny<AiRequestContext>()))
+            .ThrowsAsync(new AiProviderUnavailableException("Gemini returned an empty chat response."));
+        var service = CreateService(db, model, FinancialContext(), Rag([]), AllowRateLimit());
+
+        var response = await service.AskAsync(
+            customerId,
+            session.SessionId,
+            "Ngân sách tháng này thế nào?");
+
+        Assert.Equal(
+            "Xin lỗi, trợ lý AI hiện chưa sẵn sàng. Bạn vui lòng thử lại sau ít phút.",
+            response.Content);
+        Assert.DoesNotContain(leakedThought, response.Content, StringComparison.OrdinalIgnoreCase);
+        var messages = db.ChatMessages.ToList();
+        Assert.Equal(2, messages.Count);
+        Assert.Contains(messages, message =>
+            message.Role == "user" && message.Content == "Ngân sách tháng này thế nào?");
+        Assert.Contains(messages, message =>
+            message.Role == "assistant" && message.Content == response.Content);
+        Assert.DoesNotContain(
+            messages,
+            message => message.Content.Contains(leakedThought, StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]

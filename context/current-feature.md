@@ -2,9 +2,8 @@
 
 <!-- Feature name and short description -->
 
-Database baseline reset: replace the mixed Database-First/Code-First legacy migration chain
-and startup schema guessing with a reproducible baseline captured from the stable local
-PostgreSQL database, plus DbUp journaling for all future schema changes.
+Gemini thought-response filtering: prevent Gemini reasoning/meta-instruction parts from being
+returned to customers or persisted as assistant chat history.
 
 ## Status
 
@@ -16,24 +15,26 @@ Completed
 
 <!-- Goals and requirements -->
 
-- Treat the current stable local PostgreSQL database as the canonical schema after the project's
-  mixed Database-First/Code-First history.
-- Replace active legacy migrations V2–V25 and `DbInitializer`'s additive/shape-detection paths with
-  reviewed `V0001` schema and `V0002` reference-data baselines.
-- Use DbUp embedded migrations, a PostgreSQL journal, zero-padded versions, transactions, and the
-  existing advisory lock so each future migration executes exactly once.
-- Bootstrap a truly empty database from a clean checkout in one application start.
-- Adopt an already-restored equivalent database only through an explicit, confirmed baseline mode;
-  never infer or silently repair a partial schema during normal startup.
-- Keep mandatory reference data in SQL, require a configured admin secret when a non-Development
-  database has no admin, and restrict demo customer/wallet/transaction seed data to Development.
-- Document backup/restore, Render staging/cutover, Data Protection/SePay token implications, and
-  rollback; add PostgreSQL-backed bootstrap and schema-equivalence verification.
+- Extract generated answers only from non-thought text parts at the Google SDK boundary instead of
+  using the SDK's concatenated `GenerateContentResponse.Text` property.
+- Explicitly request `IncludeThoughts = false` while retaining server-side filtering as the required
+  defense when a model still returns thought parts.
+- Treat thought-only, whitespace-only, or otherwise empty filtered output as provider unavailable;
+  preserve the existing friendly chat fallback and HTTP 429-only model-switch policy.
+- Never log, record in telemetry, return, or persist thought text or thought signatures.
+- Avoid brittle keyword filtering and preserve structured classification, read-only chat, model
+  fallback, RAG embedding, API DTOs, and controller behavior.
+- Add focused provider-boundary and chat-persistence regression coverage, update the Gemini runbook,
+  pass the Application unit suite, and build the solution.
 
 ## Notes
 
 <!-- Any extra notes -->
 
+- The reported response was a formatting meta-instruction rather than a financial answer. The exact
+  text does not exist in repository prompts; Google.GenAI 1.17.0 documents that `response.Text`
+  concatenates every text part from the first candidate, while each part exposes a `Thought` marker.
+- No automatic cleanup of historical chat rows is included; this change protects new responses.
 - User selected the stable local database dump as the schema source of truth, DbUp as the future
   migration engine, and reference data plus configured admin as the production bootstrap policy.
 - The baseline must include the current V25/Gemini tables, all mapped PostgreSQL enums, `pgcrypto`,
@@ -44,7 +45,6 @@ Completed
   `V0003` and use zero-padded names.
 - Existing/restored databases require an explicit confirmed adoption command after schema fingerprint
   validation; normal startup never marks an unknown schema current.
-- No RAG re-index, production cutover, commit, or push without separate explicit permission.
 - 2026-08-13: two other branches merged into this one — `feature/sentry-backend-setup` (Sentry
   error tracking: exception middleware, csproj package, Program.cs wiring) and, riding along on
   that branch, `docs/api-reference-health-status` (documented the `GET /`/`GET /health` endpoints,
@@ -56,11 +56,17 @@ Completed
   build and 183 Application unit tests passed as of 2026-08-11; live Gemini-key verification and RAG
   re-index remained outstanding at that time. Gemini API keys are supplied only via .NET user-secrets
   or environment variables, never committed.
-- No commit or push without explicit user permission.
+- No `.env`, API key, commit, push, live quota exhaustion, production cutover, production-data change,
+  or RAG re-index without separate explicit permission.
 
 ## History
 
 <!-- Keep this updated. Earliest to latest -->
+- 2026-08-14 — Started Gemini thought-response filtering after a current-month budget question returned a formatting meta-instruction. Approved scope: filter `Part.Thought` at the SDK boundary, request no thought output, treat thought-only output as provider unavailable, preserve HTTP 429-only model fallback, and add provider/persistence regressions without cleaning historical rows.
+- 2026-08-14 — Completed Gemini thought-response filtering: the SDK boundary now returns only non-thought text parts, all generation configs request `IncludeThoughts=false`, and thought-only output follows the existing provider-unavailable path without model failover. Added mixed/thought-only/split-JSON extraction tests and a history-enabled chat regression proving only the friendly fallback is persisted. Focused Gemini tests passed 28/28, focused chat tests passed 6/6, all Application tests passed 200/200, solution build passed with 0 warnings/errors, and the API reached `Now listening on http://0.0.0.0:5122`. No live Gemini call, historical-row cleanup, RAG re-index, commit, or push was performed.
+- 2026-08-14 — Started Gemini quota-aware model fallback. Approved scope: primary plus four Flash-first generation fallbacks, HTTP 429-only failover, per-attempt privacy-safe telemetry, no embedding changes or RAG re-index.
+- 2026-08-14 — Completed on branch `feature/gemini-model-fallback`: added validated primary/fallback configuration, HTTP 429-only failover through `gemini-2.5-flash-lite`, stable `gemini-3.1-flash-lite`, `gemini-3-flash-preview`, and `gemini-2.5-pro`, plus per-attempt `rate_limited`/`success`/`error` telemetry. Embedding remained `gemini-embedding-001` at 768 dimensions. Focused Gemini tests passed 24/24, all Application tests passed 195/195, and solution build passed with 0 warnings/errors. No live quota exhaustion, RAG re-index, commit, or push was performed.
+- 2026-08-14 — Fixed startup validation after real API smoke testing exposed .NET's array binder appending configured fallback values to property-initializer defaults. Changed the options property to start empty and apply defaults only in `PostConfigure` when no list is configured, added binder regression coverage, and verified the API reached `Now listening on http://0.0.0.0:5122` without an options-validation failure.
 
 - 2026-08-13 — Started database baseline reset on branch `feature/database-baseline-dbup`. Approved direction: dump the stable local PostgreSQL schema, replace legacy V2–V25/additive startup DDL with `V0001`/`V0002`, and manage future changes through DbUp with a real journal and advisory lock.
 - 2026-08-13 — Captured verified full/schema-only backups outside the repository; generated exact `V0001` schema and `V0002` reference data; added `V0003` for active V22/V24 schema that the former initializer skipped. Replaced schema guessing/additive DDL with embedded DbUp migrations, `public.schema_versions`, per-script transactions, and the advisory lock. Added confirmed restored-database adoption, non-Development admin-secret enforcement, Development-only demo seeds, and canonical `category_source` alignment.
