@@ -13,6 +13,7 @@ public class SavingGoalTests : ApiTestBase
     {
         RequireServer();
         string? wid = null, gid = null;
+        string[] transactionIds = Array.Empty<string>();
         try
         {
             wid = await CreateWalletAsync(Unique("TEST-gw"), "basic", 1_000_000);
@@ -54,10 +55,19 @@ public class SavingGoalTests : ApiTestBase
             var balanceBeforeArchive = ApiTestFixture.Data(walletBeforeArchive)?["balance"]?.GetValue<decimal>();
             var ledgerBeforeArchive = await CustGet($"/api/saving-goals/{gid}/contributions");
             var ledgerBeforeArchiveRows = ApiTestFixture.Data(ledgerBeforeArchive)?.AsArray();
-            var transactionIds = ledgerBeforeArchiveRows!
+            transactionIds = ledgerBeforeArchiveRows!
                 .Select(node => node?["transactionId"]?.GetValue<string>())
                 .Where(id => !string.IsNullOrWhiteSpace(id))
+                .Cast<string>()
                 .ToArray();
+            Assert.Equal(2, transactionIds.Length);
+
+            var now = DateTime.UtcNow;
+            var summaryBeforeArchive = await CustGet(
+                $"/api/transactions/summary?year={now.Year}&month={now.Month}");
+            Assert.Equal(200, summaryBeforeArchive.Code);
+            var incomeBeforeArchive = ApiTestFixture.Data(summaryBeforeArchive)?["income"]?.GetValue<decimal>();
+            var expenseBeforeArchive = ApiTestFixture.Data(summaryBeforeArchive)?["expense"]?.GetValue<decimal>();
 
             var archive = await Fx.SendAsync(HttpMethod.Delete, $"/api/saving-goals/{gid}", token: Cust);
             Assert.Equal(200, archive.Code);
@@ -88,6 +98,34 @@ public class SavingGoalTests : ApiTestBase
                 var transaction = await CustGet($"/api/transactions/{transactionId}");
                 Assert.Equal(200, transaction.Code);
             }
+
+            var date = DateTime.UtcNow.ToString("yyyy-MM-dd");
+            var transactionList = await CustGet(
+                $"/api/transactions?page=1&pageSize=100&from={date}&to={date}");
+            Assert.Equal(200, transactionList.Code);
+            var archivedTransactionRows = ApiTestFixture.Data(transactionList)?["items"]?.AsArray()
+                .Where(node => transactionIds.Contains(node?["transactionId"]?.GetValue<string>()))
+                .ToArray();
+            Assert.NotNull(archivedTransactionRows);
+            Assert.Equal(2, archivedTransactionRows!.Length);
+            Assert.Contains(archivedTransactionRows, node =>
+                node?["transactionType"]?.GetValue<string>() == "expense"
+                && node?["categoryId"]?.GetValue<string>() == "cat_savings_goal"
+                && node?["description"]?.GetValue<string>().StartsWith("Nạp mục tiêu:") == true);
+            Assert.Contains(archivedTransactionRows, node =>
+                node?["transactionType"]?.GetValue<string>() == "income"
+                && node?["categoryId"]?.GetValue<string>() == "cat_savings_goal"
+                && node?["description"]?.GetValue<string>().StartsWith("Rút mục tiêu:") == true);
+
+            var summaryAfterArchive = await CustGet(
+                $"/api/transactions/summary?year={now.Year}&month={now.Month}");
+            Assert.Equal(200, summaryAfterArchive.Code);
+            Assert.Equal(
+                incomeBeforeArchive,
+                ApiTestFixture.Data(summaryAfterArchive)?["income"]?.GetValue<decimal>());
+            Assert.Equal(
+                expenseBeforeArchive,
+                ApiTestFixture.Data(summaryAfterArchive)?["expense"]?.GetValue<decimal>());
 
             var archivedPatch = await Fx.SendAsync(HttpMethod.Patch, $"/api/saving-goals/{gid}", token: Cust,
                 body: new { targetAmount = 30_000_000 });
@@ -121,6 +159,8 @@ public class SavingGoalTests : ApiTestBase
                 }
                 await Fx.SendAsync(HttpMethod.Delete, $"/api/saving-goals/{gid}", token: Cust);
             }
+            foreach (var transactionId in transactionIds)
+                await Fx.SendAsync(HttpMethod.Delete, $"/api/transactions/{transactionId}", token: Cust);
             await DeleteWalletAsync(wid);
         }
     }
