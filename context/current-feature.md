@@ -35,8 +35,29 @@ Completed
   text does not exist in repository prompts; Google.GenAI 1.17.0 documents that `response.Text`
   concatenates every text part from the first candidate, while each part exposes a `Thought` marker.
 - No automatic cleanup of historical chat rows is included; this change protects new responses.
-- No `.env`, API key, commit, push, live quota exhaustion, production-data change, or RAG re-index
-  without separate explicit permission.
+- User selected the stable local database dump as the schema source of truth, DbUp as the future
+  migration engine, and reference data plus configured admin as the production bootstrap policy.
+- The baseline must include the current V25/Gemini tables, all mapped PostgreSQL enums, `pgcrypto`,
+  `vector`, `rag_chunk.embedding = vector(768)`, and the HNSW cosine index.
+- Full database dumps, schema-diff artifacts, `.env`, passwords, and provider credentials must remain
+  outside Git and the Docker build context.
+- Once released, baseline scripts are immutable; future migrations continue after the current
+  `V0003` and use zero-padded names.
+- Existing/restored databases require an explicit confirmed adoption command after schema fingerprint
+  validation; normal startup never marks an unknown schema current.
+- 2026-08-13: two other branches merged into this one — `feature/sentry-backend-setup` (Sentry
+  error tracking: exception middleware, csproj package, Program.cs wiring) and, riding along on
+  that branch, `docs/api-reference-health-status` (documented the `GET /`/`GET /health` endpoints,
+  removed the now-resolved `docs/10-08-2026-be-todos.md`). No overlap with the database-baseline
+  work itself — different files, clean auto-merge apart from this Notes/History section.
+- Gemini Flash safe-copilot context (from `feature/gemini-safe-copilot`, already on `dev` before
+  this branch started): official `Google.GenAI` provider, 768-dim embeddings, per-customer AI
+  preferences, owner-scoped categorization, customer-owned chat sessions, durable rate limits. Solution
+  build and 183 Application unit tests passed as of 2026-08-11; live Gemini-key verification and RAG
+  re-index remained outstanding at that time. Gemini API keys are supplied only via .NET user-secrets
+  or environment variables, never committed.
+- No `.env`, API key, commit, push, live quota exhaustion, production cutover, production-data change,
+  or RAG re-index without separate explicit permission.
 
 ## History
 
@@ -77,3 +98,17 @@ Completed
 - 2026-08-10 — User said "go ahead, item 2." Branch `feature/saving-goal-ledger-rework` created from `khoi`. Discovered while reading `SavingGoalService.cs` that 2c (per-action wallet choice on contribute) was **already implemented** on `khoi` — `ContributeSavingGoalRequest.FundingWalletId` and `ApplyContributionAsync`'s request-wallet-then-goal-wallet fallback already existed; the only real gap against 2c's own validation bullet was that the resolved funding wallet was never checked for `sepay_linked`. Implemented the rest: 2a `GET /saving-goals/{id}/contributions` (`SavingGoalContributionResponse[]`, newest first, 404 via null for a goal not owned by the caller); 2b `POST /saving-goals/{id}/withdraw` (`WithdrawSavingGoalRequest{amount,walletId,note?}`, required `Idempotency-Key`, 422 `goal_withdraw_exceeds_saved`/`goal_withdraw_target_sepay_unsupported`, books an `income` transaction crediting the wallet and a `SavingGoalContribution` row with `type="withdrawal"`); 2c's sepay gap closed with new 422 `goal_funding_wallet_sepay_unsupported` on both create's and contribute's funding-wallet resolution; 2d `note?` added to `ContributeSavingGoalRequest`/`WithdrawSavingGoalRequest`, persisted via a new `internal static SavingGoalService.ValidateNote` (255-char cap, matching the existing `savings_goal_contributions.note` column — no migration needed for that column, it already existed and was already EF-mapped, just never written to). New migration `V24__saving_goal_contribution_type.sql` adds the `type` column (`'contribution'` default, backfills existing rows, CHECK constraint) — same "run manually before starting the API" caveat as `V22`/`V23` (v3-schema skip in `DbInitializer`). **Necessary fix beyond the spec**: `DeleteGoalAsync` previously assumed every ledger entry was an `expense`/contribution and both rejected (`goal_ledger_invalid`) anything else and always reversed by adding the amount back — both wrong once `income`/withdrawal entries exist. Fixed to accept both types and reverse each with the correct sign via new `internal static SavingGoalService.ReversalDelta`, guarded by a new 422 `goal_ledger_reversal_insufficient_balance` if undoing a withdrawal would drive its wallet negative (the withdrawn cash already spent). 10 new unit tests (`TC-GOAL-U01..08`, one `[Theory]` with 3 cases) cover `GetContributionsAsync` (InMemory-testable, no DB locking involved) plus the two extracted pure helpers; the locked/transactional paths (`WithdrawAsync`, updated `ApplyContributionAsync`, updated `DeleteGoalAsync`) remain integration-only (raw `FOR UPDATE` SQL, same accepted gap as `CreateManualForCustomerAsync`). All 153 unit tests pass, `dotnet build` 0 errors (2 pre-existing nullable warnings, unchanged); API boots cleanly (DI resolves; DB init itself fails locally, no Postgres DB in this environment — same known gap as item 1). `docs/api-reference.md` updated (Saving Goals section: two new endpoints, two new DTOs, all four existing endpoints' validation/business-logic notes revised, 6 new error codes, migration note). Committed (`a7529af`), merged into `khoi` (fast-forward), branch deleted, per explicit user instruction.
 - 2026-08-10 — While staging item 2's commit, found `docs/10-08-2026-be-todos.md` had picked up a new §3 (income allocation arbitrary-month lookup) that hadn't been there when first read. Flagged it to the user; user confirmed they added it themselves and said to implement it. Branch `feature/income-allocation-month-lookup` created from `khoi`. Implemented: `GetIncomeAllocationQuery` gained an optional `Month` positional param; `ProfileController.GetIncomeAllocation` takes `[FromQuery] string? month`; `IIncomeAllocationService.GetSummaryAsync`/`IncomeAllocationService.GetSummaryAsync` gained an optional `string? month = null` — when given, resolves `Current` via the existing `GetEffectiveAsync(customerId, month, ct)` against that month instead of today's, and always returns `Pending = null`; when omitted, behavior is byte-for-byte the same as before. New `internal static IncomeAllocationService.NormalizeMonth` validates/zero-pads `yyyy-MM`, deliberately copying `BudgetService.ResolveMonthWindow`'s exact parsing rule and error message ("Month must use yyyy-MM format.") rather than inventing a second month-validation style. 10 new unit tests (`TC-INCALLOC-09..12`): pure `NormalizeMonth` cases (no DB) plus two InMemory-DB `GetSummaryAsync` tests proving the carried-forward-month resolution and that a real "next month" draft row never leaks into `Pending` when an explicit historical month is queried. All 163 unit tests pass, `dotnet build` 0 errors/0 warnings. `docs/api-reference.md` updated (Profile section: `GET /income-allocation` table row + endpoint doc revised for the new query param).
 - 2026-08-11 — Implemented Gemini Flash safe-copilot scope on `feature/gemini-safe-copilot`: official `Google.GenAI` provider and 768-dimensional embeddings; V25 plus v3 additive startup schema; durable PostgreSQL quotas; customer AI preferences; owner-scoped categorization with manual/rule precedence and off/suggest/threshold modes; customer-owned chat sessions with history-off privacy; deterministic scoped financial context, citations/limitations and RAG threshold; weekly-report preference/quota/true-overrun/notification handling; Admin-only document route separation. Replaced the Ollama runbook with `docs/gemini-setup.md` and updated API/test documentation. Added privacy-safe provider usage records (model, outcome, latency, SDK token counts/response ID where available) and best-effort audits for preferences, categorization, report fallbacks, RAG skips/failures, and session lifecycle; no prompts, answers, balances, or document content are copied into telemetry. Production-hardening review added caller-cancellation passthrough, classification/customer-embedding quotas, broader audit tests, serialized database initialization, fail-fast startup, partial-schema reconciliation, and explicit operator intervention instead of deleting duplicate reports/scores. Solution build and 183 Application unit tests pass; Domain test passes. The real-server integration suite still self-skips all 66 tests because no API is reachable. Live Gemini, disposable PostgreSQL V25, Swagger verification and RAG re-index remain pending; no re-index, commit or push performed.
+- 2026-08-13 — Side task started on branch `docs/api-reference-health-status`
+  (created from `dev`): document the two undocumented health/status
+  minimal-API endpoints (`GET /`, `GET /health` in `Program.cs`) and remove
+  `docs/10-08-2026-be-todos.md` now that all 3 of its items have shipped and
+  been folded into `api-reference.md`. Companion work on `finviet-mobile`:
+  wired CSV import to the already-working `POST /extract/csv` endpoint, and
+  corrected stale "AI is mock-only" docs there.
+- 2026-08-13 — Implemented: added a "Health / Status" section to
+  `docs/api-reference.md` (between Conventions and Auth) documenting
+  `GET /` and `GET /health`; deleted `docs/10-08-2026-be-todos.md`. Doc-only
+  change, no `dotnet build` impact. Committed (`69a478f`) on
+  `docs/api-reference-health-status`, then merged into
+  `feature/sentry-backend-setup` (which also carries the separately-committed
+  `af6c948` "feat: add Sentry error tracking to backend").
