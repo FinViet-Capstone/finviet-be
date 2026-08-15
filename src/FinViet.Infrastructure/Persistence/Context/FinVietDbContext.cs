@@ -54,6 +54,8 @@ public partial class FinVietDbContext : DbContext
 
     public virtual DbSet<Notification> Notifications { get; set; }
 
+    public virtual DbSet<NotificationDevice> NotificationDevices { get; set; }
+
     public virtual DbSet<SavingGoal> SavingGoals { get; set; }
 
     public virtual DbSet<SavingGoalContribution> SavingGoalContributions { get; set; }
@@ -401,6 +403,36 @@ public partial class FinVietDbContext : DbContext
                 .HasForeignKey(d => d.CustomerId)
                 .OnDelete(DeleteBehavior.Cascade)
                 .HasConstraintName("notifications_customer_id_fkey");
+        });
+
+        modelBuilder.Entity<NotificationDevice>(entity =>
+        {
+            entity.HasKey(e => e.DeviceId).HasName("notification_devices_pkey");
+
+            entity.ToTable("notification_devices", tb =>
+                tb.HasCheckConstraint(
+                    "chk_notification_devices_platform",
+                    "platform IN ('ios', 'android')"));
+
+            entity.HasIndex(e => new { e.CustomerId, e.InstallationId },
+                "uq_notification_devices_customer_installation").IsUnique();
+            entity.HasIndex(e => e.Token, "uq_notification_devices_token").IsUnique();
+            entity.HasIndex(e => e.CustomerId, "idx_notification_devices_customer");
+
+            entity.Property(e => e.DeviceId)
+                .HasDefaultValueSql("gen_random_uuid()")
+                .HasColumnName("id");
+            entity.Property(e => e.CustomerId).HasColumnName("customer_id");
+            entity.Property(e => e.Token).HasMaxLength(255).HasColumnName("token");
+            entity.Property(e => e.Platform).HasMaxLength(10).HasColumnName("platform");
+            entity.Property(e => e.InstallationId).HasMaxLength(100).HasColumnName("installation_id");
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql("now()").HasColumnName("created_at");
+            entity.Property(e => e.UpdatedAt).HasDefaultValueSql("now()").HasColumnName("updated_at");
+
+            entity.HasOne(d => d.Customer).WithMany(p => p.NotificationDevices)
+                .HasForeignKey(d => d.CustomerId)
+                .OnDelete(DeleteBehavior.Cascade)
+                .HasConstraintName("notification_devices_customer_id_fkey");
         });
 
         modelBuilder.Entity<SavingGoal>(entity =>

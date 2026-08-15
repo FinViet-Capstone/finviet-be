@@ -88,7 +88,6 @@ public static class DependencyInjection
 
         // Firebase Auth
         services.AddScoped<IFirebaseAuthService, FirebaseAuthService>();
-        services.AddScoped<IBudgetAlertNotifier, FirebaseBudgetAlertNotifier>();
 
         // Avatar storage
         services.AddScoped<IAvatarService, AvatarService>();
@@ -125,7 +124,14 @@ public static class DependencyInjection
         services.AddScoped<IMerchantRuleService, MerchantRuleService>();
 
         // Saving Goals & Notifications
+        services.AddHttpClient<INotificationPushSender, ExpoNotificationPushSender>(http =>
+        {
+            http.BaseAddress = new Uri("https://exp.host/--/api/v2/");
+            http.Timeout = TimeSpan.FromSeconds(15);
+        });
         services.AddScoped<INotificationService, NotificationService>();
+        services.AddScoped<IBudgetAlertNotifier, NotificationBudgetAlertNotifier>();
+        services.AddScoped<IAiReportNotifier, NotificationAiReportNotifier>();
         services.AddScoped<ISavingGoalService, SavingGoalService>();
 
         // LoginCommandHandler exposed as scoped service for GoogleLoginCommandHandler to reuse
@@ -190,7 +196,6 @@ public static class DependencyInjection
         services.AddScoped<IFinancialContextService, FinancialContextService>();
         services.AddScoped<IWeeklyReportService, WeeklyReportService>();
         services.AddScoped<IAiChatService, AiChatService>();
-        services.AddScoped<IAiReportNotifier, FirebaseAiReportNotifier>();
 
         // ── RAG layer (pgvector + Gemini 768-dimensional embeddings) ──────────────
         services.AddScoped<IEmbeddingService>(sp => new GeminiEmbeddingService(

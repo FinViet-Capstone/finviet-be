@@ -467,6 +467,14 @@ public class SavingGoalService : ISavingGoalService
         if (goal.TargetAmount <= 0 || goal.CustomerId is null)
             return;
 
+        var isEnabled = await _dbContext.CustomerSettings
+            .AsNoTracking()
+            .Where(setting => setting.CustomerId == goal.CustomerId.Value)
+            .Select(setting => (bool?)setting.NotifGoals)
+            .FirstOrDefaultAsync(cancellationToken) ?? true;
+        if (!isEnabled)
+            return;
+
         var previousPct = previousAmount / goal.TargetAmount * 100m;
         var newPct = newAmount / goal.TargetAmount * 100m;
         foreach (var milestone in MilestonePercents.Where(m => previousPct < m && newPct >= m))
@@ -475,7 +483,14 @@ public class SavingGoalService : ISavingGoalService
             var message = milestone >= 100
                 ? $"Chúc mừng! Bạn đã hoàn thành mục tiêu \"{goal.GoalName}\"."
                 : $"Mục tiêu \"{goal.GoalName}\" đã đạt {milestone}% ({newAmount:N0}/{goal.TargetAmount:N0}).";
-            await _notificationService.NotifyAsync(goal.CustomerId.Value, title, message, goal.GoalId, cancellationToken);
+            await _notificationService.NotifyAsync(
+                goal.CustomerId.Value,
+                "goal_milestone",
+                title,
+                message,
+                "goal",
+                goal.GoalId,
+                cancellationToken);
         }
     }
 

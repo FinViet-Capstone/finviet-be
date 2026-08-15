@@ -2,6 +2,8 @@
 
 <!-- Feature name and short description -->
 
+Feature: canonical notification persistence with multi-device Expo push delivery and authenticated
+device registration for the FinViet mobile app.
 Backend gaps from `finviet-web/context/backend-gaps.md`, excluding the subscription/payment entry
 (a separate agent owns that). Five independent items, each on its own branch: scoring weights →
 `ScoringCriterion`, admin Buckets CRUD, category custom-icon upload, RAG document `Uri`/preview
@@ -11,45 +13,45 @@ list, and admin category-corrections/users list endpoints (pagination).
 
 <!-- Not Started | In Progress | Completed -->
 
-Completed — all 5 items done and merged into `dev` (not pushed to origin).
+Implemented locally — archive audit-trail integration execution remains pending an explicitly prepared non-production API/database on branch `fix/saving-goal-archive`
 
 ## Goals
 
 <!-- Goals and requirements -->
 
-1. **Scoring weights** (`fix/scoring-weights`, done): seeded `scoring_criteria`, wired
-   `SpendingScoreService.ComputeAsync` to read weights from it, added admin
-   `GET`/`PATCH /api/scoring-criteria`.
-2. **Bucket admin CRUD** (`fix/bucket-admin-crud`, done): `GET`/`PATCH /api/buckets` for admin, no
-   server-side `IsLocked` enforcement (documented product decision).
-3. **Category icon upload** (`feature/category-icon-upload`, done): `POST /api/categories/icons`
-   (Customer, SVG only, mirrors avatar-upload pattern), wire the returned URL into
-   `CreateCustomCategoryRequest`/`CategoryService.CreateCustomCategoryAsync`.
-4. **RAG document preview** (`feature/rag-document-preview`, done): persist uploaded PDF bytes and
-   set `RagDocument.Uri`; add `GET /api/ai/documents`.
-5. **Admin list endpoints** (`feature/admin-list-endpoints`, done): `GET /api/category-corrections`
-   (category + date-range filter, pagination) and `GET /api/users` (pagination + optional search).
+- Change `DELETE /api/saving-goals/{id}` from physical deletion and ledger reversal to a soft
+  archive that succeeds only when `currentAmount == 0`.
+- Return 422 `goal_balance_must_be_withdrawn` while money remains; the customer must first use the
+  existing idempotent withdrawal endpoint and explicitly select a regular destination wallet.
+- Preserve every linked transaction and contribution/withdrawal row. Archiving must not change any
+  wallet balance.
+- Add active-versus-archived list filtering and allow owned archived detail/ledger reads for a
+  read-only mobile archive section; all mutations continue rejecting archived goals.
+- Return truthful goal fields (`iconEmoji`, `isDeleted`, `createdAt`, `updatedAt`, nullable deadline)
+  and persist the create request's icon.
+- Keep PATCH deadline semantics explicit: a non-null date sets it; omitted/null does not clear it.
+- Update focused/unit/integration coverage and API documentation.
 
 ## Notes
 
 <!-- Any extra notes -->
 
-- Full plan: `C:\Users\Lenovo\.claude\plans\do-c-users-lenovo-source-repos-finviet-f-glittery-octopus.md`.
-- Migration numbering: item 1's seed migration collided with a separate agent's VNPay subscription
-  work, both originally wanting `V0004`. Briefly renumbered to `V0005` on 2026-08-15, then reverted
-  back to `V0004__seed_scoring_criteria.sql` the same day once this work finished first — the
-  VNPay work renumbers instead when it lands.
-- Live verification uses locally-inserted test accounts (admin `adminmaster`/`123456`, email
-  `khoiislearning@gmail.com`; customer `khoi.test.customer@example.com`), local DB only, not the
-  deployed backend, since the seeded default credentials didn't match this local DB.
-- Two bugs found while verifying, unrelated to the 5 gaps and left unfixed (out of scope):
-  (a) `AvatarService` likely has the same `AppSettings:WebRootPath=""` empty-string bug fixed in
-  `CategoryIconService`/`PdfDocumentIngestionService` — not touched. (b) `POST /api/categories/custom`
-  always 500s — generated id (`"custom_" + Guid.NewGuid()`, 43 chars) exceeds `categories.id`'s
-  `varchar(40)` — flagged as a separate background task (`task_f86a5ff2`).
-- Merged into `dev` locally on 2026-08-15 per explicit user instruction; not pushed to origin.
-- Prior feature (saving-goal archive follow-up) was completed/implemented locally; its Goals/Notes
-  are superseded here but its History entries are preserved below.
+- No schema migration is required: `savings_goals.is_deleted`, timestamps, icon, ledger, and
+  transaction links already exist.
+- No restore/unarchive or permanent purge endpoint is included.
+- Cross-repo mobile work is in `D:/SEP490/fe/mobile/finviet-mobile` on
+  `fix/saving-goal-archive-navigation`.
+- No commit, push, production database action, or deployment without explicit permission.
+- 2026-08-14 — Started after confirming current DELETE reverses every contribution/withdrawal,
+  removes generated transactions and ledger rows, and physically deletes the goal. Approved
+  replacement is locked zero-balance soft archive with preserved read-only history.
+- 2026-08-15 — Extended `SavingGoal_Lifecycle_Works` to prove archive preserves both linked
+  transaction directions through the paged collection endpoint and leaves monthly gross income and
+  expense unchanged; cleanup now removes those isolated transaction fixtures before the test wallet.
+  Application tests pass 200/200, the solution and API integration-test project compile, and
+  `git diff --check` is clean. The live integration test was not executed because no prepared
+  non-production API/database was explicitly approved; no commit, push, deployment, or database
+  operation run.
 
 - The reported response was a formatting meta-instruction rather than a financial answer. The exact
   text does not exist in repository prompts; Google.GenAI 1.17.0 documents that `response.Text`

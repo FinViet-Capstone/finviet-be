@@ -5,6 +5,7 @@ public interface IAiReportNotifier
 {
     Task SendReportReadyAsync(
         Guid customerId,
+        Guid reportId,
         string title,
         string message,
         CancellationToken cancellationToken = default);

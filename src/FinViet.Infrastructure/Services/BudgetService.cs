@@ -592,20 +592,11 @@ public class BudgetService : IBudgetService
 
             if (crossedThreshold > budget.LastAlertThreshold)
             {
-                var alert = CreateFlatBudgetAlert(customerId, response, crossedThreshold, exceededThreshold);
-                pendingAlerts.Add(alert);
-                _dbContext.Notifications.Add(new Notification
-                {
-                    NotificationId = Guid.NewGuid(),
-                    CustomerId = customerId,
-                    Type = "budget_alert",
-                    Title = alert.Title,
-                    Message = alert.Message,
-                    EntityType = "budget",
-                    IsRead = false,
-                    CreatedAt = DateTime.UtcNow
-                });
-
+                pendingAlerts.Add(CreateFlatBudgetAlert(
+                    customerId,
+                    response,
+                    crossedThreshold,
+                    exceededThreshold));
                 budget.LastAlertThreshold = crossedThreshold;
             }
             else if (response.Percentage < warningThreshold && budget.LastAlertThreshold > 0m)
@@ -622,6 +613,7 @@ public class BudgetService : IBudgetService
         {
             await _budgetAlertNotifier.SendBudgetAlertAsync(
                 customerId,
+                alert.BudgetId,
                 alert.Title,
                 alert.Message,
                 cancellationToken);
@@ -642,7 +634,7 @@ public class BudgetService : IBudgetService
             ? $"{budget.CategoryName} has exceeded its limit with {budget.Percentage}% used ({budget.Spent:0.##}/{budget.MonthlyLimit:0.##})."
             : $"{budget.CategoryName} has reached {budget.Percentage}% of its budget ({budget.Spent:0.##}/{budget.MonthlyLimit:0.##}).";
 
-        return new FlatBudgetAlertPayload(customerId, title, message);
+        return new FlatBudgetAlertPayload(customerId, budget.Id, title, message);
     }
 
     private static string ToBudgetBucketId(string? expenseClass)
@@ -772,6 +764,7 @@ public class BudgetService : IBudgetService
 
     private sealed record FlatBudgetAlertPayload(
         Guid CustomerId,
+        Guid BudgetId,
         string Title,
         string Message);
 }
