@@ -67,6 +67,7 @@ Every endpoint below documents **Validation** (exact field-level rules — Fluen
 | POST | `/forgot-password` | Anonymous | `{ email }` | `ApiResponse<string>` |
 | POST | `/reset-password` | Anonymous | `{ token, newPassword, confirmPassword }` | `ApiResponse<string>` |
 | POST | `/change-password` | **Customer** | `{ currentPassword, newPassword }` | `ApiResponse<string>` |
+| POST | `/admin-change-password` | **Admin** | `{ currentPassword, newPassword }` | `ApiResponse<string>` |
 
 **AuthResponseDto**
 ```ts
@@ -127,6 +128,35 @@ Every endpoint below documents **Validation** (exact field-level rules — Fluen
 ### POST `/change-password` (Customer)
 **Validation** (`ChangePasswordCommandValidator`): `currentPassword` required; `newPassword` required, min 8 chars, ≥1 uppercase, ≥1 digit.
 **Business logic**: Wrong current password (or null hash, e.g. Google-only accounts) → 400 "Current password is incorrect." On success, revokes all active refresh tokens (same forced-logout-elsewhere behavior as reset-password).
+
+### POST `/admin-change-password` (Admin)
+**Validation** (`ChangeAdminPasswordCommandValidator`): `currentPassword` required; `newPassword` required, min 8 chars, ≥1 uppercase, ≥1 digit.
+**Business logic**: Mirrors `/change-password` but looks up `Admins` instead of `Customers`, keyed by the admin id carried in the JWT's `customerId` claim (same claim name `AdminLoginCommandHandler` stamps `AdminId` into). Wrong current password → 400 "Current password is incorrect." Admins have no refresh tokens to revoke, so there's no forced-logout side effect.
+
+---
+
+## Admins — `api/admins` (role: Admin)
+
+> Manages the separate `Admins` table (admin-login accounts) — not `Customers`. Any authenticated
+> admin can list/create other admins; there are no sub-roles today.
+
+| Method | Path | Request body | Response |
+|---|---|---|---|
+| GET | `/` | — | `ApiResponse<AdminResponse[]>` |
+| POST | `/` | `{ username, email, password }` | `ApiResponse<AdminResponse>` |
+
+**AdminResponse**
+```ts
+{ adminId: Guid, username: string, email: string, createdAt: DateTime }
+```
+Never includes `passwordHash`.
+
+### GET `/`
+**Business logic**: Flat, unpaginated list of all admins (small internal roster), ordered by `createdAt`. No filtering.
+
+### POST `/`
+**Validation** (`CreateAdminCommandValidator`): `username` required, min 3 chars; `email` required, valid format; `password` required, min 8 chars, ≥1 uppercase, ≥1 digit.
+**Business logic**: Normalizes email (lowercase/trim) and trims username. Pre-checks uniqueness against both `Username` and `Email` → `ConflictException` 409 if either collides (also catches Postgres unique-violation 23505 as a fallback, mirroring `/register`'s pattern). The password supplied here is chosen by the creating admin (not auto-generated) — the new admin is expected to change it via `/admin-change-password` after their first login.
 
 ---
 

@@ -2,27 +2,44 @@
 
 <!-- Feature name and short description -->
 
-VNPay auto-renewing premium subscriptions + admin `SubscriptionPlan` CRUD. Built independently
-from the existing unmerged `origin/dunglt` branch (a different, manual SePay-QR payment flow) per
-explicit user decision. Core guarantee: `CustomerSubscription.LockedPrice` is snapshotted at
-subscribe time and used for every renewal charge, so admins can edit `SubscriptionPlan.Price` in
-place at any time without silently repricing existing subscribers.
+Two independent features landed around the same time: (1) **Admin account management** — let an
+already-logged-in admin create other admin accounts and change their own password, instead of
+every `Admins` row requiring a raw SQL insert. Companion work in `finviet-web` on branch
+`feature/admin-account-management` (same branch name, different repo) covers the frontend
+(create/list-admins screen, real login + 2FA enrollment, real change-password UI). (2) **VNPay
+auto-renewing premium subscriptions** + admin `SubscriptionPlan` CRUD, built independently from the
+existing unmerged `origin/dunglt` branch (a different, manual SePay-QR payment flow) per explicit
+user decision. Core guarantee: `CustomerSubscription.LockedPrice` is snapshotted at subscribe time
+and used for every renewal charge, so admins can edit `SubscriptionPlan.Price` in place at any time
+without silently repricing existing subscribers.
 
 ## Status
 
 <!-- Not Started | In Progress | Completed -->
 
-Implemented, verified via `dotnet build`/`dotnet test` (real Postgres/VNPay sandbox not available
-in this environment — see Notes) — branch `feature/vnpay-subscriptions`, worked in an isolated
-worktree (`finviet-be-vnpay`) since `finviet-be`'s main checkout has another agent's in-progress
-`fix/scoring-weights` work. Committed locally; merged latest `origin/dev` to resolve conflicts
-before opening the PR (migration renumbered `V0004` → `V0006`, since `V0004`/`V0005` were claimed
-by other work that merged first — see Notes).
+Both implemented. VNPay subscriptions: verified via `dotnet build`/`dotnet test` (real
+Postgres/VNPay sandbox not available in this environment — see Notes), branch
+`feature/vnpay-subscriptions`, already merged into `dev`. Admin account management: verified via
+`dotnet build` plus real end-to-end browser testing against the deployed
+`https://finviet-be-7t8w.onrender.com` instance (see `finviet-web`'s `context/current-feature.md`
+for the full verification trail, including two real bugs found and fixed there), branch
+`feature/admin-account-management`.
 
 ## Goals
 
 <!-- Goals and requirements -->
 
+**Admin account management:**
+- `POST /api/auth/admin-change-password` (Admin role): lets an authenticated admin change their
+  own password given the current one, mirroring the existing Customer `/change-password` flow.
+- New `AdminsController` (`api/admins`, Admin role): `GET /` lists all admins; `POST /` creates a
+  new admin with a password the creating ("master") admin types in directly — no auto-generated
+  temp password, per explicit product decision (a new admin can change it themselves once
+  `admin-change-password` exists).
+- No `Admins` table schema change needed — `Username`/`PasswordHash`/`Email`/`CreatedAt` already
+  cover both features, so no new SQL migration.
+
+**VNPay subscriptions:**
 - Migration `V0006__vnpay_subscriptions_payments.sql`: `subscription_plans.is_active`/
   `billing_interval_months`, `customer_subscriptions.locked_price`/`auto_renew`/
   `next_billing_date`/retry fields, new `payments` table + `payment_status` enum.
@@ -38,15 +55,52 @@ by other work that merged first — see Notes).
 
 <!-- Any extra notes -->
 
-- Migration renumbered `V0004` → `V0006`: `origin/dev` claimed `V0004` for `notification_devices`
-  and `V0005` for the scoring-criteria seed while this branch was in progress — resolved by
-  renumbering this branch's migration to the next free slot when merging `origin/dev` in, rather
+- This started as a question about how 2FA setup works for FinViet Admin; wiring real 2FA/login
+  itself stayed out of scope at first. What got greenlit for implementation was the admin
+  account-management gap it surfaced — and later, real 2FA/login wiring too (see `finviet-web`'s
+  `context/current-feature.md` for the full chain of reasoning).
+- Built in an isolated git worktree (`finviet-be-admin-mgmt`, branch `feature/admin-account-management`
+  off `origin/dev`) rather than the primary checkout, since the primary `finviet-be` working
+  directory was mid-flight on unrelated concurrent work (`feature/admin-list-endpoints`, building
+  `GET /api/users` and `GET /api/category-corrections` — confirmed non-overlapping: that's the
+  `Customers` table, this is the separate `Admins` table).
+- 2026-08-15 — Implemented: `ChangeAdminPasswordCommand`/`Validator`/`Handler` (mirrors the
+  existing Customer `ChangePasswordCommandHandler`) + `POST /api/auth/admin-change-password` on
+  `AuthController`, reading the caller's `AdminId` via the existing `User.GetCustomerId()` claim
+  extension (admin JWTs already stamp `AdminId` into that same `"customerId"` claim, a pre-existing
+  quirk from `AdminLoginCommandHandler`). New `CreateAdminCommand`/`Validator`/`Handler`
+  (`Features/Admins/Commands/CreateAdmin/`) + new `AdminsController` (`GET /api/admins` — flat
+  unpaginated list, `POST /api/admins` — create, uniqueness pre-check on username/email plus a
+  `DbUpdateException` unique-violation backstop mirroring `RegisterCommandHandler`'s pattern).
+  `docs/api-reference.md` updated (new Admins section + admin-change-password row/detail in Auth).
+  `dotnet build` passed with 0 errors (6 pre-existing nullable warnings, unchanged). No unit tests
+  added — both handlers are thin CRUD mirrors of already-tested siblings (`ChangePasswordCommandHandler`,
+  `RegisterCommandHandler`) with no new pure logic branches. Verified end-to-end for real: a
+  `master` admin was seeded directly on the deployed Render Postgres (real credentials, not a
+  fixture) and used to exercise the full real login → first-login 2FA enrollment → dashboard flow
+  from the `finviet-web` side, computing real RFC 6238 TOTP codes — confirming these endpoints work
+  correctly against production-shaped data, not just a mock. Committed (`4f11952`).
+- Migration renumbered `V0004` → `V0006` (VNPay branch): `origin/dev` claimed `V0004` for
+  `notification_devices` and `V0005` for the scoring-criteria seed while that branch was in
+  progress — resolved by renumbering to the next free slot when merging `origin/dev` in, rather
   than contesting either already-landed number.
 - VNPay sandbox/merchant credentials for recurring billing are not available in this environment;
   `ChargeByTokenAsync`'s exact request/response shape is provisional pending real VNPay docs. Code
   and unit tests (hash sign/verify, dunning schedule, state transitions) can be completed and
   verified now; live end-to-end payment verification is blocked until real credentials exist.
-- No push, or production database action without explicit permission.
+- No production database action without explicit permission.
+
+- 2026-08-14 — Started after confirming current DELETE reverses every contribution/withdrawal,
+  removes generated transactions and ledger rows, and physically deletes the goal. Approved
+  replacement is locked zero-balance soft archive with preserved read-only history.
+- 2026-08-15 — Extended `SavingGoal_Lifecycle_Works` to prove archive preserves both linked
+  transaction directions through the paged collection endpoint and leaves monthly gross income and
+  expense unchanged; cleanup now removes those isolated transaction fixtures before the test wallet.
+  Application tests pass 200/200, the solution and API integration-test project compile, and
+  `git diff --check` is clean. The live integration test was not executed because no prepared
+  non-production API/database was explicitly approved; no commit, push, deployment, or database
+  operation run.
+
 - The reported response was a formatting meta-instruction rather than a financial answer. The exact
   text does not exist in repository prompts; Google.GenAI 1.17.0 documents that `response.Text`
   concatenates every text part from the first candidate, while each part exposes a `Thought` marker.
