@@ -2,84 +2,106 @@
 
 <!-- Feature name and short description -->
 
-Saving-goal archive follow-up: prove archived contribution/withdrawal transactions remain in the
-paged transaction list and monthly summary, and make integration cleanup compatible with that audit trail.
+VNPay auto-renewing premium subscriptions + admin `SubscriptionPlan` CRUD. Built independently
+from the existing unmerged `origin/dunglt` branch (a different, manual SePay-QR payment flow) per
+explicit user decision. Core guarantee: `CustomerSubscription.LockedPrice` is snapshotted at
+subscribe time and used for every renewal charge, so admins can edit `SubscriptionPlan.Price` in
+place at any time without silently repricing existing subscribers.
 
 ## Status
 
 <!-- Not Started | In Progress | Completed -->
 
-Implemented locally — archive audit-trail integration execution remains pending an explicitly prepared non-production API/database on branch `fix/saving-goal-archive`
+Implemented, verified via `dotnet build`/`dotnet test` (real Postgres/VNPay sandbox not available
+in this environment — see Notes) — branch `feature/vnpay-subscriptions`, worked in an isolated
+worktree (`finviet-be-vnpay`) since `finviet-be`'s main checkout has another agent's in-progress
+`fix/scoring-weights` work. Not committed/pushed/merged.
 
 ## Goals
 
 <!-- Goals and requirements -->
 
-- Change `DELETE /api/saving-goals/{id}` from physical deletion and ledger reversal to a soft
-  archive that succeeds only when `currentAmount == 0`.
-- Return 422 `goal_balance_must_be_withdrawn` while money remains; the customer must first use the
-  existing idempotent withdrawal endpoint and explicitly select a regular destination wallet.
-- Preserve every linked transaction and contribution/withdrawal row. Archiving must not change any
-  wallet balance.
-- Add active-versus-archived list filtering and allow owned archived detail/ledger reads for a
-  read-only mobile archive section; all mutations continue rejecting archived goals.
-- Return truthful goal fields (`iconEmoji`, `isDeleted`, `createdAt`, `updatedAt`, nullable deadline)
-  and persist the create request's icon.
-- Keep PATCH deadline semantics explicit: a non-null date sets it; omitted/null does not clear it.
-- Update focused/unit/integration coverage and API documentation.
+- Migration `V0004__vnpay_subscriptions_payments.sql`: `subscription_plans.is_active`/
+  `billing_interval_months`, `customer_subscriptions.locked_price`/`auto_renew`/
+  `next_billing_date`/retry fields, new `payments` table + `payment_status` enum.
+- `ExternalServices/VNPay/`: options, HMAC-SHA512 sign/verify helper, client.
+- CQRS: customer subscribe (returns VNPay redirect URL), VNPay return-URL handler (informational
+  only), VNPay IPN handler (authoritative, idempotent), admin `SubscriptionPlan` CRUD.
+- `SubscriptionRenewalScheduler` background job: claim/lease pattern (`FOR UPDATE SKIP LOCKED`),
+  1/3/7-day dunning retry schedule, always charges `LockedPrice`, never live `SubscriptionPlan.Price`.
+- `finviet-web` companion: JWT propagation (blocking prerequisite), numeric price type change,
+  `real/plans.ts` wired to the new admin endpoints.
 
 ## Notes
 
 <!-- Any extra notes -->
 
-- No schema migration is required: `savings_goals.is_deleted`, timestamps, icon, ledger, and
-  transaction links already exist.
-- No restore/unarchive or permanent purge endpoint is included.
-- Cross-repo mobile work is in `D:/SEP490/fe/mobile/finviet-mobile` on
-  `fix/saving-goal-archive-navigation`.
-- No commit, push, production database action, or deployment without explicit permission.
-- 2026-08-14 — Started after confirming current DELETE reverses every contribution/withdrawal,
-  removes generated transactions and ledger rows, and physically deletes the goal. Approved
-  replacement is locked zero-balance soft archive with preserved read-only history.
-- 2026-08-15 — Extended `SavingGoal_Lifecycle_Works` to prove archive preserves both linked
-  transaction directions through the paged collection endpoint and leaves monthly gross income and
-  expense unchanged; cleanup now removes those isolated transaction fixtures before the test wallet.
-  Application tests pass 200/200, the solution and API integration-test project compile, and
-  `git diff --check` is clean. The live integration test was not executed because no prepared
-  non-production API/database was explicitly approved; no commit, push, deployment, or database
-  operation run.
-
-- The reported response was a formatting meta-instruction rather than a financial answer. The exact
-  text does not exist in repository prompts; Google.GenAI 1.17.0 documents that `response.Text`
-  concatenates every text part from the first candidate, while each part exposes a `Thought` marker.
-- No automatic cleanup of historical chat rows is included; this change protects new responses.
-- User selected the stable local database dump as the schema source of truth, DbUp as the future
-  migration engine, and reference data plus configured admin as the production bootstrap policy.
-- The baseline must include the current V25/Gemini tables, all mapped PostgreSQL enums, `pgcrypto`,
-  `vector`, `rag_chunk.embedding = vector(768)`, and the HNSW cosine index.
-- Full database dumps, schema-diff artifacts, `.env`, passwords, and provider credentials must remain
-  outside Git and the Docker build context.
-- Once released, baseline scripts are immutable; future migrations continue after the current
-  `V0003` and use zero-padded names.
-- Existing/restored databases require an explicit confirmed adoption command after schema fingerprint
-  validation; normal startup never marks an unknown schema current.
-- 2026-08-13: two other branches merged into this one — `feature/sentry-backend-setup` (Sentry
-  error tracking: exception middleware, csproj package, Program.cs wiring) and, riding along on
-  that branch, `docs/api-reference-health-status` (documented the `GET /`/`GET /health` endpoints,
-  removed the now-resolved `docs/10-08-2026-be-todos.md`). No overlap with the database-baseline
-  work itself — different files, clean auto-merge apart from this Notes/History section.
-- Gemini Flash safe-copilot context (from `feature/gemini-safe-copilot`, already on `dev` before
-  this branch started): official `Google.GenAI` provider, 768-dim embeddings, per-customer AI
-  preferences, owner-scoped categorization, customer-owned chat sessions, durable rate limits. Solution
-  build and 183 Application unit tests passed as of 2026-08-11; live Gemini-key verification and RAG
-  re-index remained outstanding at that time. Gemini API keys are supplied only via .NET user-secrets
-  or environment variables, never committed.
-- No `.env`, API key, commit, push, live quota exhaustion, production cutover, production-data change,
-  or RAG re-index without separate explicit permission.
+- Migration numbering collision risk, known and accepted: another agent's `fix/scoring-weights`
+  branch also claims `V0004` (`V0004__seed_scoring_criteria.sql`) independently. Whichever of the
+  two merges into `dev` second will need to renumber to `V0005` at merge time — not resolved here.
+- VNPay sandbox/merchant credentials for recurring billing are not available in this environment;
+  `ChargeByTokenAsync`'s exact request/response shape is provisional pending real VNPay docs. Code
+  and unit tests (hash sign/verify, dunning schedule, state transitions) can be completed and
+  verified now; live end-to-end payment verification is blocked until real credentials exist.
+- No commit, push, or production database action without explicit permission.
+- 2026-08-15 — Started. Full design plan (migration, entities, VNPay client, CQRS features,
+  renewal job, frontend wiring) approved by the user after a multi-turn scoping discussion:
+  VNPay chosen over SePay/Momo/Stripe, true auto-renewal chosen over manual pay-per-period,
+  explicitly independent of `origin/dunglt`.
+- 2026-08-15 — Implemented, in an isolated `finviet-be-vnpay` worktree (branch
+  `feature/vnpay-subscriptions`) to avoid disturbing another agent's uncommitted
+  `fix/scoring-weights` work in the main `finviet-be` checkout. `V0004__vnpay_subscriptions_payments.sql`
+  adds `subscription_plans.is_active`/`billing_interval_months`, `customer_subscriptions.locked_price`/
+  `auto_renew`/`next_billing_date`/`next_retry_at`/`retry_count`/`renewal_claimed_at`/
+  `vnpay_card_token`/`canceled_at`, a new `payments` table (audit trail of every VNPay charge
+  attempt, `payment_status` enum, `uq_payments_one_pending_per_subscription` double-charge
+  backstop). New `Payment` entity + `PaymentStatus` CLR enum registered via the existing
+  `MapEnum`/`PgEnumStringConverter` convention. New `ExternalServices/VNPay/`
+  (`VNPayOptions`, `VNPayHashHelper` implementing VNPay's documented HMAC-SHA512 sign/verify
+  algorithm exactly — sorted, URL-encoded `vnp_*` params, `FixedTimeEquals` comparison —
+  `IVNPayClient`/`VNPayClient`, empty-credentials-disables-at-point-of-use like SePay's
+  `WebhookApiKey`). New `Features/Subscriptions/` CQRS: `SubscribeToPlanCommand` (idempotent,
+  snapshots `plan.Price` onto the pending `Payment`), `GetVNPayReturnStatusQuery`
+  (informational-only browser-return handler), `ProcessVNPayIpnCommand` (authoritative, never
+  throws, row-locks the `Payment` under an explicit transaction, delegates state transitions to a
+  new shared `ISubscriptionPaymentResultService` so the IPN handler and the renewal job can't
+  drift apart — on an `initial` success this is where `CustomerSubscription.LockedPrice` gets
+  snapshotted from `payment.Amount`, never re-read from `SubscriptionPlan.Price`). New
+  `Features/SubscriptionPlans/` CQRS for admin CRUD (`Update` deliberately excludes `Code` and
+  freely edits `Price` in place — safe specifically because of the `LockedPrice` guarantee;
+  `Discontinue` only flips `IsActive`, never cascades to subscriptions). New
+  `SubscriptionRenewalScheduler` background job: hourly poll, `FOR UPDATE SKIP LOCKED` claim/lease
+  (15-minute staleness) so a slow VNPay call never blocks other workers, 1/3/7-day dunning retry
+  schedule (`active` → `past_due` from the 2nd failure → `canceled`/`AutoRenew=false` on the 4th,
+  ~11-day window), reused `WeeklyReportScheduler`'s VN-timezone resolution pattern. New
+  `SubscriptionsController` (customer-facing subscribe/return/IPN) and
+  `AdminSubscriptionPlansController` (`[Authorize(Roles = "Admin")]` CRUD). Also fixed
+  `AdminLoginCommandHandler` to read a new `Jwt:AdminAccessTokenExpiryMinutes` (default 480 = 8h)
+  instead of the shared 15-minute customer expiry — needed by `finviet-web`'s JWT-propagation
+  companion change. 18 new unit tests (`VNPayHashHelperTests`, `SubscriptionRenewalDunningTests`,
+  `SubscriptionPaymentResultServiceTests` — the last explicitly proves a payment resolved after
+  the catalog price already changed still locks in the amount actually charged, not the live
+  price) all pass; full Application suite 218/218, Domain suite 1/1, `dotnet build` 0 errors.
+  **Known, called-out gaps, not silently papered over**: no VNPay sandbox/merchant credentials
+  exist in this environment, so `ChargeByTokenAsync`'s exact recurring-charge request/response
+  field names are provisional pending real VNPay docs, and live end-to-end payment verification
+  (QR/redirect → pay → IPN → activation → simulated renewal) has not run — this feature should not
+  be considered fully done until that happens. Migration numbering may collide with the other
+  agent's independent `V0004__seed_scoring_criteria.sql` at merge time (see Notes). No commit,
+  push, or merge performed.
 
 ## History
 
 <!-- Keep this updated. Earliest to latest -->
+- 2026-08-15 — Saving-goal archive follow-up (branch `fix/saving-goal-archive`, already merged
+  into `dev` before this feature started): changed `DELETE /api/saving-goals/{id}` from physical
+  deletion to a zero-balance-only soft archive (422 `goal_balance_must_be_withdrawn` otherwise),
+  preserving all linked transactions/contributions and wallet balances; added active/archived list
+  filtering and read-only archived detail/ledger access; fixed truthful goal field reporting and
+  explicit PATCH deadline semantics. Extended `SavingGoal_Lifecycle_Works` to prove the paged
+  transaction list and monthly summary are unaffected by archiving. Application tests 200/200,
+  solution and integration-test project compiled. Live integration-test execution against a
+  non-production DB was not run (no environment explicitly approved for it).
 - 2026-08-14 — Started Gemini thought-response filtering after a current-month budget question returned a formatting meta-instruction. Approved scope: filter `Part.Thought` at the SDK boundary, request no thought output, treat thought-only output as provider unavailable, preserve HTTP 429-only model fallback, and add provider/persistence regressions without cleaning historical rows.
 - 2026-08-14 — Completed Gemini thought-response filtering: the SDK boundary now returns only non-thought text parts, all generation configs request `IncludeThoughts=false`, and thought-only output follows the existing provider-unavailable path without model failover. Added mixed/thought-only/split-JSON extraction tests and a history-enabled chat regression proving only the friendly fallback is persisted. Focused Gemini tests passed 28/28, focused chat tests passed 6/6, all Application tests passed 200/200, solution build passed with 0 warnings/errors, and the API reached `Now listening on http://0.0.0.0:5122`. No live Gemini call, historical-row cleanup, RAG re-index, commit, or push was performed.
 - 2026-08-14 — Started Gemini quota-aware model fallback. Approved scope: primary plus four Flash-first generation fallbacks, HTTP 429-only failover, per-attempt privacy-safe telemetry, no embedding changes or RAG re-index.

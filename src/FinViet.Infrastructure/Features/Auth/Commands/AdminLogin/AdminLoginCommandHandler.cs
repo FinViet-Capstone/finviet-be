@@ -30,7 +30,10 @@ public class AdminLoginCommandHandler : IRequestHandler<AdminLoginCommand, AuthR
             throw new UnauthorizedException("Invalid username or password.");
 
         var accessToken = _jwt.GenerateAccessToken(admin.AdminId, admin.Email, admin.Username, "Admin");
-        var minutes     = int.Parse(_config["Jwt:AccessTokenExpiryMinutes"] ?? "15");
+        // Admin sessions use their own, longer-lived expiry (default 8h) than the customer JWT's
+        // 15-minute default — finviet-web's admin dashboard persists this token in an httpOnly
+        // cookie for a normal browsing session, not a mobile app's short-lived access token.
+        var minutes = int.Parse(_config["Jwt:AdminAccessTokenExpiryMinutes"] ?? "480");
 
         return new AuthResponseDto
         {
