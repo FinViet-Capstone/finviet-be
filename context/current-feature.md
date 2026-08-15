@@ -11,8 +11,7 @@ list, and admin category-corrections/users list endpoints (pagination).
 
 <!-- Not Started | In Progress | Completed -->
 
-In Progress — items 1-4 completed (`fix/scoring-weights`, `fix/bucket-admin-crud`,
-`feature/category-icon-upload`, `feature/rag-document-preview`); item 5 not started.
+Completed — all 5 items done and merged into `dev` (not pushed to origin).
 
 ## Goals
 
@@ -28,7 +27,7 @@ In Progress — items 1-4 completed (`fix/scoring-weights`, `fix/bucket-admin-cr
    `CreateCustomCategoryRequest`/`CategoryService.CreateCustomCategoryAsync`.
 4. **RAG document preview** (`feature/rag-document-preview`, done): persist uploaded PDF bytes and
    set `RagDocument.Uri`; add `GET /api/ai/documents`.
-5. **Admin list endpoints** (`feature/admin-list-endpoints`): `GET /api/category-corrections`
+5. **Admin list endpoints** (`feature/admin-list-endpoints`, done): `GET /api/category-corrections`
    (category + date-range filter, pagination) and `GET /api/users` (pagination + optional search).
 
 ## Notes
@@ -43,7 +42,7 @@ In Progress — items 1-4 completed (`fix/scoring-weights`, `fix/bucket-admin-cr
 - Live verification uses locally-inserted test accounts (admin `adminmaster`/`123456`, email
   `khoiislearning@gmail.com`; customer `khoi.test.customer@example.com`), local DB only, not the
   deployed backend, since the seeded default credentials didn't match this local DB.
-- Two bugs found while verifying item 3, unrelated to the 5 gaps and left unfixed (out of scope):
+- Two bugs found while verifying, unrelated to the 5 gaps and left unfixed (out of scope):
   (a) `AvatarService` likely has the same `AppSettings:WebRootPath=""` empty-string bug fixed in
   `CategoryIconService`/`PdfDocumentIngestionService` — not touched. (b) `POST /api/categories/custom`
   always 500s — generated id (`"custom_" + Guid.NewGuid()`, 43 chars) exceeds `categories.id`'s
@@ -158,6 +157,34 @@ In Progress — items 1-4 completed (`fix/scoring-weights`, `fix/bucket-admin-cr
   correct shape and the file served at its `uri` with 200; test row and file removed afterward.
   `docs/api-reference.md` updated (`POST /documents` validation note + new `GET /documents`
   section).
+- 2026-08-15 — Completed item 5 (admin list endpoints), the last of the five, on branch
+  `feature/admin-list-endpoints`: new `GET /api/category-corrections` (`CategoryCorrectionQueryDto`
+  with `categoryId?`/`createdAtFrom?`/`createdAtTo?`/`page`/`pageSize`, backed by
+  `GetCategoryCorrectionsQuery` reading `CategoryCorrectionLog` directly via `FinVietDbContext`,
+  matching the CategoryService/SpendingScoreService direct-DbContext convention rather than adding
+  a one-off repository interface) and new `GET /api/users` (`UserQueryDto` with `search?` +
+  paging, backed by `GetUsersQuery` reading `Customer`, excluding soft-deleted rows, no sensitive
+  fields in the response). Both follow `TransactionRepository.GetPagedAsync`'s exact pattern:
+  `page`/`pageSize` clamped to `[1,100]`/default 20, UTC start-of-day/exclusive-next-day date
+  range, `PagedResult<T>`. `dotnet build` 0 errors, all 200 Application unit tests pass.
+  Live-verified: users list returns all 4 seeded accounts with correct paging metadata; `search`
+  filters correctly; unauthenticated returns 401; category-corrections returns empty against a
+  clean table, then correctly filters by `categoryId` and `createdAtFrom` once two test rows were
+  inserted directly (no real correction rows existed to exercise otherwise); all test rows removed
+  afterward. `docs/api-reference.md` updated (new Category Corrections + Users sections).
+  **All 5 backend-gaps.md items (excluding subscription/payment) are now complete**, each
+  committed on its own branch.
+- 2026-08-15 — Merged all 5 branches into `dev` locally, per explicit user instruction, in order
+  1→5 (`fix/scoring-weights`, `fix/bucket-admin-crud`, `feature/category-icon-upload`,
+  `feature/rag-document-preview`, `feature/admin-list-endpoints`). Every merge after the first
+  conflicted in this file (`context/current-feature.md`) since each branch independently rewrote
+  the same Status/Goals/Notes/History header off the original `dev` baseline — resolved by hand
+  each time, keeping every branch's unique History entry and consolidating Status/Goals/Notes into
+  one accurate final state. `docs/api-reference.md` merged cleanly every time (each branch's
+  documentation additions landed in different, non-overlapping sections).
+  `src/FinViet.Infrastructure/DependencyInjection.cs` merged cleanly once (items 3 and 4 both added
+  a registration line, in different parts of the file). `dotnet build` passed with 0 errors after
+  every merge commit. Not pushed to `origin/dev`.
 - 2026-08-14 — Started Gemini thought-response filtering after a current-month budget question returned a formatting meta-instruction. Approved scope: filter `Part.Thought` at the SDK boundary, request no thought output, treat thought-only output as provider unavailable, preserve HTTP 429-only model fallback, and add provider/persistence regressions without cleaning historical rows.
 - 2026-08-14 — Completed Gemini thought-response filtering: the SDK boundary now returns only non-thought text parts, all generation configs request `IncludeThoughts=false`, and thought-only output follows the existing provider-unavailable path without model failover. Added mixed/thought-only/split-JSON extraction tests and a history-enabled chat regression proving only the friendly fallback is persisted. Focused Gemini tests passed 28/28, focused chat tests passed 6/6, all Application tests passed 200/200, solution build passed with 0 warnings/errors, and the API reached `Now listening on http://0.0.0.0:5122`. No live Gemini call, historical-row cleanup, RAG re-index, commit, or push was performed.
 - 2026-08-14 — Started Gemini quota-aware model fallback. Approved scope: primary plus four Flash-first generation fallbacks, HTTP 429-only failover, per-attempt privacy-safe telemetry, no embedding changes or RAG re-index.
