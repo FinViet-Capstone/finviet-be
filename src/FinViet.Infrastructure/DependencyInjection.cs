@@ -200,6 +200,7 @@ public static class DependencyInjection
         services.AddScoped<IRagRetriever, PgVectorRagRetriever>();
         services.AddScoped<IRagEmbeddingReindexService, RagEmbeddingReindexService>();
         services.AddScoped<IDocumentIngestionService, PdfDocumentIngestionService>();
+        services.AddScoped<IRagDocumentQueryService, RagDocumentQueryService>();
 
         services.AddHostedService<WeeklyReportScheduler>();
 

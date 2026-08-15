@@ -624,8 +624,11 @@ Only computed when `deadline` is set. `monthsRemaining` = whole calendar months 
 - Remaining booleans control default chat persistence, scheduled reports and balances/transactions/budgets/goals/reports/RAG scopes.
 
 ### POST `/documents` (Admin)
-**Authorization/validation**: Exposed by a separate Admin-only controller at the existing `/api/ai/documents` route, avoiding combined Customer+Admin authorization. `[RequestSizeLimit(20 MB)]`; null/empty file → 400. Empty extracted text → 400.
-**Business logic**: PdfPig extracts pages and chunks text into 800-character windows with 150-character overlap. `gemini-embedding-001` generates exactly 768 dimensions through the official SDK; wrong/empty output fails as provider unavailable. Documents are global (`customerId=null`). Existing Ollama vectors must be re-indexed before `Gemini:RagEnabled=true`; see `docs/gemini-setup.md`.
+**Authorization/validation**: Exposed by a separate Admin-only controller at the existing `/api/ai/documents` route, avoiding combined Customer+Admin authorization. `[RequestSizeLimit(20 MB)]`; null/empty file → 400. First 4 bytes must be the PDF magic number (`%PDF`) → 400 "Tệp không phải PDF hợp lệ." otherwise. Empty extracted text → 400.
+**Business logic**: PdfPig extracts pages and chunks text into 800-character windows with 150-character overlap. `gemini-embedding-001` generates exactly 768 dimensions through the official SDK; wrong/empty output fails as provider unavailable. Documents are global (`customerId=null`). The uploaded PDF's raw bytes are now persisted to `wwwroot/documents/{id}.pdf` and served statically at `Uri = "/documents/{id}.pdf"` (previously discarded after text extraction, leaving `Uri` null). Existing Ollama vectors must be re-indexed before `Gemini:RagEnabled=true`; see `docs/gemini-setup.md`.
+
+### GET `/documents` (Admin)
+**Business logic**: Lists every `RagDocument` (global PDFs and per-customer weekly-report narratives) newest first: `{ id, title, sourceType, uri?, createdAt, chunkCount }`. `uri` is a servable `/documents/{id}.pdf` path for `sourceType="pdf"`; for `sourceType="weekly_report"` it's a non-dereferenceable `report:{id}` idempotency marker, not a real link. No pagination — admin-curated, low document volume.
 
 ---
 
