@@ -9,8 +9,10 @@ public class KnownGapsTests
 {
     // Admin Dashboard — "System analytics: total users, daily active users, total
     // transactions logged, AI API call volume and estimated cost per day".
-    [Fact(Skip = "NOT IMPLEMENTED (Capstone Admin req): system analytics endpoint (users/DAU/tx/AI-cost) is missing.")]
-    public void Admin_SystemAnalytics_Endpoint() { }
+    // RESOLVED (partial): GET /api/analytics/summary + /api/analytics/trend now cover
+    // total/active/new customers, transactions, wallets, budgets, and free/premium split
+    // plus a daily signups/transactions trend — see AnalyticsTests.cs. AI API call volume/cost
+    // is still not exposed (AiUsageEvent is written but has no admin-facing read endpoint).
 
     // Admin Dashboard — "Category correction log: view cases where users manually
     // overrode AI-suggested categories". Write path exists (AI override) but no read API.

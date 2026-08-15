@@ -733,6 +733,23 @@ Read-only paginated customer list for the admin Users screen.
 
 ---
 
+## Analytics — `api/analytics` (role: Admin)
+
+Live-aggregate queries for the admin Overview dashboard — no cached/precomputed store, every
+call re-queries `Customers`/`Transactions`/`Wallets`/`Budgets`/`CustomerSubscriptions` directly.
+
+| Method | Path | Request | Response |
+|---|---|---|---|
+| GET | `/summary` | — | `ApiResponse<AdminAnalyticsSummaryDto>` |
+| GET | `/trend` | query `metric?`, `days?` | `ApiResponse<DailyMetricDto[]>` |
+
+**AdminAnalyticsSummaryDto**: `{ totalCustomers, activeCustomers, newCustomers, totalTransactions, totalWallets, totalBudgets, freeSubscriptions, premiumSubscriptions }` (all `int`). `newCustomers` is a trailing-30-day count. `premiumSubscriptions` counts distinct customers with an `active`-status subscription to a plan priced `> 0`; `freeSubscriptions` is every other customer (`totalCustomers - premiumSubscriptions`) — every customer defaults to free-tier absent an active paid subscription, so this is valid (not an error) when `subscription_plans` has no rows.
+
+**GET `/trend`**: `metric` is `"signups"` (default) or `"transactions"` — any other value falls back to `"signups"`. `days` defaults to 30, clamped to `[1, 365]` (out-of-range values fall back to 30, not an error). Returns exactly `days` points, oldest first, one per UTC calendar day in range with **zero-filled gaps** (a day with no signups/transactions still appears with `count: 0`) — the frontend chart never has to handle missing days.
+**DailyMetricDto**: `{ date, count }` — `date` is `"yyyy-MM-dd"` (UTC).
+
+---
+
 ## Common envelope types
 
 ```ts

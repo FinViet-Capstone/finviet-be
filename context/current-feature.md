@@ -2,6 +2,58 @@
 
 <!-- Feature name and short description -->
 
+**Admin analytics endpoint**: `GET /api/analytics/summary` + `GET /api/analytics/trend`, backing
+the `finviet-web` admin Overview dashboard (previously 100% hardcoded — no admin analytics
+endpoint existed anywhere in this backend; `SystemAnalytic` was unused schema and
+`KnownGapsTests.Admin_SystemAnalytics_Endpoint` was a permanently-skipped placeholder). Companion
+frontend work in `finviet-web` on branch `feature/overview-analytics-wiring` wires the Overview
+screen to these endpoints for real, replacing every hardcoded stat/chart value.
+
+## Status
+
+<!-- Not Started | In Progress | Completed -->
+
+Completed — implemented, `dotnet build` clean (0 errors), integration test added, live-verified
+against a real local Postgres (see History).
+
+## Goals
+
+<!-- Goals and requirements -->
+
+- New `AnalyticsController` (`api/analytics`, Admin role): `GET /summary` returns
+  `AdminAnalyticsSummaryDto` (totalCustomers, activeCustomers, newCustomers [trailing 30 days],
+  totalTransactions, totalWallets, totalBudgets, freeSubscriptions, premiumSubscriptions); `GET
+  /trend?metric=signups|transactions&days=30` returns a zero-filled `DailyMetricDto[]`
+  (`{date, count}`, one point per UTC calendar day, oldest first).
+- Live-aggregate queries only, no `SystemAnalytic` writes — that table stays unused, matching the
+  frontend's own earlier finding that nothing populates it.
+- **Documented product decisions** (no existing convention to follow, since no
+  `subscription_plans` seed data exists anywhere): `premiumSubscriptions` = distinct customers
+  with an `active`-status subscription to a plan priced `> 0`; `freeSubscriptions` = every other
+  customer (`totalCustomers - premiumSubscriptions`), so an empty `subscription_plans` table
+  yields `premiumSubscriptions = 0`, not an error. `newCustomers` uses a trailing 30-day window.
+- Both handlers query `FinVietDbContext` directly (`AsNoTracking()`, no repository interface),
+  matching `GetUsersQueryHandler`'s established style — 7 independent scalar counts for summary,
+  one `GROUP BY` + in-memory zero-fill for trend.
+
+## Notes
+
+<!-- Any extra notes -->
+
+- Investigation for this feature was prompted from the `finviet-web` side (auditing whether the
+  admin Knowledge Base screen was "enough" to control AI, and separately whether the Overview
+  dashboard could be wired to real data) — see `finviet-web`'s `context/current-feature.md` for
+  the full reasoning chain.
+- While designing this, found and fixed a genuine, unrelated, pre-existing build-breaking bug on
+  `finviet-web`'s `dev`: nothing to do here — it had already been fixed upstream by the time this
+  branch started (verified via a fresh `dev` pull, `npm run build`/`tsc --noEmit` both clean).
+  Mentioned here only because it was discovered mid-investigation and could have been mistaken for
+  something this feature needed to fix.
+- No `.env`, API key, production cutover, production-data change, commit, or push without explicit
+  permission.
+
+---
+
 Two independent features landed around the same time: (1) **Admin account management** — let an
 already-logged-in admin create other admin accounts and change their own password, instead of
 every `Admins` row requiring a raw SQL insert. Companion work in `finviet-web` on branch
@@ -332,6 +384,31 @@ for the full verification trail, including two real bugs found and fixed there),
 ## History
 
 <!-- Keep this updated. Earliest to latest -->
+- 2026-08-15 — Implemented the admin analytics endpoint on branch `feature/admin-analytics-endpoint`:
+  new `AnalyticsController` (`api/analytics`, Admin role) with `GET /summary`
+  (`AdminAnalyticsSummaryDto`) and `GET /trend?metric=&days=` (`DailyMetricDto[]`), backed by
+  `GetAnalyticsSummaryQueryHandler`/`GetAnalyticsTrendQueryHandler` querying `FinVietDbContext`
+  directly (`AsNoTracking()`, no repository interface, matching `GetUsersQueryHandler`'s style).
+  `dotnet build` 0 errors. New `AnalyticsTests.cs` integration test class (4 tests, follows
+  `BudgetTests.cs`'s `[SkippableFact]`/`RequireServer()` pattern) — these self-skip when run via
+  `dotnet test` because the shared `ApiTestFixture`'s hardcoded seed-customer login
+  (`tkv2003@gmail.com`) doesn't match this local database's actual seeded customer, an existing
+  fixture-credential gap unrelated to this change. **Live-verified manually instead**: booted the
+  API against the real local Postgres, logged in as the real seeded admin
+  (`admin`/`Admin@123456`, this environment's dev-seed default), and called both endpoints for
+  real over HTTP: `GET /summary` returned real counts (4 customers, 394 transactions, 3 wallets, 0
+  budgets, 0 premium subscriptions — correctly 0 since `subscription_plans` has no rows in this
+  DB, not an error); `GET /trend?metric=signups&days=7` returned exactly 7 zero-filled points
+  matching the real admin-account creation dates; `GET /trend?metric=transactions&days=9999`
+  correctly clamped to exactly 30 points; an unrecognized `metric` value correctly fell back to
+  signups counts; a request with no token correctly returned 401. Resolved the matching
+  `KnownGapsTests.Admin_SystemAnalytics_Endpoint` skip placeholder (partial — analytics now exist,
+  AI call-volume/cost still has no admin-facing read endpoint, noted explicitly). Updated
+  `docs/api-reference.md` (new Analytics section after Users). **Noted, not this feature's
+  concern**: `SubscriptionRenewalScheduler`'s background job logged a pre-existing, unrelated
+  error while the server was up (`operator does not exist: subscription_status = text` — a Postgres
+  enum/text comparison needing an explicit cast somewhere in that scheduler's query) — flagged for
+  a separate fix, does not affect the analytics endpoints. Not committed/pushed yet.
 - 2026-08-15 — Saving-goal archive follow-up (branch `fix/saving-goal-archive`, already merged
   into `dev` before this feature started): changed `DELETE /api/saving-goals/{id}` from physical
   deletion to a zero-balance-only soft archive (422 `goal_balance_must_be_withdrawn` otherwise),
