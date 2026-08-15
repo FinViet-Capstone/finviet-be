@@ -2,52 +2,50 @@
 
 <!-- Feature name and short description -->
 
-Saving-goal archive follow-up: prove archived contribution/withdrawal transactions remain in the
-paged transaction list and monthly summary, and make integration cleanup compatible with that audit trail.
+Backend gaps from `finviet-web/context/backend-gaps.md`, excluding the subscription/payment entry
+(a separate agent owns that). Five independent items, each on its own branch: scoring weights →
+`ScoringCriterion`, admin Buckets CRUD, category custom-icon upload, RAG document `Uri`/preview
+list, and admin category-corrections/users list endpoints (pagination).
 
 ## Status
 
 <!-- Not Started | In Progress | Completed -->
 
-Implemented locally — archive audit-trail integration execution remains pending an explicitly prepared non-production API/database on branch `fix/saving-goal-archive`
+In Progress — item 1 (scoring weights) completed on branch `fix/scoring-weights` (commit
+`0de917a`); item 2 (bucket admin CRUD) completed on branch `fix/bucket-admin-crud`; items 3-5
+not started.
 
 ## Goals
 
 <!-- Goals and requirements -->
 
-- Change `DELETE /api/saving-goals/{id}` from physical deletion and ledger reversal to a soft
-  archive that succeeds only when `currentAmount == 0`.
-- Return 422 `goal_balance_must_be_withdrawn` while money remains; the customer must first use the
-  existing idempotent withdrawal endpoint and explicitly select a regular destination wallet.
-- Preserve every linked transaction and contribution/withdrawal row. Archiving must not change any
-  wallet balance.
-- Add active-versus-archived list filtering and allow owned archived detail/ledger reads for a
-  read-only mobile archive section; all mutations continue rejecting archived goals.
-- Return truthful goal fields (`iconEmoji`, `isDeleted`, `createdAt`, `updatedAt`, nullable deadline)
-  and persist the create request's icon.
-- Keep PATCH deadline semantics explicit: a non-null date sets it; omitted/null does not clear it.
-- Update focused/unit/integration coverage and API documentation.
+1. **Scoring weights** (`fix/scoring-weights`, done): seeded `scoring_criteria`, wired
+   `SpendingScoreService.ComputeAsync` to read weights from it, added admin
+   `GET`/`PATCH /api/scoring-criteria`.
+2. **Bucket admin CRUD** (`fix/bucket-admin-crud`, in progress): `GET`/`PATCH /api/buckets` for
+   admin, no server-side `IsLocked` enforcement (documented product decision).
+3. **Category icon upload** (`feature/category-icon-upload`): `POST /api/categories/icons`
+   (Customer, SVG only, mirrors avatar-upload pattern), wire the returned URL into
+   `CreateCustomCategoryRequest`/`CategoryService.CreateCustomCategoryAsync`.
+4. **RAG document preview** (`feature/rag-document-preview`): persist uploaded PDF bytes and set
+   `RagDocument.Uri`; add `GET /api/ai/documents`.
+5. **Admin list endpoints** (`feature/admin-list-endpoints`): `GET /api/category-corrections`
+   (category + date-range filter, pagination) and `GET /api/users` (pagination + optional search).
 
 ## Notes
 
 <!-- Any extra notes -->
 
-- No schema migration is required: `savings_goals.is_deleted`, timestamps, icon, ledger, and
-  transaction links already exist.
-- No restore/unarchive or permanent purge endpoint is included.
-- Cross-repo mobile work is in `D:/SEP490/fe/mobile/finviet-mobile` on
-  `fix/saving-goal-archive-navigation`.
-- No commit, push, production database action, or deployment without explicit permission.
-- 2026-08-14 — Started after confirming current DELETE reverses every contribution/withdrawal,
-  removes generated transactions and ledger rows, and physically deletes the goal. Approved
-  replacement is locked zero-balance soft archive with preserved read-only history.
-- 2026-08-15 — Extended `SavingGoal_Lifecycle_Works` to prove archive preserves both linked
-  transaction directions through the paged collection endpoint and leaves monthly gross income and
-  expense unchanged; cleanup now removes those isolated transaction fixtures before the test wallet.
-  Application tests pass 200/200, the solution and API integration-test project compile, and
-  `git diff --check` is clean. The live integration test was not executed because no prepared
-  non-production API/database was explicitly approved; no commit, push, deployment, or database
-  operation run.
+- Full plan: `C:\Users\Lenovo\.claude\plans\do-c-users-lenovo-source-repos-finviet-f-glittery-octopus.md`.
+- Migration numbering collision: item 1's seed migration (`V0004`) and a separate agent's VNPay
+  subscription work both want `V0004` — coordinate at merge time, whichever merges first keeps it.
+- Live verification uses a locally-inserted test admin (`khoi_test_admin`, local DB only, not the
+  deployed backend) since the seeded default admin credentials didn't match this local DB.
+- Commit cadence: commit each branch as it's finished and verified (user's explicit choice), not
+  batched at the end. Still no push or merge to `dev`/`khoi`/`main` without separate explicit
+  permission.
+- Prior feature (saving-goal archive follow-up) was completed/implemented locally; its Goals/Notes
+  are superseded here but its History entries are preserved below.
 
 - The reported response was a formatting meta-instruction rather than a financial answer. The exact
   text does not exist in repository prompts; Google.GenAI 1.17.0 documents that `response.Text`
@@ -80,6 +78,15 @@ Implemented locally — archive audit-trail integration execution remains pendin
 ## History
 
 <!-- Keep this updated. Earliest to latest -->
+- 2026-08-15 — Completed item 2 (bucket admin CRUD) on branch `fix/bucket-admin-crud`: new
+  `GetBucketsQuery`/`UpdateBucketCommand` + `BucketsController` (`GET`/`PATCH /api/buckets`, Admin
+  role). `UpdateBucketCommandHandler` deliberately does not check `Bucket.IsLocked` — admin can
+  edit every bucket including the locked `savings` row, per the product decision recorded in
+  `backend-gaps.md` item 2. No migration needed (table and rows already existed). `dotnet build` 0
+  errors, all 200 Application unit tests pass. Live-verified: `GET` lists all 3 buckets, `PATCH` on
+  the locked `savings` bucket succeeds and persists, unknown id returns 404, unauthenticated
+  returns 401; test change reverted afterward. `docs/api-reference.md` updated (new Buckets
+  section after Categories).
 - 2026-08-14 — Started Gemini thought-response filtering after a current-month budget question returned a formatting meta-instruction. Approved scope: filter `Part.Thought` at the SDK boundary, request no thought output, treat thought-only output as provider unavailable, preserve HTTP 429-only model fallback, and add provider/persistence regressions without cleaning historical rows.
 - 2026-08-14 — Completed Gemini thought-response filtering: the SDK boundary now returns only non-thought text parts, all generation configs request `IncludeThoughts=false`, and thought-only output follows the existing provider-unavailable path without model failover. Added mixed/thought-only/split-JSON extraction tests and a history-enabled chat regression proving only the friendly fallback is persisted. Focused Gemini tests passed 28/28, focused chat tests passed 6/6, all Application tests passed 200/200, solution build passed with 0 warnings/errors, and the API reached `Now listening on http://0.0.0.0:5122`. No live Gemini call, historical-row cleanup, RAG re-index, commit, or push was performed.
 - 2026-08-14 — Started Gemini quota-aware model fallback. Approved scope: primary plus four Flash-first generation fallbacks, HTTP 429-only failover, per-attempt privacy-safe telemetry, no embedding changes or RAG re-index.
