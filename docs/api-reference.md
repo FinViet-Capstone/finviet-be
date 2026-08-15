@@ -198,11 +198,12 @@ Every endpoint below documents **Validation** (exact field-level rules — Fluen
 | DELETE | `/custom/{id}` | Customer | — | `ApiResponse<object?>` |
 | PUT | `/{id}/bucket` | Customer | `SetCategoryBucketRequest` | `ApiResponse<CategoryResponse>` |
 | DELETE | `/{id}/bucket` | Customer | — | `ApiResponse<CategoryResponse>` |
+| POST | `/icons` | Customer | multipart `file` (SVG) | `ApiResponse<string>` (icon URL) |
 
 **CategoryResponse**: `{ categoryId, categoryName, nameVi?, nameEn?, type, isMandatory, expenseClass?, icon?, color?, sortOrder? }`
 **CreateCategoryRequest** (Admin): `{ categoryId?, categoryName?, nameVi?, nameEn?, type, isMandatory, expenseClass?, icon?, color?, sortOrder? }`
 **UpdateCategoryRequest** (Admin): same, all optional, no `categoryId`.
-**CreateCustomCategoryRequest** (Customer): `{ name, bucket: "needs"|"wants"|"savings", color? }` — no `type` (always `expense`); `icon` is device-local, never sent.
+**CreateCustomCategoryRequest** (Customer): `{ name, bucket: "needs"|"wants"|"savings", color?, icon? }` — no `type` (always `expense`); `icon`, if provided, must be a URL previously returned by `POST /icons` (400 otherwise).
 **SetCategoryBucketRequest**: `{ bucketId: "needs"|"wants"|"savings" }`
 
 ### GET `/` , GET `/{id}`
@@ -213,8 +214,12 @@ Every endpoint below documents **Validation** (exact field-level rules — Fluen
 **Business logic**: If no `categoryId` given, auto-generates slug `cat_<slugified-name-en>` (accent-stripped, non-alphanumeric → `_`), appending `_2`, `_3`... on collision.
 
 ### POST `/custom` (Customer)
-**Validation**: `name.Trim()` required else 400 "Category name is required." `bucket` normalized to needs/wants/savings, same error format as admin create. Name uniqueness checked scoped to `type="expense"`.
-**Business logic**: Always `type="expense"`, `isMandatory=false`, `icon=null`. `categoryId = "custom_" + Guid.NewGuid()`. Immediately seeds an active `CustomerCategory` override row (`source="system"`) with the chosen bucket — the category is usable immediately without a follow-up `PUT .../bucket` call, and this is also what makes it visible to the creator.
+**Validation**: `name.Trim()` required else 400 "Category name is required." `bucket` normalized to needs/wants/savings, same error format as admin create. Name uniqueness checked scoped to `type="expense"`. `icon`, if provided, must start with `/category-icons/` (400 "Icon must be a URL returned by POST /api/categories/icons." otherwise) — reject anything not obtained from the upload endpoint below.
+**Business logic**: Always `type="expense"`, `isMandatory=false`. `categoryId = "custom_" + Guid.NewGuid()`. Immediately seeds an active `CustomerCategory` override row (`source="system"`) with the chosen bucket — the category is usable immediately without a follow-up `PUT .../bucket` call, and this is also what makes it visible to the creator.
+
+### POST `/icons` (Customer)
+**Validation**: `file` required (400 if null/empty). Content-type must be exactly `image/svg+xml` (400 "Only SVG icons are allowed."). Size must be 1 byte–200 KB (400 otherwise). Content must start with `<svg`/`<?xml` after trimming (400 "File content is not a valid SVG."). Rejects any case-insensitive `<script` tag or `on*=` event-handler attribute (400 "SVG icon must not contain scripts or event handlers.") as a defense-in-depth XSS guard before persisting/serving the file.
+**Business logic**: Writes to `wwwroot/category-icons/{guid}.svg`, served statically at `/category-icons/{guid}.svg`. Returns the relative URL only — pass it as `icon` on `POST /custom` to attach it to a category. Standalone upload; nothing is persisted to the database by this endpoint itself.
 
 ### PATCH `/{id}` (Admin)
 **Validation**: `type`, if provided, re-normalized. `categoryName`/`nameVi`, if provided, must not be blank (400 "Category name cannot be empty."); uniqueness re-checked excluding self. `expenseClass`, if provided, normalized against the (possibly just-updated) type.

@@ -93,6 +93,9 @@ public static class DependencyInjection
         // Avatar storage
         services.AddScoped<IAvatarService, AvatarService>();
 
+        // Category icon storage
+        services.AddScoped<ICategoryIconService, CategoryIconService>();
+
         // Repositories
         services.AddScoped<ITransactionRepository, TransactionRepository>();
         services.AddScoped<IWalletRepository, WalletRepository>();

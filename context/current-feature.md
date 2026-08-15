@@ -11,8 +11,8 @@ list, and admin category-corrections/users list endpoints (pagination).
 
 <!-- Not Started | In Progress | Completed -->
 
-In Progress — items 1-2 completed (`fix/scoring-weights`, `fix/bucket-admin-crud`); items 3-5 not
-started.
+In Progress — items 1-3 completed (`fix/scoring-weights`, `fix/bucket-admin-crud`,
+`feature/category-icon-upload`); items 4-5 not started.
 
 ## Goals
 
@@ -23,7 +23,7 @@ started.
    `GET`/`PATCH /api/scoring-criteria`.
 2. **Bucket admin CRUD** (`fix/bucket-admin-crud`, done): `GET`/`PATCH /api/buckets` for admin, no
    server-side `IsLocked` enforcement (documented product decision).
-3. **Category icon upload** (`feature/category-icon-upload`): `POST /api/categories/icons`
+3. **Category icon upload** (`feature/category-icon-upload`, done): `POST /api/categories/icons`
    (Customer, SVG only, mirrors avatar-upload pattern), wire the returned URL into
    `CreateCustomCategoryRequest`/`CategoryService.CreateCustomCategoryAsync`.
 4. **RAG document preview** (`feature/rag-document-preview`): persist uploaded PDF bytes and set
@@ -43,6 +43,11 @@ started.
 - Live verification uses locally-inserted test accounts (admin `adminmaster`/`123456`, email
   `khoiislearning@gmail.com`; customer `khoi.test.customer@example.com`), local DB only, not the
   deployed backend, since the seeded default credentials didn't match this local DB.
+- Two bugs found while verifying item 3, unrelated to the 5 gaps and left unfixed (out of scope):
+  (a) `AvatarService` likely has the same `AppSettings:WebRootPath=""` empty-string bug fixed in
+  `CategoryIconService`/`PdfDocumentIngestionService` — not touched. (b) `POST /api/categories/custom`
+  always 500s — generated id (`"custom_" + Guid.NewGuid()`, 43 chars) exceeds `categories.id`'s
+  `varchar(40)` — flagged as a separate background task (`task_f86a5ff2`).
 - Merged into `dev` locally on 2026-08-15 per explicit user instruction; not pushed to origin.
 - Prior feature (saving-goal archive follow-up) was completed/implemented locally; its Goals/Notes
   are superseded here but its History entries are preserved below.
@@ -108,6 +113,32 @@ started.
   the locked `savings` bucket succeeds and persists, unknown id returns 404, unauthenticated
   returns 401; test change reverted afterward. `docs/api-reference.md` updated (new Buckets
   section after Categories).
+- 2026-08-15 — Completed item 3 (category icon upload) on branch `feature/category-icon-upload`:
+  new `ICategoryIconService`/`CategoryIconService` mirroring `AvatarService`'s pattern (writes to
+  `wwwroot/category-icons/`, served via the already-wired `UseStaticFiles()`); new
+  `CategoryIconValidationRules` (SVG-only, 1 byte–200 KB, must start with `<svg`/`<?xml`, rejects
+  `<script`/`on*=` as a defense-in-depth XSS guard); new `POST /api/categories/icons` (Customer) on
+  `CategoriesController`. `CreateCustomCategoryRequest` gained `Icon`;
+  `CategoryService.CreateCustomCategoryAsync` now persists it (was previously hardcoded to `null`
+  with a "stays device-local" comment — that decision is reversed) and rejects any value not
+  prefixed `/category-icons/` so a client can't smuggle an arbitrary external URL into a
+  frontend-rendered field.
+  **Bug found and fixed in this new code**: `AppSettings:WebRootPath` is configured as `""` (empty
+  string, not absent) in `appsettings.json`, so the copied `?? fallback` pattern from
+  `AvatarService` never triggered — files wrote relative to the process's current directory
+  instead of `wwwroot`. Fixed with an explicit `string.IsNullOrWhiteSpace` check in
+  `CategoryIconService`; `AvatarService` itself has the same latent bug but was left untouched
+  (out of scope) — flagged separately.
+  **Pre-existing unrelated bug found while verifying, not fixed (out of scope)**: every
+  `POST /api/categories/custom` call fails with a 500 regardless of this change — the generated id
+  (`"custom_" + Guid.NewGuid()`, 43 chars) exceeds `categories.id`'s `varchar(40)` column. Flagged
+  as a separate task (likely fix: `Guid.NewGuid().ToString("N")`, 32 chars, fits).
+  `dotnet build` 0 errors, all 200 Application unit tests pass. Live-verified everything in this
+  feature's own scope: icon upload accepts a valid SVG and serves it back at the returned URL
+  (200), rejects wrong content-type and `<script>`-bearing SVGs (400), and the external-URL
+  rejection on `POST /custom` fires correctly (400) — full category creation with the icon
+  attached couldn't be end-to-end verified because of the unrelated id-length bug above.
+  `docs/api-reference.md` updated (Categories table + new `POST /icons` section).
 - 2026-08-14 — Started Gemini thought-response filtering after a current-month budget question returned a formatting meta-instruction. Approved scope: filter `Part.Thought` at the SDK boundary, request no thought output, treat thought-only output as provider unavailable, preserve HTTP 429-only model fallback, and add provider/persistence regressions without cleaning historical rows.
 - 2026-08-14 — Completed Gemini thought-response filtering: the SDK boundary now returns only non-thought text parts, all generation configs request `IncludeThoughts=false`, and thought-only output follows the existing provider-unavailable path without model failover. Added mixed/thought-only/split-JSON extraction tests and a history-enabled chat regression proving only the friendly fallback is persisted. Focused Gemini tests passed 28/28, focused chat tests passed 6/6, all Application tests passed 200/200, solution build passed with 0 warnings/errors, and the API reached `Now listening on http://0.0.0.0:5122`. No live Gemini call, historical-row cleanup, RAG re-index, commit, or push was performed.
 - 2026-08-14 — Started Gemini quota-aware model fallback. Approved scope: primary plus four Flash-first generation fallbacks, HTTP 429-only failover, per-attempt privacy-safe telemetry, no embedding changes or RAG re-index.
