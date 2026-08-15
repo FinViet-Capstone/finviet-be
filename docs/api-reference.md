@@ -632,7 +632,7 @@ Only computed when `deadline` is set. `monthsRemaining` = whole calendar months 
 ## Scoring Criteria — `api/scoring-criteria` (role: Admin)
 
 Admin-editable weights backing `GET /api/ai/score` (see above). `scoring_criteria` is seeded by
-migration `V0005` with three rows (`spike`, `budget`, `savings`); `SpendingScoreService` reads
+migration `V0004` with three rows (`spike`, `budget`, `savings`); `SpendingScoreService` reads
 `weightWeekly`/`weightMonthly` from this table on every score computation — there is no cache, so
 an update takes effect on the next score request.
 

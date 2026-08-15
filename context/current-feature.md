@@ -36,9 +36,10 @@ In Progress — item 1 (scoring weights) completed on branch `fix/scoring-weight
 
 - Full plan: `C:\Users\Lenovo\.claude\plans\do-c-users-lenovo-source-repos-finviet-f-glittery-octopus.md`.
 - Migration numbering: item 1's seed migration collided with a separate agent's VNPay subscription
-  work, both originally wanting `V0004`. Resolved 2026-08-15 — the VNPay work keeps `V0004`; this
-  migration was renumbered to `V0005__seed_scoring_criteria.sql`.
-- No commit, push, or merge without explicit permission for each branch.
+  work, both originally wanting `V0004`. Briefly renumbered to `V0005` on 2026-08-15, then reverted
+  back to `V0004__seed_scoring_criteria.sql` the same day once this work finished first — the
+  VNPay work renumbers instead when it lands.
+- Merged into `dev` locally on 2026-08-15 per explicit user instruction; not pushed to origin.
 - Prior feature (saving-goal archive follow-up) was completed/implemented locally; its History
   entries are preserved below.
 
@@ -74,7 +75,7 @@ In Progress — item 1 (scoring weights) completed on branch `fix/scoring-weight
 
 <!-- Keep this updated. Earliest to latest -->
 - 2026-08-15 — Completed item 1 (scoring weights) on branch `fix/scoring-weights`: new migration
-  (originally `V0004`, renumbered to `V0005__seed_scoring_criteria.sql` — see below) seeds
+  `V0004__seed_scoring_criteria.sql` (briefly renumbered to `V0005` and back — see below) seeds
   `scoring_criteria` (previously empty since `V0002` deliberately excluded it) with the weights
   that were hardcoded in `SpendingScoreService.ComputeAsync`; that method now reads
   `WeightWeekly`/`WeightMonthly` from the table instead. New `ScoringCriteriaController`
@@ -89,6 +90,11 @@ In Progress — item 1 (scoring weights) completed on branch `fix/scoring-weight
   user instruction, after the other agent's VNPay subscription work claimed `V0004`. Updated the
   two doc references (`docs/api-reference.md`, this file) accordingly; no re-verification needed
   since only the filename changed, not the SQL content.
+- 2026-08-15 — Reverted the rename: user confirmed this work finished first, so it keeps `V0004`
+  and the VNPay work renumbers instead when it lands. Renamed back to
+  `V0004__seed_scoring_criteria.sql`, restored the two doc references, rebuilt, and re-verified the
+  migration applies cleanly against the local database. Then merged all 5 branches into `dev`
+  locally per explicit user instruction (not pushed) — see the summary entry below.
 - 2026-08-14 — Started Gemini thought-response filtering after a current-month budget question returned a formatting meta-instruction. Approved scope: filter `Part.Thought` at the SDK boundary, request no thought output, treat thought-only output as provider unavailable, preserve HTTP 429-only model fallback, and add provider/persistence regressions without cleaning historical rows.
 - 2026-08-14 — Completed Gemini thought-response filtering: the SDK boundary now returns only non-thought text parts, all generation configs request `IncludeThoughts=false`, and thought-only output follows the existing provider-unavailable path without model failover. Added mixed/thought-only/split-JSON extraction tests and a history-enabled chat regression proving only the friendly fallback is persisted. Focused Gemini tests passed 28/28, focused chat tests passed 6/6, all Application tests passed 200/200, solution build passed with 0 warnings/errors, and the API reached `Now listening on http://0.0.0.0:5122`. No live Gemini call, historical-row cleanup, RAG re-index, commit, or push was performed.
 - 2026-08-14 — Started Gemini quota-aware model fallback. Approved scope: primary plus four Flash-first generation fallbacks, HTTP 429-only failover, per-attempt privacy-safe telemetry, no embedding changes or RAG re-index.
