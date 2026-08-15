@@ -2,102 +2,46 @@
 
 <!-- Feature name and short description -->
 
-Feature: canonical notification persistence with multi-device Expo push delivery and authenticated
-device registration for the FinViet mobile app.
-Backend gaps from `finviet-web/context/backend-gaps.md`, excluding the subscription/payment entry
-(a separate agent owns that). Five independent items, each on its own branch: scoring weights →
-`ScoringCriterion`, admin Buckets CRUD, category custom-icon upload, RAG document `Uri`/preview
-list, and admin category-corrections/users list endpoints (pagination).
+Gemini free-tier model ordering: prioritize the stable generation model with the largest available
+project quota and retain strict, privacy-safe provider failure handling.
 
 ## Status
 
 <!-- Not Started | In Progress | Completed -->
 
-Implemented — automated backend/mobile verification passes; physical-device push acceptance,
-non-production credentials, and migration rehearsal remain before the feature can be marked completed.
-Completed — all 5 items done and merged into `dev` (not pushed to origin).
+Implemented on branch `fix/gemini-free-tier-model-order`; merged with the latest `origin/dev` to
+resolve the pull-request conflict. Deployment configuration and one live quota smoke test remain
+pending explicit permission.
 
 ## Goals
 
 <!-- Goals and requirements -->
 
-- Add authenticated idempotent endpoints to register/upsert and unregister one app installation,
-  scoped to the current customer and carrying an Expo push token, platform, and stable installation
-  identifier.
-- Add a dedicated multi-device `notification_devices` table/entity with customer ownership,
-  timestamps, and uniqueness constraints; do not rely on the legacy single FCM-token setting.
-- Make one notification service operation persist the canonical Notification Center row first and
-  then send a best-effort Expo push containing `notificationId`, `type`, `entityType`, and
-  `entityId`. Provider failure must never roll back persistence.
-- Replace the customer-token no-op and Firebase topic-only paths with per-device Expo Push Service
-  delivery. Remove registrations rejected as invalid/unregistered without logging token values.
-- Route budget alerts, saving-goal milestones, and weekly-report completion through the common
-  persistence/delivery operation while honoring `NotifBudget`, `NotifGoals`, and `NotifReport`.
-- Ensure weekly reports persist a matching `weekly_report` row before push.
-- Preserve existing list/unread/mark-read/mark-all response contracts and customer isolation.
-- Add focused unit and integration coverage for registration ownership/idempotency/token rotation,
-  unregister, canonical payloads, preference suppression, invalid-token cleanup, and persistence
-  despite provider failure.
-1. **Scoring weights** (`fix/scoring-weights`, done): seeded `scoring_criteria`, wired
-   `SpendingScoreService.ComputeAsync` to read weights from it, added admin
-   `GET`/`PATCH /api/scoring-criteria`.
-2. **Bucket admin CRUD** (`fix/bucket-admin-crud`, done): `GET`/`PATCH /api/buckets` for admin, no
-   server-side `IsLocked` enforcement (documented product decision).
-3. **Category icon upload** (`feature/category-icon-upload`, done): `POST /api/categories/icons`
-   (Customer, SVG only, mirrors avatar-upload pattern), wire the returned URL into
-   `CreateCustomCategoryRequest`/`CategoryService.CreateCustomCategoryAsync`.
-4. **RAG document preview** (`feature/rag-document-preview`, done): persist uploaded PDF bytes and
-   set `RagDocument.Uri`; add `GET /api/ai/documents`.
-5. **Admin list endpoints** (`feature/admin-list-endpoints`, done): `GET /api/category-corrections`
-   (category + date-range filter, pagination) and `GET /api/users` (pagination + optional search).
+- Make `gemini-3.1-flash-lite` the primary generation/classification model because the current
+  project dashboard reports 500 free RPD for it without billing.
+- Keep four ordered fallbacks, removing the model with no usable project quota and placing the
+  currently failing `gemini-2.5-flash-lite` last.
+- Preserve HTTP 429-only model failover so authentication, request, model-compatibility, timeout,
+  transport, empty-response, and parse failures are not hidden by extra provider calls.
+- Record a non-429 provider HTTP status as privacy-safe operational metadata without storing provider
+  messages, prompts, answers, financial data, or credentials.
+- Keep Gemini embeddings unchanged at `gemini-embedding-001`/768 dimensions; no migration or RAG
+  re-index is part of this fix.
+- Update focused tests and the Gemini deployment runbook.
 
 ## Notes
 
 <!-- Any extra notes -->
 
-- Cross-repo mobile work is in `D:/SEP490/fe/mobile/finviet-mobile` on the matching
-  `feature/notification-delivery` branch.
-- Persisted notifications are canonical; push is best-effort and must not participate in the
-  database transaction that creates the inbox row.
-- Use Expo Push Service tokens. EAS handles the downstream FCM/APNs credentials for mobile builds;
-  do not add service-account JSON, APNs keys, push tokens, or other credentials to Git.
-- This repository uses immutable DbUp SQL migrations. Add the next zero-padded migration; never
-  edit the released V0001-V0003 scripts.
-- Device registrations must support multiple installations per customer and token rotation without
-  exposing or logging raw tokens.
-- Invalid/unregistered provider responses should delete only the matching registration; transient
-  provider errors retain registrations for a future attempt.
-- No commit, push, deployment, production database action/migration, provider credential change, or
-  branch deletion without explicit permission.
-- 2026-08-15 — Started after confirming `NotificationService.PushFcmAsync` is a no-op,
-  Firebase budget/report notifiers publish to topics the Expo client never subscribes to, no API
-  writes a device token, and weekly-report push does not create a durable notification row.
-- 2026-08-15 — Implemented authenticated customer-scoped device upsert/unregister, the immutable
-  `V0004__notification_devices.sql` migration, multi-installation token ownership/rotation, and
-  canonical notification persistence followed by best-effort Expo Push Service delivery. Push data
-  includes notification/type/entity metadata; only immediate `DeviceNotRegistered` ticket failures
-  remove registrations, and provider failure cannot roll back the inbox row. Budget alerts, goal
-  milestones, and completed weekly reports now use the canonical service while respecting customer
-  preferences. Verified focused notification tests 10/10, all Application tests 210/210, Domain
-  tests 1/1, and the complete solution build with 0 warnings / 0 errors. Mobile verification passes
-  TypeScript, lint, and 109/109 tests. No commit, push, deployment, provider credential change,
-  production migration, or physical-device acceptance was performed.
-- Full plan: `C:\Users\Lenovo\.claude\plans\do-c-users-lenovo-source-repos-finviet-f-glittery-octopus.md`.
-- Migration numbering: item 1's seed migration collided with a separate agent's VNPay subscription
-  work, both originally wanting `V0004`. Briefly renumbered to `V0005` on 2026-08-15, then reverted
-  back to `V0004__seed_scoring_criteria.sql` the same day once this work finished first — the
-  VNPay work renumbers instead when it lands.
-- Live verification uses locally-inserted test accounts (admin `adminmaster`/`123456`, email
-  `khoiislearning@gmail.com`; customer `khoi.test.customer@example.com`), local DB only, not the
-  deployed backend, since the seeded default credentials didn't match this local DB.
-- Two bugs found while verifying, unrelated to the 5 gaps and left unfixed (out of scope):
-  (a) `AvatarService` likely has the same `AppSettings:WebRootPath=""` empty-string bug fixed in
-  `CategoryIconService`/`PdfDocumentIngestionService` — not touched. (b) `POST /api/categories/custom`
-  always 500s — generated id (`"custom_" + Guid.NewGuid()`, 43 chars) exceeds `categories.id`'s
-  `varchar(40)` — flagged as a separate background task (`task_f86a5ff2`).
-- Merged into `dev` locally on 2026-08-15 per explicit user instruction; not pushed to origin.
-- Prior feature (saving-goal archive follow-up) was completed/implemented locally; its Goals/Notes
-  are superseded here but its History entries are preserved below.
+- Production telemetry on 2026-08-15 showed `gemini-3.6-flash` as `rate_limited`, followed by
+  `gemini-2.5-flash-lite` as `error`; strict non-429 handling then correctly stopped before reaching
+  `gemini-3.1-flash-lite`.
+- Runtime environment variables override `appsettings.json`; deployment/restart and a live quota
+  smoke test remain separate outward-facing actions requiring explicit permission.
+- The latest `origin/dev` contains completed notification-delivery and five backend-gap features;
+  their implementation details and history are preserved below during conflict resolution.
+- No API key, billing change, RAG re-index, production database action, deployment, or branch deletion
+  without explicit permission.
 
 - The reported response was a formatting meta-instruction rather than a financial answer. The exact
   text does not exist in repository prompts; Google.GenAI 1.17.0 documents that `response.Text`
@@ -130,6 +74,20 @@ Completed — all 5 items done and merged into `dev` (not pushed to origin).
 ## History
 
 <!-- Keep this updated. Earliest to latest -->
+- 2026-08-15 — Started free-tier model-order fix after provider telemetry proved HTTP 429 failover was
+  working but stopped on the next model's non-429 error. Approved scope: prioritize stable
+  `gemini-3.1-flash-lite`, retain 429-only failover, add privacy-safe HTTP-status telemetry, and leave
+  embedding/RAG unchanged.
+- 2026-08-15 — Implemented `gemini-3.1-flash-lite` as the primary generation model with the ordered
+  free-tier fallback chain `gemini-3-flash-preview` → `gemini-3.6-flash` → `gemini-2.5-flash` →
+  `gemini-2.5-flash-lite`; removed `gemini-2.5-pro`, retained 429-only failover, and added numeric
+  non-429 status metadata without provider messages. Focused Gemini tests passed 29/29, all Application
+  tests passed 201/201, solution build passed with 0 warnings/errors, and `git diff --check` is clean.
+  No live Gemini call, deploy, provider configuration change, billing change, RAG re-index, commit, or
+  push was performed.
+- 2026-08-15 — Merged the latest `origin/dev` into this fix branch after GitHub reported it could not
+  merge automatically. The only conflict was this living feature document; resolved by retaining the
+  complete upstream notification/backend-gap history and making the Gemini fix the current header.
 - 2026-08-15 — Completed item 1 (scoring weights) on branch `fix/scoring-weights`: new migration
   `V0004__seed_scoring_criteria.sql` (briefly renumbered to `V0005` and back — see below) seeds
   `scoring_criteria` (previously empty since `V0002` deliberately excluded it) with the weights
