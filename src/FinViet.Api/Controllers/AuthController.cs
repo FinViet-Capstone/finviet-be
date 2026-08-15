@@ -1,6 +1,7 @@
 using FinViet.Api.Common;
 using FinViet.Application.Common;
 using FinViet.Application.Features.Auth.Commands.AdminLogin;
+using FinViet.Application.Features.Auth.Commands.ChangeAdminPassword;
 using FinViet.Application.Features.Auth.Commands.ChangePassword;
 using FinViet.Application.Features.Auth.Commands.ForgotPassword;
 using FinViet.Application.Features.Auth.Commands.GoogleLogin;
@@ -163,6 +164,20 @@ public class AuthController : ControllerBase
         return Ok(ApiResponse<string>.Ok(result));
     }
 
+    /// <summary>Đổi mật khẩu admin khi đã đăng nhập (yêu cầu mật khẩu hiện tại).</summary>
+    [HttpPost("admin-change-password")]
+    [Authorize(Roles = "Admin")]
+    [ProducesResponseType(typeof(ApiResponse<string>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse), StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> ChangeAdminPassword([FromBody] ChangeAdminPasswordRequest request, CancellationToken ct)
+    {
+        var adminId = User.GetCustomerId();
+        var result = await _mediator.Send(
+            new ChangeAdminPasswordCommand(adminId, request.CurrentPassword, request.NewPassword), ct);
+
+        return Ok(ApiResponse<string>.Ok(result));
+    }
+
     private static string BuildVerifyEmailHtml(bool success, string message)
     {
         var color   = success ? "#10B981" : "#EF4444";
@@ -199,3 +214,4 @@ public record LogoutRequest(string RefreshToken);
 public record ForgotPasswordRequest(string Email);
 public record ResetPasswordRequest(string Token, string NewPassword, string ConfirmPassword);
 public record ChangePasswordRequest(string CurrentPassword, string NewPassword);
+public record ChangeAdminPasswordRequest(string CurrentPassword, string NewPassword);

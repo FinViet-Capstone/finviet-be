@@ -2,42 +2,57 @@
 
 <!-- Feature name and short description -->
 
-Saving-goal archive follow-up: prove archived contribution/withdrawal transactions remain in the
-paged transaction list and monthly summary, and make integration cleanup compatible with that audit trail.
+Admin account management: let an already-logged-in admin create other admin accounts and change
+their own password, instead of every `Admins` row requiring a raw SQL insert. Companion work in
+`finviet-web` on branch `feature/admin-account-management` (same branch name, different repo)
+covers the frontend (create/list-admins screen, JWT propagation, real change-password UI).
 
 ## Status
 
 <!-- Not Started | In Progress | Completed -->
 
-Implemented locally — archive audit-trail integration execution remains pending an explicitly prepared non-production API/database on branch `fix/saving-goal-archive`
+In Progress
 
 ## Goals
 
 <!-- Goals and requirements -->
 
-- Change `DELETE /api/saving-goals/{id}` from physical deletion and ledger reversal to a soft
-  archive that succeeds only when `currentAmount == 0`.
-- Return 422 `goal_balance_must_be_withdrawn` while money remains; the customer must first use the
-  existing idempotent withdrawal endpoint and explicitly select a regular destination wallet.
-- Preserve every linked transaction and contribution/withdrawal row. Archiving must not change any
-  wallet balance.
-- Add active-versus-archived list filtering and allow owned archived detail/ledger reads for a
-  read-only mobile archive section; all mutations continue rejecting archived goals.
-- Return truthful goal fields (`iconEmoji`, `isDeleted`, `createdAt`, `updatedAt`, nullable deadline)
-  and persist the create request's icon.
-- Keep PATCH deadline semantics explicit: a non-null date sets it; omitted/null does not clear it.
-- Update focused/unit/integration coverage and API documentation.
+- `POST /api/auth/admin-change-password` (Admin role): lets an authenticated admin change their
+  own password given the current one, mirroring the existing Customer `/change-password` flow.
+- New `AdminsController` (`api/admins`, Admin role): `GET /` lists all admins; `POST /` creates a
+  new admin with a password the creating ("master") admin types in directly — no auto-generated
+  temp password, per explicit product decision (a new admin can change it themselves once
+  `admin-change-password` exists).
+- No `Admins` table schema change needed — `Username`/`PasswordHash`/`Email`/`CreatedAt` already
+  cover both features, so no new SQL migration.
 
 ## Notes
 
 <!-- Any extra notes -->
 
-- No schema migration is required: `savings_goals.is_deleted`, timestamps, icon, ledger, and
-  transaction links already exist.
-- No restore/unarchive or permanent purge endpoint is included.
-- Cross-repo mobile work is in `D:/SEP490/fe/mobile/finviet-mobile` on
-  `fix/saving-goal-archive-navigation`.
-- No commit, push, production database action, or deployment without explicit permission.
+- This started as a question about how 2FA setup works for FinViet Admin; wiring real 2FA/login
+  itself stayed out of scope. What actually got greenlit for implementation was the admin
+  account-management gap it surfaced (see `finviet-web`'s `context/current-feature.md` for the
+  full chain of reasoning).
+- Built in an isolated git worktree (`finviet-be-admin-mgmt`, branch `feature/admin-account-management`
+  off `origin/dev`) rather than the primary checkout, since the primary `finviet-be` working
+  directory was mid-flight on unrelated concurrent work (`feature/admin-list-endpoints`, building
+  `GET /api/users` and `GET /api/category-corrections` — confirmed non-overlapping: that's the
+  `Customers` table, this is the separate `Admins` table).
+- No commit or push without explicit user permission.
+- 2026-08-15 — Implemented: `ChangeAdminPasswordCommand`/`Validator`/`Handler` (mirrors the
+  existing Customer `ChangePasswordCommandHandler`) + `POST /api/auth/admin-change-password` on
+  `AuthController`, reading the caller's `AdminId` via the existing `User.GetCustomerId()` claim
+  extension (admin JWTs already stamp `AdminId` into that same `"customerId"` claim, a pre-existing
+  quirk from `AdminLoginCommandHandler`). New `CreateAdminCommand`/`Validator`/`Handler`
+  (`Features/Admins/Commands/CreateAdmin/`) + new `AdminsController` (`GET /api/admins` — flat
+  unpaginated list, `POST /api/admins` — create, uniqueness pre-check on username/email plus a
+  `DbUpdateException` unique-violation backstop mirroring `RegisterCommandHandler`'s pattern).
+  `docs/api-reference.md` updated (new Admins section + admin-change-password row/detail in Auth).
+  `dotnet build` passed with 0 errors (6 pre-existing nullable warnings, unchanged). No unit tests
+  added — both handlers are thin CRUD mirrors of already-tested siblings (`ChangePasswordCommandHandler`,
+  `RegisterCommandHandler`) with no new pure logic branches. Not yet committed.
+
 - 2026-08-14 — Started after confirming current DELETE reverses every contribution/withdrawal,
   removes generated transactions and ledger rows, and physically deletes the goal. Approved
   replacement is locked zero-balance soft archive with preserved read-only history.
