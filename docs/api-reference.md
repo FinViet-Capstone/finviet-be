@@ -596,7 +596,7 @@ Only computed when `deadline` is set. `monthsRemaining` = whole calendar months 
 - **spikeScore** (trailing 30 days, needs ≥7 distinct spending days else `null`): per-day z-score vs mean/stdev; a day counts as a spike if `z > 2.0` **and** `amount > 200,000₫`. `penalty = spikeDays*15 + Σ(z-2.0)*5`; `score = max(0, 100-penalty)` (100 if flat spending).
 - **budgetScore**: per-bucket pacing vs `monthlyLimit × elapsedFraction`, weighted NEEDS 0.6 / WANTS 0.4 / SAVINGS 0 (excluded); `null` if no budgets exist.
 - **savingsScore** (monthly only; needs income set and ≥3 months of history over a 6-month lookback, else `null`): `attainment = clamp(meanRate/0.20, 0, 1)`, `consistency = clamp(1-CV, 0, 1)`, `score = (attainment*0.6 + consistency*0.4)*100`.
-- **weights** are hardcoded constants (not config-driven): WEEKLY = spike 50/budget 50; MONTHLY = spike 30/budget 40/savings 30. Missing metrics are dropped and remaining weights renormalized to 100; `finalScore=50` (neutral) if none are available.
+- **weights** are read from `scoring_criteria` (admin-configurable, see [Scoring Criteria](#scoring-criteria--apiscoring-criteria-role-admin) below); seeded defaults are WEEKLY = spike 50/budget 50, MONTHLY = spike 30/budget 40/savings 30. Missing metrics are dropped and remaining weights renormalized to 100; `finalScore=50` (neutral) if none are available.
 - **colorBadge**: `>=80 → GREEN`, `>=50 → YELLOW`, else `RED`.
 - **comment**: separate Gemini Flash generation call for 1–2 Vietnamese sentences; on provider unavailability the comment is `null` (never fails the request).
 - Whenever the weekly job persists a score snapshot, it's idempotent per `(customer, view, periodStart)`.
@@ -626,6 +626,24 @@ Only computed when `deadline` is set. `monthsRemaining` = whole calendar months 
 ### POST `/documents` (Admin)
 **Authorization/validation**: Exposed by a separate Admin-only controller at the existing `/api/ai/documents` route, avoiding combined Customer+Admin authorization. `[RequestSizeLimit(20 MB)]`; null/empty file → 400. Empty extracted text → 400.
 **Business logic**: PdfPig extracts pages and chunks text into 800-character windows with 150-character overlap. `gemini-embedding-001` generates exactly 768 dimensions through the official SDK; wrong/empty output fails as provider unavailable. Documents are global (`customerId=null`). Existing Ollama vectors must be re-indexed before `Gemini:RagEnabled=true`; see `docs/gemini-setup.md`.
+
+---
+
+## Scoring Criteria — `api/scoring-criteria` (role: Admin)
+
+Admin-editable weights backing `GET /api/ai/score` (see above). `scoring_criteria` is seeded by
+migration `V0004` with three rows (`spike`, `budget`, `savings`); `SpendingScoreService` reads
+`weightWeekly`/`weightMonthly` from this table on every score computation — there is no cache, so
+an update takes effect on the next score request.
+
+### GET `/`
+Returns every criterion: `{ code, criterionName, weightWeekly, weightMonthly, version, updatedAt }[]`.
+
+### PATCH `/{code}`
+Body: `{ weightWeekly: number, weightMonthly: number }`. Both required, each validated to be in
+`[0, 100]` (400 otherwise); 404 if `code` doesn't match an existing row. On success, increments
+`version` and sets `updatedAt`. Weights are not required to sum to 100 for a given period — the
+score formula renormalizes over whichever metrics have data for that computation.
 
 ---
 
