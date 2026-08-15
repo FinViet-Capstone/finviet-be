@@ -11,8 +11,8 @@ list, and admin category-corrections/users list endpoints (pagination).
 
 <!-- Not Started | In Progress | Completed -->
 
-In Progress — items 1-3 completed (`fix/scoring-weights`, `fix/bucket-admin-crud`,
-`feature/category-icon-upload`); items 4-5 not started.
+In Progress — items 1-4 completed (`fix/scoring-weights`, `fix/bucket-admin-crud`,
+`feature/category-icon-upload`, `feature/rag-document-preview`); item 5 not started.
 
 ## Goals
 
@@ -26,8 +26,8 @@ In Progress — items 1-3 completed (`fix/scoring-weights`, `fix/bucket-admin-cr
 3. **Category icon upload** (`feature/category-icon-upload`, done): `POST /api/categories/icons`
    (Customer, SVG only, mirrors avatar-upload pattern), wire the returned URL into
    `CreateCustomCategoryRequest`/`CategoryService.CreateCustomCategoryAsync`.
-4. **RAG document preview** (`feature/rag-document-preview`): persist uploaded PDF bytes and set
-   `RagDocument.Uri`; add `GET /api/ai/documents`.
+4. **RAG document preview** (`feature/rag-document-preview`, done): persist uploaded PDF bytes and
+   set `RagDocument.Uri`; add `GET /api/ai/documents`.
 5. **Admin list endpoints** (`feature/admin-list-endpoints`): `GET /api/category-corrections`
    (category + date-range filter, pagination) and `GET /api/users` (pagination + optional search).
 
@@ -139,6 +139,25 @@ In Progress — items 1-3 completed (`fix/scoring-weights`, `fix/bucket-admin-cr
   rejection on `POST /custom` fires correctly (400) — full category creation with the icon
   attached couldn't be end-to-end verified because of the unrelated id-length bug above.
   `docs/api-reference.md` updated (Categories table + new `POST /icons` section).
+- 2026-08-15 — Completed item 4 (RAG document preview) on branch `feature/rag-document-preview`:
+  `PdfDocumentIngestionService.IngestPdfAsync` now buffers the upload into memory once, validates
+  the `%PDF` magic number (400 otherwise — no format check existed before), writes the raw bytes
+  to `wwwroot/documents/{id}.pdf` (served via the already-wired `UseStaticFiles()`), and sets
+  `RagDocument.Uri` accordingly (previously always null for PDFs — the file was discarded after
+  text extraction). New `IRagDocumentQueryService`/`RagDocumentQueryService` (direct DbContext
+  query, matching the AI feature area's existing non-MediatR convention) backs a new
+  `GET /api/ai/documents` on `AdminAiController`, returning
+  `{ id, title, sourceType, uri?, createdAt, chunkCount }` newest first, no pagination (low,
+  admin-curated volume). `dotnet build` 0 errors, all 200 Application unit tests pass.
+  Live-verified: non-PDF upload rejected (400 wrong magic bytes); a hand-crafted real PDF passed
+  magic-byte validation, text extraction, and disk-write (confirmed the file landed at
+  `wwwroot/documents/{guid}.pdf`) — ingestion then failed at the Gemini embedding call itself
+  (`ai_provider_unavailable`), a pre-existing external dependency unreachable in this sandbox, not
+  related to this change. Verified the list endpoint and static serving independently by
+  inserting a test `rag_document` row directly: `GET /api/ai/documents` returned it with the
+  correct shape and the file served at its `uri` with 200; test row and file removed afterward.
+  `docs/api-reference.md` updated (`POST /documents` validation note + new `GET /documents`
+  section).
 - 2026-08-14 — Started Gemini thought-response filtering after a current-month budget question returned a formatting meta-instruction. Approved scope: filter `Part.Thought` at the SDK boundary, request no thought output, treat thought-only output as provider unavailable, preserve HTTP 429-only model fallback, and add provider/persistence regressions without cleaning historical rows.
 - 2026-08-14 — Completed Gemini thought-response filtering: the SDK boundary now returns only non-thought text parts, all generation configs request `IncludeThoughts=false`, and thought-only output follows the existing provider-unavailable path without model failover. Added mixed/thought-only/split-JSON extraction tests and a history-enabled chat regression proving only the friendly fallback is persisted. Focused Gemini tests passed 28/28, focused chat tests passed 6/6, all Application tests passed 200/200, solution build passed with 0 warnings/errors, and the API reached `Now listening on http://0.0.0.0:5122`. No live Gemini call, historical-row cleanup, RAG re-index, commit, or push was performed.
 - 2026-08-14 — Started Gemini quota-aware model fallback. Approved scope: primary plus four Flash-first generation fallbacks, HTTP 429-only failover, per-attempt privacy-safe telemetry, no embedding changes or RAG re-index.
