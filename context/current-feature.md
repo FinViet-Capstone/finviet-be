@@ -35,9 +35,9 @@ In Progress — item 1 (scoring weights) completed on branch `fix/scoring-weight
 <!-- Any extra notes -->
 
 - Full plan: `C:\Users\Lenovo\.claude\plans\do-c-users-lenovo-source-repos-finviet-f-glittery-octopus.md`.
-- Migration numbering collision: item 1 needs a new seed migration that also wants to be `V0004`,
-  same number a separate agent's VNPay subscription work claims. Coordinate at merge time —
-  whichever merges first keeps `V0004`, the other renumbers to `V0005`.
+- Migration numbering: item 1's seed migration collided with a separate agent's VNPay subscription
+  work, both originally wanting `V0004`. Resolved 2026-08-15 — the VNPay work keeps `V0004`; this
+  migration was renumbered to `V0005__seed_scoring_criteria.sql`.
 - No commit, push, or merge without explicit permission for each branch.
 - Prior feature (saving-goal archive follow-up) was completed/implemented locally; its History
   entries are preserved below.
@@ -74,17 +74,21 @@ In Progress — item 1 (scoring weights) completed on branch `fix/scoring-weight
 
 <!-- Keep this updated. Earliest to latest -->
 - 2026-08-15 — Completed item 1 (scoring weights) on branch `fix/scoring-weights`: new migration
-  `V0004__seed_scoring_criteria.sql` seeds `scoring_criteria` (previously empty since `V0002`
-  deliberately excluded it) with the weights that were hardcoded in
-  `SpendingScoreService.ComputeAsync`; that method now reads `WeightWeekly`/`WeightMonthly` from
-  the table instead. New `ScoringCriteriaController` (`GET`/`PATCH /api/scoring-criteria`, Admin
-  role) backed by `GetScoringCriteriaQuery`/`UpdateScoringCriterionCommand`. `dotnet build` 0
-  errors, all 200 Application unit tests pass. Live-verified against a local PostgreSQL instance:
-  migration applied cleanly, `GET` returns seeded rows, `PATCH` persists and increments `Version`,
+  (originally `V0004`, renumbered to `V0005__seed_scoring_criteria.sql` — see below) seeds
+  `scoring_criteria` (previously empty since `V0002` deliberately excluded it) with the weights
+  that were hardcoded in `SpendingScoreService.ComputeAsync`; that method now reads
+  `WeightWeekly`/`WeightMonthly` from the table instead. New `ScoringCriteriaController`
+  (`GET`/`PATCH /api/scoring-criteria`, Admin role) backed by
+  `GetScoringCriteriaQuery`/`UpdateScoringCriterionCommand`. `dotnet build` 0 errors, all 200
+  Application unit tests pass. Live-verified against a local PostgreSQL instance: migration
+  applied cleanly, `GET` returns seeded rows, `PATCH` persists and increments `Version`,
   out-of-range weight returns 400, unknown `code` returns 404, unauthenticated returns 401; test
   change reverted to defaults afterward. `docs/api-reference.md` updated (score-weights note +
-  new Scoring Criteria section). Migration-numbering note: a separate agent's VNPay subscription
-  work also wants `V0004` — coordinate at merge time.
+  new Scoring Criteria section).
+- 2026-08-15 — Renamed the seed migration from `V0004` to `V0005__seed_scoring_criteria.sql` per
+  user instruction, after the other agent's VNPay subscription work claimed `V0004`. Updated the
+  two doc references (`docs/api-reference.md`, this file) accordingly; no re-verification needed
+  since only the filename changed, not the SQL content.
 - 2026-08-14 — Started Gemini thought-response filtering after a current-month budget question returned a formatting meta-instruction. Approved scope: filter `Part.Thought` at the SDK boundary, request no thought output, treat thought-only output as provider unavailable, preserve HTTP 429-only model fallback, and add provider/persistence regressions without cleaning historical rows.
 - 2026-08-14 — Completed Gemini thought-response filtering: the SDK boundary now returns only non-thought text parts, all generation configs request `IncludeThoughts=false`, and thought-only output follows the existing provider-unavailable path without model failover. Added mixed/thought-only/split-JSON extraction tests and a history-enabled chat regression proving only the friendly fallback is persisted. Focused Gemini tests passed 28/28, focused chat tests passed 6/6, all Application tests passed 200/200, solution build passed with 0 warnings/errors, and the API reached `Now listening on http://0.0.0.0:5122`. No live Gemini call, historical-row cleanup, RAG re-index, commit, or push was performed.
 - 2026-08-14 — Started Gemini quota-aware model fallback. Approved scope: primary plus four Flash-first generation fallbacks, HTTP 429-only failover, per-attempt privacy-safe telemetry, no embedding changes or RAG re-index.
