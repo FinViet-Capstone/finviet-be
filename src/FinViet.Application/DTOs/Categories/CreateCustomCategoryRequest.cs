@@ -12,4 +12,7 @@ public class CreateCustomCategoryRequest
     public string Bucket { get; set; } = string.Empty;
 
     public string? Color { get; set; }
+
+    /// <summary>URL returned by <c>POST /api/categories/icons</c>, if the customer uploaded one.</summary>
+    public string? Icon { get; set; }
 }

@@ -4,15 +4,26 @@ namespace FinViet.Application.Interfaces;
 
 public interface INotificationService
 {
-    /// <summary>
-    /// Persists an in-app notification for a customer and (when configured) pushes it via FCM.
-    /// Optionally linked to a saving goal.
-    /// </summary>
-    Task NotifyAsync(
+    /// <summary>Registers or rotates one authenticated app installation's Expo push token.</summary>
+    Task RegisterDeviceAsync(
         Guid customerId,
+        RegisterNotificationDeviceRequest request,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Removes one authenticated app installation. Returns false when it is not registered.</summary>
+    Task<bool> UnregisterDeviceAsync(
+        Guid customerId,
+        string installationId,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Persists the canonical notification row, then sends a best-effort push.</summary>
+    Task<NotificationResponse> NotifyAsync(
+        Guid customerId,
+        string type,
         string title,
         string message,
-        Guid? goalId = null,
+        string? entityType = null,
+        Guid? entityId = null,
         CancellationToken cancellationToken = default);
 
     /// <summary>Lists a customer's notifications (newest first). Set <paramref name="unreadOnly"/> to filter to unread.</summary>

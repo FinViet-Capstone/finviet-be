@@ -117,6 +117,7 @@ public class WeeklyReportService : IWeeklyReportService
         // 4. Push notification (the notifier enforces the customer's notification preference).
         await _notifier.SendReportReadyAsync(
             customerId,
+            report.ReportId,
             "Báo cáo tài chính tuần đã sẵn sàng",
             $"Điểm ví tuần này: {score.FinalScore:0}/100. Xem chi tiết trong ứng dụng.",
             cancellationToken);

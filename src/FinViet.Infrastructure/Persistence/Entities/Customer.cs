@@ -75,6 +75,8 @@ public partial class Customer
 
     public virtual ICollection<Notification> Notifications { get; set; } = new List<Notification>();
 
+    public virtual ICollection<NotificationDevice> NotificationDevices { get; set; } = new List<NotificationDevice>();
+
     public virtual ICollection<SavingGoal> SavingGoals { get; set; } = new List<SavingGoal>();
 
     public virtual ICollection<Wallet> Wallets { get; set; } = new List<Wallet>();
