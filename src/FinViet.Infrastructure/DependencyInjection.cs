@@ -7,6 +7,7 @@ using FinViet.Infrastructure.ExternalServices.Notification;
 using FinViet.Infrastructure.ExternalServices.Ocr;
 using FinViet.Infrastructure.ExternalServices.TransactionImport;
 using FinViet.Infrastructure.ExternalServices.SePay;
+using FinViet.Infrastructure.ExternalServices.VNPay;
 using FinViet.Infrastructure.Features.Auth.Commands.Login;
 using FinViet.Infrastructure.Identity;
 using FinViet.Infrastructure.Persistence.Context;
@@ -47,6 +48,7 @@ public static class DependencyInjection
         dataSourceBuilder.MapEnum<NotificationType>("notification_type");
         dataSourceBuilder.MapEnum<NotificationEntityType>("notification_entity_type");
         dataSourceBuilder.MapEnum<SubscriptionStatus>("subscription_status");
+        dataSourceBuilder.MapEnum<PaymentStatus>("payment_status");
         dataSourceBuilder.MapEnum<ChatRole>("chat_role");
         dataSourceBuilder.MapEnum<ScoreView>("score_view");
         dataSourceBuilder.MapEnum<ScoreColor>("score_color");
@@ -80,6 +82,17 @@ public static class DependencyInjection
             http.Timeout = TimeSpan.FromSeconds(Math.Clamp(options.TimeoutSeconds, 5, 120));
         });
 
+        // VNPay (recurring/tokenized billing). TmnCode/HashSecret are validated at the point of
+        // use (VNPayClient.EnsureConfigured), not at startup, so the API still boots in
+        // environments without VNPay configured — same convention as SePay's WebhookApiKey.
+        services.AddOptions<VNPayOptions>()
+            .Bind(configuration.GetSection(VNPayOptions.SectionName))
+            .Validate(options => options.TimeoutSeconds is >= 5 and <= 120,
+                "VNPay:TimeoutSeconds must be between 5 and 120.")
+            .ValidateOnStart();
+        services.AddHttpClient<IVNPayClient, VNPayClient>();
+        services.AddScoped<ISubscriptionPaymentResultService, SubscriptionPaymentResultService>();
+
         // JWT
         services.AddScoped<IJwtTokenService, JwtTokenService>();
 
@@ -88,10 +101,12 @@ public static class DependencyInjection
 
         // Firebase Auth
         services.AddScoped<IFirebaseAuthService, FirebaseAuthService>();
-        services.AddScoped<IBudgetAlertNotifier, FirebaseBudgetAlertNotifier>();
 
         // Avatar storage
         services.AddScoped<IAvatarService, AvatarService>();
+
+        // Category icon storage
+        services.AddScoped<ICategoryIconService, CategoryIconService>();
 
         // Repositories
         services.AddScoped<ITransactionRepository, TransactionRepository>();
@@ -122,7 +137,14 @@ public static class DependencyInjection
         services.AddScoped<IMerchantRuleService, MerchantRuleService>();
 
         // Saving Goals & Notifications
+        services.AddHttpClient<INotificationPushSender, ExpoNotificationPushSender>(http =>
+        {
+            http.BaseAddress = new Uri("https://exp.host/--/api/v2/");
+            http.Timeout = TimeSpan.FromSeconds(15);
+        });
         services.AddScoped<INotificationService, NotificationService>();
+        services.AddScoped<IBudgetAlertNotifier, NotificationBudgetAlertNotifier>();
+        services.AddScoped<IAiReportNotifier, NotificationAiReportNotifier>();
         services.AddScoped<ISavingGoalService, SavingGoalService>();
 
         // LoginCommandHandler exposed as scoped service for GoogleLoginCommandHandler to reuse
@@ -138,10 +160,10 @@ public static class DependencyInjection
 
                 options.GenerationFallbackModels =
                 [
-                    "gemini-2.5-flash-lite",
-                    "gemini-3.1-flash-lite",
                     "gemini-3-flash-preview",
-                    "gemini-2.5-pro"
+                    "gemini-3.6-flash",
+                    "gemini-2.5-flash",
+                    "gemini-2.5-flash-lite"
                 ];
             })
             .Validate(options => !string.IsNullOrWhiteSpace(options.ApiKey),
@@ -187,7 +209,6 @@ public static class DependencyInjection
         services.AddScoped<IFinancialContextService, FinancialContextService>();
         services.AddScoped<IWeeklyReportService, WeeklyReportService>();
         services.AddScoped<IAiChatService, AiChatService>();
-        services.AddScoped<IAiReportNotifier, FirebaseAiReportNotifier>();
 
         // ── RAG layer (pgvector + Gemini 768-dimensional embeddings) ──────────────
         services.AddScoped<IEmbeddingService>(sp => new GeminiEmbeddingService(
@@ -200,8 +221,10 @@ public static class DependencyInjection
         services.AddScoped<IRagRetriever, PgVectorRagRetriever>();
         services.AddScoped<IRagEmbeddingReindexService, RagEmbeddingReindexService>();
         services.AddScoped<IDocumentIngestionService, PdfDocumentIngestionService>();
+        services.AddScoped<IRagDocumentQueryService, RagDocumentQueryService>();
 
         services.AddHostedService<WeeklyReportScheduler>();
+        services.AddHostedService<SubscriptionRenewalScheduler>();
 
         return services;
     }

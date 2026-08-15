@@ -1,4 +1,5 @@
 using FinViet.Application.Common;
+using FinViet.Application.DTOs.Ai;
 using FinViet.Application.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -11,10 +12,12 @@ namespace FinViet.Api.Controllers;
 public class AdminAiController : ControllerBase
 {
     private readonly IDocumentIngestionService _ingestion;
+    private readonly IRagDocumentQueryService _documents;
 
-    public AdminAiController(IDocumentIngestionService ingestion)
+    public AdminAiController(IDocumentIngestionService ingestion, IRagDocumentQueryService documents)
     {
         _ingestion = ingestion;
+        _documents = documents;
     }
 
     /// <summary>Ingest a finance PDF into the global knowledge corpus available to customer chats.</summary>
@@ -35,5 +38,14 @@ public class AdminAiController : ControllerBase
             cancellationToken);
 
         return Ok(ApiResponse<Guid>.Ok(documentId, "Đã nạp tài liệu vào kho tri thức."));
+    }
+
+    /// <summary>List RAG documents (global + per-customer) for the Knowledge Base admin screen.</summary>
+    [HttpGet("documents")]
+    public async Task<ActionResult<ApiResponse<IReadOnlyList<RagDocumentResponse>>>> GetDocuments(
+        CancellationToken cancellationToken)
+    {
+        var documents = await _documents.GetDocumentsAsync(cancellationToken);
+        return Ok(ApiResponse<IReadOnlyList<RagDocumentResponse>>.Ok(documents));
     }
 }

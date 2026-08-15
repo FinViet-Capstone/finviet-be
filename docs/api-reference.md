@@ -228,11 +228,12 @@ Never includes `passwordHash`.
 | DELETE | `/custom/{id}` | Customer | — | `ApiResponse<object?>` |
 | PUT | `/{id}/bucket` | Customer | `SetCategoryBucketRequest` | `ApiResponse<CategoryResponse>` |
 | DELETE | `/{id}/bucket` | Customer | — | `ApiResponse<CategoryResponse>` |
+| POST | `/icons` | Customer | multipart `file` (SVG) | `ApiResponse<string>` (icon URL) |
 
 **CategoryResponse**: `{ categoryId, categoryName, nameVi?, nameEn?, type, isMandatory, expenseClass?, icon?, color?, sortOrder? }`
 **CreateCategoryRequest** (Admin): `{ categoryId?, categoryName?, nameVi?, nameEn?, type, isMandatory, expenseClass?, icon?, color?, sortOrder? }`
 **UpdateCategoryRequest** (Admin): same, all optional, no `categoryId`.
-**CreateCustomCategoryRequest** (Customer): `{ name, bucket: "needs"|"wants"|"savings", color? }` — no `type` (always `expense`); `icon` is device-local, never sent.
+**CreateCustomCategoryRequest** (Customer): `{ name, bucket: "needs"|"wants"|"savings", color?, icon? }` — no `type` (always `expense`); `icon`, if provided, must be a URL previously returned by `POST /icons` (400 otherwise).
 **SetCategoryBucketRequest**: `{ bucketId: "needs"|"wants"|"savings" }`
 
 ### GET `/` , GET `/{id}`
@@ -243,8 +244,12 @@ Never includes `passwordHash`.
 **Business logic**: If no `categoryId` given, auto-generates slug `cat_<slugified-name-en>` (accent-stripped, non-alphanumeric → `_`), appending `_2`, `_3`... on collision.
 
 ### POST `/custom` (Customer)
-**Validation**: `name.Trim()` required else 400 "Category name is required." `bucket` normalized to needs/wants/savings, same error format as admin create. Name uniqueness checked scoped to `type="expense"`.
-**Business logic**: Always `type="expense"`, `isMandatory=false`, `icon=null`. `categoryId = "custom_" + Guid.NewGuid()`. Immediately seeds an active `CustomerCategory` override row (`source="system"`) with the chosen bucket — the category is usable immediately without a follow-up `PUT .../bucket` call, and this is also what makes it visible to the creator.
+**Validation**: `name.Trim()` required else 400 "Category name is required." `bucket` normalized to needs/wants/savings, same error format as admin create. Name uniqueness checked scoped to `type="expense"`. `icon`, if provided, must start with `/category-icons/` (400 "Icon must be a URL returned by POST /api/categories/icons." otherwise) — reject anything not obtained from the upload endpoint below.
+**Business logic**: Always `type="expense"`, `isMandatory=false`. `categoryId = "custom_" + Guid.NewGuid()`. Immediately seeds an active `CustomerCategory` override row (`source="system"`) with the chosen bucket — the category is usable immediately without a follow-up `PUT .../bucket` call, and this is also what makes it visible to the creator.
+
+### POST `/icons` (Customer)
+**Validation**: `file` required (400 if null/empty). Content-type must be exactly `image/svg+xml` (400 "Only SVG icons are allowed."). Size must be 1 byte–200 KB (400 otherwise). Content must start with `<svg`/`<?xml` after trimming (400 "File content is not a valid SVG."). Rejects any case-insensitive `<script` tag or `on*=` event-handler attribute (400 "SVG icon must not contain scripts or event handlers.") as a defense-in-depth XSS guard before persisting/serving the file.
+**Business logic**: Writes to `wwwroot/category-icons/{guid}.svg`, served statically at `/category-icons/{guid}.svg`. Returns the relative URL only — pass it as `icon` on `POST /custom` to attach it to a category. Standalone upload; nothing is persisted to the database by this endpoint itself.
 
 ### PATCH `/{id}` (Admin)
 **Validation**: `type`, if provided, re-normalized. `categoryName`/`nameVi`, if provided, must not be blank (400 "Category name cannot be empty."); uniqueness re-checked excluding self. `expenseClass`, if provided, normalized against the (possibly just-updated) type.
@@ -259,6 +264,26 @@ Never includes `passwordHash`.
 
 ### DELETE `/{id}/bucket` (Customer)
 **Business logic**: If an active override exists, sets `IsActive=false` (reverts to global default); no-op (not an error) if none exists.
+
+---
+
+## Buckets — `api/buckets` (role: Admin)
+
+The fixed 3-row `needs`/`wants`/`savings` lookup table (display name, color, icon, sort order,
+`isLocked`). No create/delete — rows are seeded by `V0002` and only editable in place.
+
+| Method | Path | Request | Response |
+|---|---|---|---|
+| GET | `/` | — | `ApiResponse<BucketResponse[]>` |
+| PATCH | `/{id}` | `UpdateBucketRequest` | `ApiResponse<BucketResponse>` (404) |
+
+**BucketResponse**: `{ id, nameVi, nameEn, color?, icon?, sortOrder?, isLocked }`
+**UpdateBucketRequest**: `{ nameVi?, nameEn?, color?, icon?, sortOrder? }` — partial update, only
+non-null fields applied.
+
+**Business logic**: `isLocked` (`savings=true`, `needs`/`wants=false`) is intentionally **not**
+enforced here — admin edits are allowed on every bucket including the locked one, per product
+direction (the admin frontend dropped its lock-based UI restriction; see `backend-gaps.md`).
 
 ---
 
@@ -626,7 +651,7 @@ Only computed when `deadline` is set. `monthsRemaining` = whole calendar months 
 - **spikeScore** (trailing 30 days, needs ≥7 distinct spending days else `null`): per-day z-score vs mean/stdev; a day counts as a spike if `z > 2.0` **and** `amount > 200,000₫`. `penalty = spikeDays*15 + Σ(z-2.0)*5`; `score = max(0, 100-penalty)` (100 if flat spending).
 - **budgetScore**: per-bucket pacing vs `monthlyLimit × elapsedFraction`, weighted NEEDS 0.6 / WANTS 0.4 / SAVINGS 0 (excluded); `null` if no budgets exist.
 - **savingsScore** (monthly only; needs income set and ≥3 months of history over a 6-month lookback, else `null`): `attainment = clamp(meanRate/0.20, 0, 1)`, `consistency = clamp(1-CV, 0, 1)`, `score = (attainment*0.6 + consistency*0.4)*100`.
-- **weights** are hardcoded constants (not config-driven): WEEKLY = spike 50/budget 50; MONTHLY = spike 30/budget 40/savings 30. Missing metrics are dropped and remaining weights renormalized to 100; `finalScore=50` (neutral) if none are available.
+- **weights** are read from `scoring_criteria` (admin-configurable, see [Scoring Criteria](#scoring-criteria--apiscoring-criteria-role-admin) below); seeded defaults are WEEKLY = spike 50/budget 50, MONTHLY = spike 30/budget 40/savings 30. Missing metrics are dropped and remaining weights renormalized to 100; `finalScore=50` (neutral) if none are available.
 - **colorBadge**: `>=80 → GREEN`, `>=50 → YELLOW`, else `RED`.
 - **comment**: separate Gemini Flash generation call for 1–2 Vietnamese sentences; on provider unavailability the comment is `null` (never fails the request).
 - Whenever the weekly job persists a score snapshot, it's idempotent per `(customer, view, periodStart)`.
@@ -654,8 +679,57 @@ Only computed when `deadline` is set. `monthsRemaining` = whole calendar months 
 - Remaining booleans control default chat persistence, scheduled reports and balances/transactions/budgets/goals/reports/RAG scopes.
 
 ### POST `/documents` (Admin)
-**Authorization/validation**: Exposed by a separate Admin-only controller at the existing `/api/ai/documents` route, avoiding combined Customer+Admin authorization. `[RequestSizeLimit(20 MB)]`; null/empty file → 400. Empty extracted text → 400.
-**Business logic**: PdfPig extracts pages and chunks text into 800-character windows with 150-character overlap. `gemini-embedding-001` generates exactly 768 dimensions through the official SDK; wrong/empty output fails as provider unavailable. Documents are global (`customerId=null`). Existing Ollama vectors must be re-indexed before `Gemini:RagEnabled=true`; see `docs/gemini-setup.md`.
+**Authorization/validation**: Exposed by a separate Admin-only controller at the existing `/api/ai/documents` route, avoiding combined Customer+Admin authorization. `[RequestSizeLimit(20 MB)]`; null/empty file → 400. First 4 bytes must be the PDF magic number (`%PDF`) → 400 "Tệp không phải PDF hợp lệ." otherwise. Empty extracted text → 400.
+**Business logic**: PdfPig extracts pages and chunks text into 800-character windows with 150-character overlap. `gemini-embedding-001` generates exactly 768 dimensions through the official SDK; wrong/empty output fails as provider unavailable. Documents are global (`customerId=null`). The uploaded PDF's raw bytes are now persisted to `wwwroot/documents/{id}.pdf` and served statically at `Uri = "/documents/{id}.pdf"` (previously discarded after text extraction, leaving `Uri` null). Existing Ollama vectors must be re-indexed before `Gemini:RagEnabled=true`; see `docs/gemini-setup.md`.
+
+### GET `/documents` (Admin)
+**Business logic**: Lists every `RagDocument` (global PDFs and per-customer weekly-report narratives) newest first: `{ id, title, sourceType, uri?, createdAt, chunkCount }`. `uri` is a servable `/documents/{id}.pdf` path for `sourceType="pdf"`; for `sourceType="weekly_report"` it's a non-dereferenceable `report:{id}` idempotency marker, not a real link. No pagination — admin-curated, low document volume.
+
+---
+
+## Scoring Criteria — `api/scoring-criteria` (role: Admin)
+
+Admin-editable weights backing `GET /api/ai/score` (see above). `scoring_criteria` is seeded by
+migration `V0004` with three rows (`spike`, `budget`, `savings`); `SpendingScoreService` reads
+`weightWeekly`/`weightMonthly` from this table on every score computation — there is no cache, so
+an update takes effect on the next score request.
+
+### GET `/`
+Returns every criterion: `{ code, criterionName, weightWeekly, weightMonthly, version, updatedAt }[]`.
+
+### PATCH `/{code}`
+Body: `{ weightWeekly: number, weightMonthly: number }`. Both required, each validated to be in
+`[0, 100]` (400 otherwise); 404 if `code` doesn't match an existing row. On success, increments
+`version` and sets `updatedAt`. Weights are not required to sum to 100 for a given period — the
+score formula renormalizes over whichever metrics have data for that computation.
+
+---
+
+## Category Corrections — `api/category-corrections` (role: Admin)
+
+Read-only paginated log of AI-category-guess overrides, written by
+`BeneficiaryRuleService.OverrideCategoryAsync` whenever a customer manually corrects an
+auto-categorized transaction.
+
+| Method | Path | Request | Response |
+|---|---|---|---|
+| GET | `/` | query `CategoryCorrectionQueryDto` | `ApiResponse<PagedResult<CategoryCorrectionResponseDto>>` |
+
+**CategoryCorrectionQueryDto**: `{ page=1, pageSize=20, categoryId?, createdAtFrom?, createdAtTo? }` — `pageSize` clamped to `[1,100]` (falls back to 20 outside that range); `page < 1` falls back to 1. `createdAtFrom`/`createdAtTo` follow the same UTC start-of-day/exclusive-next-day convention as `GET /transactions`'s `from`/`to` (the frontend computes these from its 7/30/90-day preset — there's no server-side `days` param).
+**CategoryCorrectionResponseDto**: `{ logId, customerId?, transactionId?, adminId?, correctedCategoryId?, originalAiGuess?, createdAt? }`
+
+---
+
+## Users — `api/users` (role: Admin)
+
+Read-only paginated customer list for the admin Users screen.
+
+| Method | Path | Request | Response |
+|---|---|---|---|
+| GET | `/` | query `UserQueryDto` | `ApiResponse<PagedResult<UserResponseDto>>` |
+
+**UserQueryDto**: `{ page=1, pageSize=20, search? }` — same page/pageSize clamping as above. `search`, if provided, is a case-insensitive substring match against `email` OR `fullName`.
+**UserResponseDto**: `{ customerId, email, fullName, isActive, isEmailVerified, createdAt? }` — no sensitive fields (no password hash, tokens). Soft-deleted customers (`deletedAt` set) are excluded.
 
 ---
 

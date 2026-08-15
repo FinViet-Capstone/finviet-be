@@ -8,7 +8,7 @@ public class GeminiOptions
 
     public string ApiKey { get; set; } = string.Empty;
 
-    public string FlashModel { get; set; } = "gemini-3.6-flash";
+    public string FlashModel { get; set; } = "gemini-3.1-flash-lite";
 
     public string[] GenerationFallbackModels { get; set; } = [];
 

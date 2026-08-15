@@ -5,6 +5,7 @@ using FinViet.Application.Interfaces;
 using FinViet.Infrastructure.Persistence.Context;
 using FinViet.Infrastructure.Persistence.Entities;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Pgvector;
 using UglyToad.PdfPig;
 
@@ -20,14 +21,28 @@ public class PdfDocumentIngestionService : IDocumentIngestionService
 {
     private const int ChunkSize = 800;
     private const int ChunkOverlap = 150;
+    private static readonly byte[] PdfMagicBytes = [0x25, 0x50, 0x44, 0x46]; // "%PDF"
 
     private readonly FinVietDbContext _db;
     private readonly IEmbeddingService _embeddings;
+    private readonly string _documentsDirectory;
+    private readonly string _baseUrlPath;
 
-    public PdfDocumentIngestionService(FinVietDbContext db, IEmbeddingService embeddings)
+    public PdfDocumentIngestionService(FinVietDbContext db, IEmbeddingService embeddings, IConfiguration config)
     {
         _db = db;
         _embeddings = embeddings;
+
+        // AppSettings:WebRootPath is configured as "" (not absent), so a plain `??` fallback
+        // never triggers — an empty string is a valid non-null value.
+        var configuredWebRoot = config["AppSettings:WebRootPath"];
+        var webRoot = string.IsNullOrWhiteSpace(configuredWebRoot)
+            ? Path.Combine(Directory.GetCurrentDirectory(), "wwwroot")
+            : configuredWebRoot;
+        _documentsDirectory = Path.Combine(webRoot, "documents");
+        _baseUrlPath = "/documents";
+
+        Directory.CreateDirectory(_documentsDirectory);
     }
 
     public async Task<Guid> IngestPdfAsync(
@@ -36,16 +51,28 @@ public class PdfDocumentIngestionService : IDocumentIngestionService
         if (pdfStream is null)
             throw new BadRequestException("Tệp PDF không hợp lệ.");
 
-        var text = ExtractPdfText(pdfStream);
+        using var buffer = new MemoryStream();
+        await pdfStream.CopyToAsync(buffer, cancellationToken);
+        var bytes = buffer.ToArray();
+
+        if (bytes.Length < PdfMagicBytes.Length || !bytes.AsSpan(0, PdfMagicBytes.Length).SequenceEqual(PdfMagicBytes))
+            throw new BadRequestException("Tệp không phải PDF hợp lệ.");
+
+        var text = ExtractPdfText(new MemoryStream(bytes));
         if (string.IsNullOrWhiteSpace(text))
             throw new BadRequestException("Không trích xuất được nội dung từ PDF.");
 
+        var documentId = Guid.NewGuid();
+        var fileName = $"{documentId:N}.pdf";
+        await File.WriteAllBytesAsync(Path.Combine(_documentsDirectory, fileName), bytes, cancellationToken);
+
         var document = new RagDocument
         {
-            Id = Guid.NewGuid(),
+            Id = documentId,
             CustomerId = null,
             SourceType = "pdf",
             Title = string.IsNullOrWhiteSpace(title) ? "Tài liệu" : title.Trim(),
+            Uri = $"{_baseUrlPath}/{fileName}",
             CreatedAt = DateTime.UtcNow
         };
         _db.RagDocuments.Add(document);

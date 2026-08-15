@@ -321,6 +321,24 @@ public sealed class GeminiAiModelClient : IAiModelClient
                     $"Gemini {operation} quota is temporarily exhausted across all configured models.",
                     ex);
             }
+            catch (ClientError ex)
+            {
+                _logger.LogWarning(
+                    "Gemini {Operation} model {Model} returned HTTP {StatusCode}.",
+                    operation,
+                    model,
+                    ex.StatusCode);
+                await RecordAttemptAsync(
+                    "error",
+                    CancellationToken.None,
+                    new Dictionary<string, object?>
+                    {
+                        ["statusCode"] = ex.StatusCode
+                    });
+                throw new AiProviderUnavailableException(
+                    $"Gemini {operation} request was rejected.",
+                    ex);
+            }
             catch (AiProviderUnavailableException)
             {
                 throw;
@@ -345,14 +363,18 @@ public sealed class GeminiAiModelClient : IAiModelClient
                 throw new AiProviderUnavailableException($"Gemini {operation} failed.", ex);
             }
 
-            Task RecordAttemptAsync(string outcome, CancellationToken token)
+            Task RecordAttemptAsync(
+                string outcome,
+                CancellationToken token,
+                IReadOnlyDictionary<string, object?>? metadata = null)
                 => RecordUsageAsync(
                     requestContext,
                     model,
                     outcome,
                     stopwatch,
                     result,
-                    token);
+                    token,
+                    metadata);
         }
 
         throw new AiProviderUnavailableException(
@@ -365,7 +387,8 @@ public sealed class GeminiAiModelClient : IAiModelClient
         string outcome,
         Stopwatch stopwatch,
         GeminiGenerationResult? result,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IReadOnlyDictionary<string, object?>? metadata = null)
     {
         stopwatch.Stop();
         var latency = (int)Math.Min(stopwatch.ElapsedMilliseconds, int.MaxValue);
@@ -381,7 +404,8 @@ public sealed class GeminiAiModelClient : IAiModelClient
                 result?.CandidatesTokenCount,
                 result?.TotalTokenCount,
                 latency,
-                result?.ResponseId),
+                result?.ResponseId,
+                metadata),
             cancellationToken);
     }
 }

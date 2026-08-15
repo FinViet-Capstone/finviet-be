@@ -18,5 +18,16 @@ public partial class SubscriptionPlan
 
     public DateTime? CreatedAt { get; set; }
 
+    /// <summary>
+    /// Blocks new subscribes when false ("Ngừng cung cấp" / discontinue). Never enforced against
+    /// existing subscribers — a discontinued plan's auto-renewals keep charging
+    /// <see cref="CustomerSubscription.LockedPrice"/> indefinitely.
+    /// </summary>
+    public bool IsActive { get; set; }
+
+    public short BillingIntervalMonths { get; set; }
+
     public virtual ICollection<CustomerSubscription> CustomerSubscriptions { get; set; } = new List<CustomerSubscription>();
+
+    public virtual ICollection<Payment> Payments { get; set; } = new List<Payment>();
 }
