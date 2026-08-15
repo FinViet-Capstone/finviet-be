@@ -2,52 +2,42 @@
 
 <!-- Feature name and short description -->
 
-Saving-goal archive follow-up: prove archived contribution/withdrawal transactions remain in the
-paged transaction list and monthly summary, and make integration cleanup compatible with that audit trail.
+Gemini free-tier model ordering: prioritize the stable generation model with the largest available
+project quota and retain strict, privacy-safe provider failure handling.
 
 ## Status
 
 <!-- Not Started | In Progress | Completed -->
 
-Implemented locally — archive audit-trail integration execution remains pending an explicitly prepared non-production API/database on branch `fix/saving-goal-archive`
+Implemented locally on branch `fix/gemini-free-tier-model-order`; deployment configuration and one live quota smoke test remain pending explicit permission.
 
 ## Goals
 
 <!-- Goals and requirements -->
 
-- Change `DELETE /api/saving-goals/{id}` from physical deletion and ledger reversal to a soft
-  archive that succeeds only when `currentAmount == 0`.
-- Return 422 `goal_balance_must_be_withdrawn` while money remains; the customer must first use the
-  existing idempotent withdrawal endpoint and explicitly select a regular destination wallet.
-- Preserve every linked transaction and contribution/withdrawal row. Archiving must not change any
-  wallet balance.
-- Add active-versus-archived list filtering and allow owned archived detail/ledger reads for a
-  read-only mobile archive section; all mutations continue rejecting archived goals.
-- Return truthful goal fields (`iconEmoji`, `isDeleted`, `createdAt`, `updatedAt`, nullable deadline)
-  and persist the create request's icon.
-- Keep PATCH deadline semantics explicit: a non-null date sets it; omitted/null does not clear it.
-- Update focused/unit/integration coverage and API documentation.
+- Make `gemini-3.1-flash-lite` the primary generation/classification model because the current
+  project dashboard reports 500 free RPD for it without billing.
+- Keep four ordered fallbacks, removing the model with no usable project quota and placing the
+  currently failing `gemini-2.5-flash-lite` last.
+- Preserve HTTP 429-only model failover so authentication, request, model-compatibility, timeout,
+  transport, empty-response, and parse failures are not hidden by extra provider calls.
+- Record a non-429 provider HTTP status as privacy-safe operational metadata without storing provider
+  messages, prompts, answers, financial data, or credentials.
+- Keep Gemini embeddings unchanged at `gemini-embedding-001`/768 dimensions; no migration or RAG
+  re-index is part of this fix.
+- Update focused tests and the Gemini deployment runbook.
 
 ## Notes
 
 <!-- Any extra notes -->
 
-- No schema migration is required: `savings_goals.is_deleted`, timestamps, icon, ledger, and
-  transaction links already exist.
-- No restore/unarchive or permanent purge endpoint is included.
-- Cross-repo mobile work is in `D:/SEP490/fe/mobile/finviet-mobile` on
-  `fix/saving-goal-archive-navigation`.
-- No commit, push, production database action, or deployment without explicit permission.
-- 2026-08-14 — Started after confirming current DELETE reverses every contribution/withdrawal,
-  removes generated transactions and ledger rows, and physically deletes the goal. Approved
-  replacement is locked zero-balance soft archive with preserved read-only history.
-- 2026-08-15 — Extended `SavingGoal_Lifecycle_Works` to prove archive preserves both linked
-  transaction directions through the paged collection endpoint and leaves monthly gross income and
-  expense unchanged; cleanup now removes those isolated transaction fixtures before the test wallet.
-  Application tests pass 200/200, the solution and API integration-test project compile, and
-  `git diff --check` is clean. The live integration test was not executed because no prepared
-  non-production API/database was explicitly approved; no commit, push, deployment, or database
-  operation run.
+- Production telemetry on 2026-08-15 showed `gemini-3.6-flash` as `rate_limited`, followed by
+  `gemini-2.5-flash-lite` as `error`; strict non-429 handling then correctly stopped before reaching
+  `gemini-3.1-flash-lite`.
+- Runtime environment variables override `appsettings.json`; deployment/restart and a live quota
+  smoke test remain separate outward-facing actions requiring explicit permission.
+- No API key, billing change, RAG re-index, production database action, deployment, commit, or push
+  without explicit permission.
 
 - The reported response was a formatting meta-instruction rather than a financial answer. The exact
   text does not exist in repository prompts; Google.GenAI 1.17.0 documents that `response.Text`
@@ -80,6 +70,17 @@ Implemented locally — archive audit-trail integration execution remains pendin
 ## History
 
 <!-- Keep this updated. Earliest to latest -->
+- 2026-08-15 — Started free-tier model-order fix after provider telemetry proved HTTP 429 failover was
+  working but stopped on the next model's non-429 error. Approved scope: prioritize stable
+  `gemini-3.1-flash-lite`, retain 429-only failover, add privacy-safe HTTP-status telemetry, and leave
+  embedding/RAG unchanged.
+- 2026-08-15 — Implemented `gemini-3.1-flash-lite` as the primary generation model with the ordered
+  free-tier fallback chain `gemini-3-flash-preview` → `gemini-3.6-flash` → `gemini-2.5-flash` →
+  `gemini-2.5-flash-lite`; removed `gemini-2.5-pro`, retained 429-only failover, and added numeric
+  non-429 status metadata without provider messages. Focused Gemini tests passed 29/29, all Application
+  tests passed 201/201, solution build passed with 0 warnings/errors, and `git diff --check` is clean.
+  No live Gemini call, deploy, provider configuration change, billing change, RAG re-index, commit, or
+  push was performed.
 - 2026-08-14 — Started Gemini thought-response filtering after a current-month budget question returned a formatting meta-instruction. Approved scope: filter `Part.Thought` at the SDK boundary, request no thought output, treat thought-only output as provider unavailable, preserve HTTP 429-only model fallback, and add provider/persistence regressions without cleaning historical rows.
 - 2026-08-14 — Completed Gemini thought-response filtering: the SDK boundary now returns only non-thought text parts, all generation configs request `IncludeThoughts=false`, and thought-only output follows the existing provider-unavailable path without model failover. Added mixed/thought-only/split-JSON extraction tests and a history-enabled chat regression proving only the friendly fallback is persisted. Focused Gemini tests passed 28/28, focused chat tests passed 6/6, all Application tests passed 200/200, solution build passed with 0 warnings/errors, and the API reached `Now listening on http://0.0.0.0:5122`. No live Gemini call, historical-row cleanup, RAG re-index, commit, or push was performed.
 - 2026-08-14 — Started Gemini quota-aware model fallback. Approved scope: primary plus four Flash-first generation fallbacks, HTTP 429-only failover, per-attempt privacy-safe telemetry, no embedding changes or RAG re-index.

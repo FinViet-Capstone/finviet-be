@@ -138,10 +138,10 @@ public static class DependencyInjection
 
                 options.GenerationFallbackModels =
                 [
-                    "gemini-2.5-flash-lite",
-                    "gemini-3.1-flash-lite",
                     "gemini-3-flash-preview",
-                    "gemini-2.5-pro"
+                    "gemini-3.6-flash",
+                    "gemini-2.5-flash",
+                    "gemini-2.5-flash-lite"
                 ];
             })
             .Validate(options => !string.IsNullOrWhiteSpace(options.ApiKey),
