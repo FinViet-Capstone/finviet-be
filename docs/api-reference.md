@@ -232,6 +232,26 @@ Every endpoint below documents **Validation** (exact field-level rules — Fluen
 
 ---
 
+## Buckets — `api/buckets` (role: Admin)
+
+The fixed 3-row `needs`/`wants`/`savings` lookup table (display name, color, icon, sort order,
+`isLocked`). No create/delete — rows are seeded by `V0002` and only editable in place.
+
+| Method | Path | Request | Response |
+|---|---|---|---|
+| GET | `/` | — | `ApiResponse<BucketResponse[]>` |
+| PATCH | `/{id}` | `UpdateBucketRequest` | `ApiResponse<BucketResponse>` (404) |
+
+**BucketResponse**: `{ id, nameVi, nameEn, color?, icon?, sortOrder?, isLocked }`
+**UpdateBucketRequest**: `{ nameVi?, nameEn?, color?, icon?, sortOrder? }` — partial update, only
+non-null fields applied.
+
+**Business logic**: `isLocked` (`savings=true`, `needs`/`wants=false`) is intentionally **not**
+enforced here — admin edits are allowed on every bucket including the locked one, per product
+direction (the admin frontend dropped its lock-based UI restriction; see `backend-gaps.md`).
+
+---
+
 ## Transactions — `api/transactions` (role: Customer)
 
 > No FluentValidation validators exist. All validation is inline in `TransactionRules` (static class in `TransactionHandlers.cs`) and `TransactionRepository`.

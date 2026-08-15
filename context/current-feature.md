@@ -11,16 +11,17 @@ list, and admin category-corrections/users list endpoints (pagination).
 
 <!-- Not Started | In Progress | Completed -->
 
-In Progress — item 1 (scoring weights) completed on branch `fix/scoring-weights`; items 2-5 not started.
+In Progress — items 1-2 completed (`fix/scoring-weights`, `fix/bucket-admin-crud`); items 3-5 not
+started.
 
 ## Goals
 
 <!-- Goals and requirements -->
 
-1. **Scoring weights** (`fix/scoring-weights`): seed `scoring_criteria` (currently empty), wire
-   `SpendingScoreService.ComputeAsync` to read `WeightWeekly`/`WeightMonthly` from it instead of
-   the hardcoded dictionary, add admin `GET`/`PATCH /api/scoring-criteria`.
-2. **Bucket admin CRUD** (`fix/bucket-admin-crud`): `GET`/`PATCH /api/buckets` for admin, no
+1. **Scoring weights** (`fix/scoring-weights`, done): seeded `scoring_criteria`, wired
+   `SpendingScoreService.ComputeAsync` to read weights from it, added admin
+   `GET`/`PATCH /api/scoring-criteria`.
+2. **Bucket admin CRUD** (`fix/bucket-admin-crud`, done): `GET`/`PATCH /api/buckets` for admin, no
    server-side `IsLocked` enforcement (documented product decision).
 3. **Category icon upload** (`feature/category-icon-upload`): `POST /api/categories/icons`
    (Customer, SVG only, mirrors avatar-upload pattern), wire the returned URL into
@@ -39,9 +40,12 @@ In Progress — item 1 (scoring weights) completed on branch `fix/scoring-weight
   work, both originally wanting `V0004`. Briefly renumbered to `V0005` on 2026-08-15, then reverted
   back to `V0004__seed_scoring_criteria.sql` the same day once this work finished first — the
   VNPay work renumbers instead when it lands.
+- Live verification uses locally-inserted test accounts (admin `adminmaster`/`123456`, email
+  `khoiislearning@gmail.com`; customer `khoi.test.customer@example.com`), local DB only, not the
+  deployed backend, since the seeded default credentials didn't match this local DB.
 - Merged into `dev` locally on 2026-08-15 per explicit user instruction; not pushed to origin.
-- Prior feature (saving-goal archive follow-up) was completed/implemented locally; its History
-  entries are preserved below.
+- Prior feature (saving-goal archive follow-up) was completed/implemented locally; its Goals/Notes
+  are superseded here but its History entries are preserved below.
 
 - The reported response was a formatting meta-instruction rather than a financial answer. The exact
   text does not exist in repository prompts; Google.GenAI 1.17.0 documents that `response.Text`
@@ -95,6 +99,15 @@ In Progress — item 1 (scoring weights) completed on branch `fix/scoring-weight
   `V0004__seed_scoring_criteria.sql`, restored the two doc references, rebuilt, and re-verified the
   migration applies cleanly against the local database. Then merged all 5 branches into `dev`
   locally per explicit user instruction (not pushed) — see the summary entry below.
+- 2026-08-15 — Completed item 2 (bucket admin CRUD) on branch `fix/bucket-admin-crud`: new
+  `GetBucketsQuery`/`UpdateBucketCommand` + `BucketsController` (`GET`/`PATCH /api/buckets`, Admin
+  role). `UpdateBucketCommandHandler` deliberately does not check `Bucket.IsLocked` — admin can
+  edit every bucket including the locked `savings` row, per the product decision recorded in
+  `backend-gaps.md` item 2. No migration needed (table and rows already existed). `dotnet build` 0
+  errors, all 200 Application unit tests pass. Live-verified: `GET` lists all 3 buckets, `PATCH` on
+  the locked `savings` bucket succeeds and persists, unknown id returns 404, unauthenticated
+  returns 401; test change reverted afterward. `docs/api-reference.md` updated (new Buckets
+  section after Categories).
 - 2026-08-14 — Started Gemini thought-response filtering after a current-month budget question returned a formatting meta-instruction. Approved scope: filter `Part.Thought` at the SDK boundary, request no thought output, treat thought-only output as provider unavailable, preserve HTTP 429-only model fallback, and add provider/persistence regressions without cleaning historical rows.
 - 2026-08-14 — Completed Gemini thought-response filtering: the SDK boundary now returns only non-thought text parts, all generation configs request `IncludeThoughts=false`, and thought-only output follows the existing provider-unavailable path without model failover. Added mixed/thought-only/split-JSON extraction tests and a history-enabled chat regression proving only the friendly fallback is persisted. Focused Gemini tests passed 28/28, focused chat tests passed 6/6, all Application tests passed 200/200, solution build passed with 0 warnings/errors, and the API reached `Now listening on http://0.0.0.0:5122`. No live Gemini call, historical-row cleanup, RAG re-index, commit, or push was performed.
 - 2026-08-14 — Started Gemini quota-aware model fallback. Approved scope: primary plus four Flash-first generation fallbacks, HTTP 429-only failover, per-attempt privacy-safe telemetry, no embedding changes or RAG re-index.
