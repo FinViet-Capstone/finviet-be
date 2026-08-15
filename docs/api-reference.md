@@ -629,6 +629,34 @@ Only computed when `deadline` is set. `monthsRemaining` = whole calendar months 
 
 ---
 
+## Category Corrections — `api/category-corrections` (role: Admin)
+
+Read-only paginated log of AI-category-guess overrides, written by
+`BeneficiaryRuleService.OverrideCategoryAsync` whenever a customer manually corrects an
+auto-categorized transaction.
+
+| Method | Path | Request | Response |
+|---|---|---|---|
+| GET | `/` | query `CategoryCorrectionQueryDto` | `ApiResponse<PagedResult<CategoryCorrectionResponseDto>>` |
+
+**CategoryCorrectionQueryDto**: `{ page=1, pageSize=20, categoryId?, createdAtFrom?, createdAtTo? }` — `pageSize` clamped to `[1,100]` (falls back to 20 outside that range); `page < 1` falls back to 1. `createdAtFrom`/`createdAtTo` follow the same UTC start-of-day/exclusive-next-day convention as `GET /transactions`'s `from`/`to` (the frontend computes these from its 7/30/90-day preset — there's no server-side `days` param).
+**CategoryCorrectionResponseDto**: `{ logId, customerId?, transactionId?, adminId?, correctedCategoryId?, originalAiGuess?, createdAt? }`
+
+---
+
+## Users — `api/users` (role: Admin)
+
+Read-only paginated customer list for the admin Users screen.
+
+| Method | Path | Request | Response |
+|---|---|---|---|
+| GET | `/` | query `UserQueryDto` | `ApiResponse<PagedResult<UserResponseDto>>` |
+
+**UserQueryDto**: `{ page=1, pageSize=20, search? }` — same page/pageSize clamping as above. `search`, if provided, is a case-insensitive substring match against `email` OR `fullName`.
+**UserResponseDto**: `{ customerId, email, fullName, isActive, isEmailVerified, createdAt? }` — no sensitive fields (no password hash, tokens). Soft-deleted customers (`deletedAt` set) are excluded.
+
+---
+
 ## Common envelope types
 
 ```ts
