@@ -46,7 +46,7 @@ public class CategoryServiceStateTests
 
     // TC-BKT-U01
     [Fact]
-    public async Task SetCustomerBucket_NewOverride_CreatesActiveRequestOverride()
+    public async Task SetCustomerBucket_NewOverride_CreatesActivePersonaOverride()
     {
         await using var db = TestDbContextFactory.Create();
         var customerId = Guid.NewGuid();
@@ -59,7 +59,7 @@ public class CategoryServiceStateTests
         Assert.Equal("wants", result.ExpenseClass);
         Assert.Equal("wants", row.BucketId);
         Assert.True(row.IsActive);
-        Assert.Equal("request", row.Source);
+        Assert.Equal("persona", row.Source);
     }
 
     // TC-BKT-U02
@@ -103,7 +103,7 @@ public class CategoryServiceStateTests
         => new()
         {
             Id = Guid.NewGuid(), CustomerId = customerId, CategoryId = categoryId,
-            BucketId = bucket, Source = "request", IsActive = true,
+            BucketId = bucket, Source = "persona", IsActive = true,
             CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow
         };
 }

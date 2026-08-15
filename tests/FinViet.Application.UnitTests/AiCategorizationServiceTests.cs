@@ -171,7 +171,7 @@ public class AiCategorizationServiceTests
             CustomerId = otherCustomerId,
             CategoryId = "custom_secret",
             BucketId = "needs",
-            Source = "request",
+            Source = "persona",
             IsActive = true,
             CreatedAt = DateTime.UtcNow
         });

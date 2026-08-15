@@ -14,6 +14,14 @@ using System.Text;
 AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
 var builder = WebApplication.CreateBuilder(args);
 
+// Enable Sentry only when a DSN is configured.
+var sentryDsn = builder.Configuration["Sentry:Dsn"];
+if (!string.IsNullOrWhiteSpace(sentryDsn))
+{
+    builder.WebHost.UseSentry();
+}
+
+
 // ── Services ─────────────────────────────────────────────────────────────────
 // Application layer (FluentValidation + ValidationBehavior)
 builder.Services.AddApplicationServices();
@@ -120,20 +128,41 @@ if (reindexRequested && !args.Contains("--confirm-reindex", StringComparer.Ordin
     return;
 }
 
-// Run migrations + seed data (idempotent)
+var adoptBaselineRequested = args.Contains("--adopt-database-baseline", StringComparer.OrdinalIgnoreCase);
+var adoptionConfirmed = args.Contains("--confirm-adopt-baseline", StringComparer.OrdinalIgnoreCase);
+var backupConfirmed = args.Contains("--confirm-database-backup", StringComparer.OrdinalIgnoreCase);
+
+// Run embedded DbUp migrations before EF opens its enum-mapped data source, then seed data.
 using (var scope = app.Services.CreateScope())
 {
-    var db     = scope.ServiceProvider.GetRequiredService<FinVietDbContext>();
+    var db = scope.ServiceProvider.GetRequiredService<FinVietDbContext>();
     var logger = scope.ServiceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("DbInitializer");
+    var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
+        ?? throw new InvalidOperationException("ConnectionStrings:DefaultConnection is not configured.");
+
     try
     {
-        await DbInitializer.InitializeAsync(db, logger);
+        await DbInitializer.InitializeAsync(
+            connectionString,
+            db,
+            builder.Configuration,
+            app.Environment,
+            logger,
+            adoptBaselineRequested,
+            adoptionConfirmed,
+            backupConfirmed);
     }
     catch (Exception ex)
     {
         logger.LogCritical(ex, "Database initialization failed: {Message}", ex.Message);
         throw;
     }
+}
+
+if (adoptBaselineRequested)
+{
+    app.Logger.LogInformation("Database baseline adoption completed successfully.");
+    return;
 }
 
 if (reindexRequested)
@@ -194,4 +223,7 @@ app.MapGet("/health", () => Results.Ok(new
 {
     status = "healthy"
 }));
+
+app.MapGet("/sentry-test", object () => throw new Exception("Sentry test event"));
+
 app.Run();

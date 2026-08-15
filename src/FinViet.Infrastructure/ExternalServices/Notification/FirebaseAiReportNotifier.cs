@@ -72,7 +72,11 @@ public class FirebaseAiReportNotifier : IAiReportNotifier
     }
 
     public async Task SendReportReadyAsync(
-        Guid customerId, string title, string message, CancellationToken cancellationToken = default)
+        Guid customerId,
+        Guid reportId,
+        string title,
+        string message,
+        CancellationToken cancellationToken = default)
     {
         if (!_enabled)
             return;

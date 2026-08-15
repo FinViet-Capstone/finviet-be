@@ -2,7 +2,10 @@ using FinViet.Application.DTOs.Ai;
 using FinViet.Application.Exceptions;
 using FinViet.Application.Interfaces;
 using FinViet.Infrastructure.ExternalServices.Gemini;
+using Google.GenAI;
 using Google.GenAI.Types;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Moq;
@@ -24,7 +27,7 @@ public class GeminiAiClientTests
 
         Assert.Equal("Ăn uống", result.CategoryName);
         Assert.Equal(1m, result.Confidence);
-        Assert.Equal("gemini-3.6-flash", sdk.GenerationModel);
+        Assert.Equal("gemini-3.1-flash-lite", Assert.Single(sdk.GenerationModels));
         Assert.Contains("Highlands Coffee", sdk.Prompt);
         Assert.NotNull(sdk.GenerationConfig?.SystemInstruction);
         Assert.Equal("application/json", sdk.GenerationConfig?.ResponseMimeType);
@@ -89,6 +92,7 @@ public class GeminiAiClientTests
 
         await Assert.ThrowsAsync<AiProviderUnavailableException>(
             () => client.ClassifyAsync("Highlands Coffee", ["Ăn uống"]));
+        Assert.Single(sdk.GenerationModels);
     }
 
     [Fact]
@@ -104,6 +108,49 @@ public class GeminiAiClientTests
         Assert.Contains("CÂU HỎI KHÔNG TIN CẬY", sdk.Prompt);
         Assert.Contains("read-only", GetSystemInstructionText(sdk.GenerationConfig));
         Assert.Contains("Không được tự nhận đã tạo, sửa, xóa", GetSystemInstructionText(sdk.GenerationConfig));
+        Assert.False(sdk.GenerationConfig?.ThinkingConfig?.IncludeThoughts);
+        Assert.Null(sdk.GenerationConfig?.ThinkingConfig?.ThinkingBudget);
+        Assert.Null(sdk.GenerationConfig?.ThinkingConfig?.ThinkingLevel);
+    }
+
+    [Fact]
+    public void ExtractAnswerText_MixedParts_ReturnsOnlyNonThoughtTextInOrder()
+    {
+        var result = GeminiSdkClient.ExtractAnswerText(
+        [
+            new Part { Text = "internal formatting instruction", Thought = true },
+            new Part { Text = "Ngân sách còn " },
+            new Part { Text = "1.000.000đ", Thought = false },
+            new Part { Text = "ignored conclusion", Thought = true }
+        ]);
+
+        Assert.Equal("Ngân sách còn 1.000.000đ", result);
+    }
+
+    [Fact]
+    public void ExtractAnswerText_SplitStructuredJson_PreservesSdkConcatenationSemantics()
+    {
+        var result = GeminiSdkClient.ExtractAnswerText(
+        [
+            new Part { Text = "{\"category\":\"Ăn uống\"," },
+            new Part { Text = "hidden thought", Thought = true },
+            new Part { Text = "\"confidence\":0.9}", Thought = false }
+        ]);
+
+        Assert.Equal("{\"category\":\"Ăn uống\",\"confidence\":0.9}", result);
+    }
+
+    [Fact]
+    public void ExtractAnswerText_NoUsableAnswer_ReturnsNull()
+    {
+        Assert.Null(GeminiSdkClient.ExtractAnswerText(null));
+        Assert.Null(GeminiSdkClient.ExtractAnswerText([]));
+        Assert.Null(GeminiSdkClient.ExtractAnswerText(
+        [
+            new Part { Text = "thought only", Thought = true },
+            new Part { Text = "   " },
+            new Part()
+        ]));
     }
 
     [Fact]
@@ -146,7 +193,7 @@ public class GeminiAiClientTests
         {
             GenerateResult = new GeminiGenerationResult(
                 "Câu trả lời",
-                "gemini-3.6-flash-001",
+                "gemini-3.1-flash-lite-001",
                 "response-123",
                 12,
                 8,
@@ -166,13 +213,234 @@ public class GeminiAiClientTests
                 record.Feature == "chat"
                 && record.Provider == "gemini"
                 && record.Outcome == "success"
-                && record.Model == "gemini-3.6-flash-001"
+                && record.Model == "gemini-3.1-flash-lite-001"
                 && record.ProviderRequestId == "response-123"
                 && record.InputTokens == 12
                 && record.OutputTokens == 8
                 && record.TotalTokens == 20
                 && record.Metadata == null),
             It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ChatAsync_PrimaryRateLimited_UsesFirstFallbackAndRecordsBothAttempts()
+    {
+        var sdk = new StubGeminiSdkClient();
+        sdk.EnqueueGeneration(
+            new ClientError("quota exhausted", 429, "RESOURCE_EXHAUSTED"),
+            new GeminiGenerationResult("Câu trả lời dự phòng"));
+        var records = new List<AiUsageRecord>();
+        var client = CreateModelClient(sdk, Telemetry(records));
+
+        var result = await client.ChatAsync("context", [], "question");
+
+        Assert.Equal("Câu trả lời dự phòng", result);
+        Assert.Equal(
+            ["gemini-3.1-flash-lite", "gemini-3-flash-preview"],
+            sdk.GenerationModels);
+        Assert.Collection(
+            records,
+            record =>
+            {
+                Assert.Equal("rate_limited", record.Outcome);
+                Assert.Equal("gemini-3.1-flash-lite", record.Model);
+            },
+            record =>
+            {
+                Assert.Equal("success", record.Outcome);
+                Assert.Equal("gemini-3-flash-preview", record.Model);
+            });
+    }
+
+    [Fact]
+    public async Task ChatAsync_MultipleModelsRateLimited_UsesConfiguredFlashFirstOrder()
+    {
+        var sdk = new StubGeminiSdkClient();
+        sdk.EnqueueGeneration(
+            new ClientError("quota", 429),
+            new ClientError("quota", 429),
+            new ClientError("quota", 429),
+            new GeminiGenerationResult("Câu trả lời"));
+        var client = CreateModelClient(sdk);
+
+        await client.ChatAsync("context", [], "question");
+
+        Assert.Equal(
+            [
+                "gemini-3.1-flash-lite",
+                "gemini-3-flash-preview",
+                "gemini-3.6-flash",
+                "gemini-2.5-flash"
+            ],
+            sdk.GenerationModels);
+    }
+
+    [Fact]
+    public async Task ChatAsync_AllModelsRateLimited_AttemptsEachOnceAndThrowsProviderUnavailable()
+    {
+        var sdk = new StubGeminiSdkClient();
+        sdk.EnqueueGeneration(Enumerable.Range(0, 5)
+            .Select(_ => (object)new ClientError("quota", 429))
+            .ToArray());
+        var records = new List<AiUsageRecord>();
+        var client = CreateModelClient(sdk, Telemetry(records));
+
+        await Assert.ThrowsAsync<AiProviderUnavailableException>(
+            () => client.ChatAsync("context", [], "question"));
+
+        Assert.Equal(
+            [
+                "gemini-3.1-flash-lite",
+                "gemini-3-flash-preview",
+                "gemini-3.6-flash",
+                "gemini-2.5-flash",
+                "gemini-2.5-flash-lite"
+            ],
+            sdk.GenerationModels);
+        Assert.Equal(5, records.Count);
+        Assert.All(records, record => Assert.Equal("rate_limited", record.Outcome));
+    }
+
+    [Theory]
+    [InlineData(400)]
+    [InlineData(401)]
+    [InlineData(403)]
+    [InlineData(404)]
+    public async Task ChatAsync_NonRateLimitClientError_DoesNotUseFallbackAndRecordsSafeStatus(
+        int statusCode)
+    {
+        const string providerMessage = "request rejected with sensitive provider details";
+        var sdk = new StubGeminiSdkClient
+        {
+            GenerateException = new ClientError(providerMessage, statusCode)
+        };
+        var records = new List<AiUsageRecord>();
+        var client = CreateModelClient(sdk, Telemetry(records));
+
+        await Assert.ThrowsAsync<AiProviderUnavailableException>(
+            () => client.ChatAsync("context", [], "question"));
+
+        Assert.Equal(["gemini-3.1-flash-lite"], sdk.GenerationModels);
+        var record = Assert.Single(records);
+        Assert.Equal("error", record.Outcome);
+        Assert.Equal("gemini-3.1-flash-lite", record.Model);
+        Assert.NotNull(record.Metadata);
+        Assert.Equal(statusCode, record.Metadata["statusCode"]);
+        Assert.DoesNotContain(
+            record.Metadata.Values,
+            value => string.Equals(value?.ToString(), providerMessage, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ChatAsync_ProviderTimeout_DoesNotUseFallback()
+    {
+        var sdk = new StubGeminiSdkClient
+        {
+            GenerateException = new OperationCanceledException("provider timeout")
+        };
+        var client = CreateModelClient(sdk);
+
+        await Assert.ThrowsAsync<AiProviderUnavailableException>(
+            () => client.ChatAsync("context", [], "question"));
+
+        Assert.Equal(["gemini-3.1-flash-lite"], sdk.GenerationModels);
+    }
+
+    [Fact]
+    public async Task ChatAsync_EmptyResponse_DoesNotUseFallbackAndRecordsOneError()
+    {
+        var sdk = new StubGeminiSdkClient { GenerateResponse = "   " };
+        var records = new List<AiUsageRecord>();
+        var client = CreateModelClient(sdk, Telemetry(records));
+
+        await Assert.ThrowsAsync<AiProviderUnavailableException>(
+            () => client.ChatAsync("context", [], "question"));
+
+        Assert.Equal(["gemini-3.1-flash-lite"], sdk.GenerationModels);
+        var record = Assert.Single(records);
+        Assert.Equal("error", record.Outcome);
+        Assert.Equal("gemini-3.1-flash-lite", record.Model);
+    }
+
+    [Fact]
+    public void ConfigurationBinder_ConfiguredFallbacks_DoNotAppendOptionDefaults()
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Gemini:GenerationFallbackModels:0"] = "gemini-3-flash-preview",
+                ["Gemini:GenerationFallbackModels:1"] = "gemini-3.6-flash",
+                ["Gemini:GenerationFallbackModels:2"] = "gemini-2.5-flash",
+                ["Gemini:GenerationFallbackModels:3"] = "gemini-2.5-flash-lite"
+            })
+            .Build();
+        var services = new ServiceCollection();
+        services.AddOptions<GeminiOptions>()
+            .Bind(configuration.GetSection(GeminiOptions.SectionName));
+        using var provider = services.BuildServiceProvider();
+
+        var options = provider.GetRequiredService<IOptions<GeminiOptions>>().Value;
+
+        Assert.Equal(
+            [
+                "gemini-3-flash-preview",
+                "gemini-3.6-flash",
+                "gemini-2.5-flash",
+                "gemini-2.5-flash-lite"
+            ],
+            options.GenerationFallbackModels);
+    }
+
+    [Fact]
+    public void TryGetGenerationModels_ValidConfiguration_NormalizesInOrder()
+    {
+        var options = new GeminiOptions
+        {
+            FlashModel = " gemini-primary ",
+            GenerationFallbackModels = [" gemini-fallback ", "gemini-final"]
+        };
+
+        var valid = options.TryGetGenerationModels(out var models);
+
+        Assert.True(valid);
+        Assert.Equal(["gemini-primary", "gemini-fallback", "gemini-final"], models);
+    }
+
+    [Fact]
+    public void TryGetGenerationModels_DuplicateConfiguration_IsInvalid()
+    {
+        var options = new GeminiOptions
+        {
+            FlashModel = "gemini-primary",
+            GenerationFallbackModels = ["GEMINI-PRIMARY"]
+        };
+
+        var valid = options.TryGetGenerationModels(out var models);
+
+        Assert.False(valid);
+        Assert.Empty(models);
+    }
+
+    [Fact]
+    public void TryGetGenerationModels_MoreThanFourFallbacks_IsInvalid()
+    {
+        var options = new GeminiOptions
+        {
+            FlashModel = "gemini-primary",
+            GenerationFallbackModels =
+            [
+                "gemini-fallback-1",
+                "gemini-fallback-2",
+                "gemini-fallback-3",
+                "gemini-fallback-4",
+                "gemini-fallback-5"
+            ]
+        };
+
+        var valid = options.TryGetGenerationModels(out var models);
+
+        Assert.False(valid);
+        Assert.Empty(models);
     }
 
     [Fact]
@@ -262,7 +530,14 @@ public class GeminiAiClientTests
     {
         var options = Options.Create(new GeminiOptions
         {
-            FlashModel = "gemini-3.6-flash"
+            FlashModel = "gemini-3.1-flash-lite",
+            GenerationFallbackModels =
+            [
+                "gemini-3-flash-preview",
+                "gemini-3.6-flash",
+                "gemini-2.5-flash",
+                "gemini-2.5-flash-lite"
+            ]
         });
         return new GeminiAiModelClient(
             sdk,
@@ -303,11 +578,15 @@ public class GeminiAiClientTests
     }
 
     private static Mock<IAiTelemetryRecorder> Telemetry()
+        => Telemetry(null);
+
+    private static Mock<IAiTelemetryRecorder> Telemetry(List<AiUsageRecord>? records)
     {
         var telemetry = new Mock<IAiTelemetryRecorder>();
         telemetry.Setup(x => x.RecordUsageAsync(
                 It.IsAny<AiUsageRecord>(),
                 It.IsAny<CancellationToken>()))
+            .Callback<AiUsageRecord, CancellationToken>((record, _) => records?.Add(record))
             .Returns(Task.CompletedTask);
         telemetry.Setup(x => x.RecordAuditAsync(
                 It.IsAny<AiAuditRecord>(),
@@ -330,12 +609,19 @@ public class GeminiAiClientTests
         public GeminiGenerationResult? GenerateResult { get; set; }
         public Exception? GenerateException { get; set; }
         public double[]? EmbeddingResponse { get; set; }
-        public string? GenerationModel { get; private set; }
+        public List<string> GenerationModels { get; } = [];
+        public Queue<object> GenerationSequence { get; } = new();
         public string? Prompt { get; private set; }
         public GenerateContentConfig? GenerationConfig { get; private set; }
         public string? EmbeddingModel { get; private set; }
         public string? EmbeddingText { get; private set; }
         public int OutputDimensions { get; private set; }
+
+        public void EnqueueGeneration(params object[] outcomes)
+        {
+            foreach (var outcome in outcomes)
+                GenerationSequence.Enqueue(outcome);
+        }
 
         public Task<GeminiGenerationResult> GenerateContentAsync(
             string model,
@@ -343,9 +629,18 @@ public class GeminiAiClientTests
             GenerateContentConfig config,
             CancellationToken cancellationToken = default)
         {
-            GenerationModel = model;
+            GenerationModels.Add(model);
             Prompt = prompt;
             GenerationConfig = config;
+
+            if (GenerationSequence.Count > 0)
+            {
+                var outcome = GenerationSequence.Dequeue();
+                if (outcome is Exception exception)
+                    throw exception;
+                return Task.FromResult((GeminiGenerationResult)outcome);
+            }
+
             if (GenerateException is not null)
                 throw GenerateException;
 

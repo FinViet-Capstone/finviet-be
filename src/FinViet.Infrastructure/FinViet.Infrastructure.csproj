@@ -20,6 +20,7 @@
 
   <ItemGroup>
     <PackageReference Include="Google.GenAI" Version="1.17.0" />
+    <PackageReference Include="dbup-postgresql" Version="6.0.0-beta.13" />
     <PackageReference Include="Microsoft.EntityFrameworkCore" Version="8.0.11" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="8.0.11" />
     <PackageReference Include="ExcelDataReader" Version="3.7.0" />
@@ -41,8 +42,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Update="Persistence\Migrations\*.sql">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
+    <None Remove="Persistence\Migrations\*.sql" />
+    <EmbeddedResource Include="Persistence\Migrations\V????__*.sql" />
   </ItemGroup>
 </Project>

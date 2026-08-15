@@ -8,7 +8,9 @@ public class GeminiOptions
 
     public string ApiKey { get; set; } = string.Empty;
 
-    public string FlashModel { get; set; } = "gemini-3.6-flash";
+    public string FlashModel { get; set; } = "gemini-3.1-flash-lite";
+
+    public string[] GenerationFallbackModels { get; set; } = [];
 
     public string EmbeddingModel { get; set; } = "gemini-embedding-001";
 
@@ -21,4 +23,39 @@ public class GeminiOptions
     public bool RagEnabled { get; set; }
 
     public double RagMinimumSimilarity { get; set; } = 0.72;
+
+    internal bool TryGetGenerationModels(out string[] models)
+    {
+        models = [];
+        if (string.IsNullOrWhiteSpace(FlashModel)
+            || GenerationFallbackModels is null or { Length: > 4 })
+        {
+            return false;
+        }
+
+        var normalizedModels = new List<string>(GenerationFallbackModels.Length + 1);
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        if (!Add(FlashModel)
+            || GenerationFallbackModels.Any(model => !Add(model)))
+        {
+            return false;
+        }
+
+        models = [.. normalizedModels];
+        return true;
+
+        bool Add(string? model)
+        {
+            if (string.IsNullOrWhiteSpace(model))
+                return false;
+
+            var normalized = model.Trim();
+            if (!seen.Add(normalized))
+                return false;
+
+            normalizedModels.Add(normalized);
+            return true;
+        }
+    }
 }

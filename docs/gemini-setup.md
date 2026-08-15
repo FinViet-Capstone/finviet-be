@@ -6,7 +6,8 @@ FinViet dùng official `Google.GenAI` .NET SDK cho phân loại giao dịch, cha
 
 | Mục đích | Giá trị mặc định |
 |---|---|
-| Generation/classification | `gemini-3.6-flash` |
+| Generation/classification chính | `gemini-3.1-flash-lite` |
+| Generation fallbacks mặc định | `gemini-3-flash-preview` → `gemini-3.6-flash` → `gemini-2.5-flash` → `gemini-2.5-flash-lite` |
 | Embedding | `gemini-embedding-001` |
 | Kích thước embedding | `768` |
 | Timeout | `120` giây |
@@ -34,7 +35,11 @@ $env:Gemini__ApiKey = "<gemini-api-key>"
 Các biến môi trường tùy chọn:
 
 ```text
-Gemini__FlashModel=gemini-3.6-flash
+Gemini__FlashModel=gemini-3.1-flash-lite
+Gemini__GenerationFallbackModels__0=gemini-3-flash-preview
+Gemini__GenerationFallbackModels__1=gemini-3.6-flash
+Gemini__GenerationFallbackModels__2=gemini-2.5-flash
+Gemini__GenerationFallbackModels__3=gemini-2.5-flash-lite
 Gemini__EmbeddingModel=gemini-embedding-001
 Gemini__EmbeddingDimensions=768
 Gemini__TimeoutSeconds=120
@@ -42,7 +47,25 @@ Gemini__RagEnabled=false
 Gemini__RagMinimumSimilarity=0.72
 ```
 
-Startup sẽ thất bại sớm nếu thiếu API key, model, dimension không bằng 768, timeout ngoài 5–600 giây hoặc similarity ngoài `[0,1]`.
+Startup sẽ thất bại sớm nếu thiếu API key/model, danh sách fallback có hơn bốn model, có phần tử trống/trùng nhau/trùng model chính, dimension không bằng 768, timeout ngoài 5–600 giây hoặc similarity ngoài `[0,1]`. Trên Render hoặc môi trường deploy khác, các biến môi trường `Gemini__*` ghi đè giá trị trong `appsettings.json`; phải cập nhật đủ model chính và bốn chỉ số fallback rồi restart/redeploy process.
+
+### Generation model fallback
+
+Mọi tác vụ generation và classification thử `Gemini:FlashModel` trước. Chỉ khi Gemini trả HTTP `429` (`RESOURCE_EXHAUSTED`), backend mới thử model kế tiếp trong `GenerationFallbackModels`; mỗi model được gọi tối đa một lần, không retry cùng model và không delay/backoff.
+
+Backend **không** đổi model khi gặp 400/401/403/404, lỗi cấu hình/schema, transport, timeout, response rỗng, lỗi parse structured output hoặc caller cancellation. Các trường hợp đó tiếp tục đi qua fallback nghiệp vụ hiện có của chat/report/categorization để tránh che giấu cấu hình sai.
+
+`gemini-3.1-flash-lite` là model stable và được ưu tiên vì project hiện có hạn mức free-tier lớn hơn cho model này. `gemini-3-flash-preview` vẫn là preview nên cần theo dõi vòng đời và cập nhật cấu hình khi Google thay đổi availability. Quota không được source code bảo đảm và có thể thay đổi theo model/project/usage tier.
+
+Quota được áp dụng theo project và thay đổi theo model/usage tier; tạo API key mới trong cùng project không tạo quota mới. Chuỗi fallback có thể tận dụng capacity còn lại của model khác nhưng không phải cách vượt quota và không đảm bảo thành công nếu cả project/model đều đã hết hạn mức.
+
+Mỗi lần gọi model được ghi thành một `ai_usage_events` riêng: `rate_limited`, `success` hoặc `error`, kèm model/token/response ID khi có. Với lỗi HTTP không phải 429, metadata chỉ ghi mã trạng thái số để chẩn đoán cấu hình; telemetry không lưu thông báo provider, prompt, response, dữ liệu tài chính hay credential.
+
+### Lọc thought/reasoning khỏi response
+
+Backend gửi `IncludeThoughts=false` cho mọi request generation/classification và vẫn kiểm tra từng response part tại SDK boundary. Chỉ text part không được đánh dấu `Thought` mới được dùng làm câu trả lời; thought text và thought signature không được trả về, lưu history, log hoặc ghi telemetry.
+
+Nếu response không còn answer text sau khi lọc, backend xử lý nó như provider unavailable và dùng fallback nghiệp vụ hiện có. Trường hợp này không chuyển sang model kế tiếp vì model fallback chỉ kích hoạt trên HTTP `429`.
 
 ## 3. Chạy API
 
@@ -90,7 +113,7 @@ Các nhóm cấu hình gồm categorization mode và threshold, mặc định l�
 
 ## 6. Chuyển embedding RAG sang Gemini
 
-Embedding cũ từ Ollama/`nomic-embed-text` không tương thích ngữ nghĩa với `gemini-embedding-001`, dù cùng 768 chiều. Không bật RAG trước khi re-index.
+Embedding cũ từ Ollama/`nomic-embed-text` không tương thích ngữ nghĩa với `gemini-embedding-001`, dù cùng 768 chiều. Không bật RAG trước khi re-index. Việc đổi riêng `FlashModel`/`GenerationFallbackModels` không thay embedding và không yêu cầu re-index RAG.
 
 > Re-index cập nhật embedding tại chỗ. Đây là thao tác destructive-adjacent: phải sao lưu và phải có xác nhận riêng trước khi chạy.
 

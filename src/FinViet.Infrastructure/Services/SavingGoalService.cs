@@ -25,11 +25,14 @@ public class SavingGoalService : ISavingGoalService
         _notificationService = notificationService;
     }
 
-    public async Task<IReadOnlyList<SavingGoalResponse>> GetGoalsAsync(Guid customerId, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<SavingGoalResponse>> GetGoalsAsync(
+        Guid customerId,
+        bool archived = false,
+        CancellationToken cancellationToken = default)
     {
         var goals = await _dbContext.SavingGoals
             .AsNoTracking()
-            .Where(g => g.CustomerId == customerId && !g.IsDeleted)
+            .Where(g => g.CustomerId == customerId && g.IsDeleted == archived)
             .OrderBy(g => g.GoalName)
             .ToListAsync(cancellationToken);
 
@@ -40,7 +43,7 @@ public class SavingGoalService : ISavingGoalService
     {
         var goal = await _dbContext.SavingGoals
             .AsNoTracking()
-            .FirstOrDefaultAsync(g => g.CustomerId == customerId && g.GoalId == goalId && !g.IsDeleted, cancellationToken);
+            .FirstOrDefaultAsync(g => g.CustomerId == customerId && g.GoalId == goalId, cancellationToken);
 
         return goal is null ? null : ToResponse(goal);
     }
@@ -80,6 +83,7 @@ public class SavingGoalService : ISavingGoalService
             GoalId = Guid.NewGuid(),
             CustomerId = customerId,
             GoalName = trimmedName,
+            IconEmoji = string.IsNullOrWhiteSpace(request.IconEmoji) ? null : request.IconEmoji.Trim(),
             TargetAmount = request.TargetAmount,
             CurrentAmount = 0m,
             Deadline = request.Deadline,
@@ -165,55 +169,15 @@ public class SavingGoalService : ISavingGoalService
         if (goal is null)
             return false;
 
-        var contributions = await _dbContext.SavingGoalContributions
-            .Where(c => c.GoalId == goalId)
-            .ToListAsync(cancellationToken);
-        var transactionIds = contributions
-            .Where(c => c.TransactionId.HasValue)
-            .Select(c => c.TransactionId!.Value)
-            .Distinct()
-            .ToArray();
-        var generatedTransactions = transactionIds.Length == 0
-            ? new List<Transaction>()
-            : await _dbContext.Transactions.Where(t => transactionIds.Contains(t.TransactionId)).ToListAsync(cancellationToken);
-
-        // Contributions (expense, money debited from a wallet into the goal) and withdrawals
-        // (income, money credited from the goal back to a wallet) are both valid ledger entries.
-        if (generatedTransactions.Count != transactionIds.Length
-            || generatedTransactions.Any(t => t.CustomerId != customerId
-                || t.CategoryId != GoalCategoryId
-                || (t.TransactionType != "expense" && t.TransactionType != "income")))
+        if ((goal.CurrentAmount ?? 0m) != 0m)
         {
-            throw new BusinessRuleException("Goal contribution ledger is inconsistent and cannot be reversed safely.", "goal_ledger_invalid");
+            throw new BusinessRuleException(
+                "Withdraw the remaining saved amount before archiving this goal.",
+                "goal_balance_must_be_withdrawn");
         }
 
-        var wallets = await LockWalletsAsync(generatedTransactions.Select(t => t.WalletId).Distinct().ToArray(), cancellationToken);
-        if (wallets.Count != generatedTransactions.Select(t => t.WalletId).Distinct().Count()
-            || wallets.Any(w => w.CustomerId != customerId))
-        {
-            throw new BusinessRuleException("Funding wallet is no longer available for goal reversal.", "goal_wallet_missing");
-        }
-
-        var walletsById = wallets.ToDictionary(w => w.WalletId);
-        foreach (var transaction in generatedTransactions)
-        {
-            var wallet = walletsById[transaction.WalletId];
-            // A contribution debited the wallet to fund the goal — refund it back. A withdrawal
-            // already credited the wallet from the goal — undo that credit, so the net effect of
-            // deleting a goal always equals refunding exactly its still-unwithdrawn currentAmount.
-            var reversedBalance = (wallet.Balance ?? 0m) + ReversalDelta(transaction.TransactionType, transaction.Amount);
-            if (reversedBalance < 0)
-                throw new BusinessRuleException(
-                    "Cannot delete this goal because a previously withdrawn amount has already been spent from its destination wallet.",
-                    "goal_ledger_reversal_insufficient_balance");
-
-            wallet.Balance = reversedBalance;
-            wallet.UpdatedAt = DateTime.UtcNow;
-        }
-
-        _dbContext.Transactions.RemoveRange(generatedTransactions);
-        _dbContext.SavingGoalContributions.RemoveRange(contributions);
-        _dbContext.SavingGoals.Remove(goal);
+        goal.IsDeleted = true;
+        goal.UpdatedAt = DateTime.UtcNow;
         await _dbContext.SaveChangesAsync(cancellationToken);
         await databaseTransaction.CommitAsync(cancellationToken);
         return true;
@@ -351,7 +315,7 @@ public class SavingGoalService : ISavingGoalService
     {
         var goalExists = await _dbContext.SavingGoals
             .AsNoTracking()
-            .AnyAsync(g => g.CustomerId == customerId && g.GoalId == goalId && !g.IsDeleted, cancellationToken);
+            .AnyAsync(g => g.CustomerId == customerId && g.GoalId == goalId, cancellationToken);
         if (!goalExists)
             return null;
 
@@ -455,13 +419,6 @@ public class SavingGoalService : ISavingGoalService
         return trimmed;
     }
 
-    /// <summary>
-    /// A contribution (expense) debited a wallet, so reversing it means crediting the amount
-    /// back. A withdrawal (income) credited a wallet, so reversing it means debiting it back out.
-    /// </summary>
-    internal static decimal ReversalDelta(string transactionType, decimal amount)
-        => transactionType == "expense" ? amount : -amount;
-
     private async Task<SavingGoal?> LockGoalAsync(Guid customerId, Guid goalId, CancellationToken cancellationToken)
         => await _dbContext.SavingGoals
             .FromSqlInterpolated($"""
@@ -510,6 +467,14 @@ public class SavingGoalService : ISavingGoalService
         if (goal.TargetAmount <= 0 || goal.CustomerId is null)
             return;
 
+        var isEnabled = await _dbContext.CustomerSettings
+            .AsNoTracking()
+            .Where(setting => setting.CustomerId == goal.CustomerId.Value)
+            .Select(setting => (bool?)setting.NotifGoals)
+            .FirstOrDefaultAsync(cancellationToken) ?? true;
+        if (!isEnabled)
+            return;
+
         var previousPct = previousAmount / goal.TargetAmount * 100m;
         var newPct = newAmount / goal.TargetAmount * 100m;
         foreach (var milestone in MilestonePercents.Where(m => previousPct < m && newPct >= m))
@@ -518,7 +483,14 @@ public class SavingGoalService : ISavingGoalService
             var message = milestone >= 100
                 ? $"Chúc mừng! Bạn đã hoàn thành mục tiêu \"{goal.GoalName}\"."
                 : $"Mục tiêu \"{goal.GoalName}\" đã đạt {milestone}% ({newAmount:N0}/{goal.TargetAmount:N0}).";
-            await _notificationService.NotifyAsync(goal.CustomerId.Value, title, message, goal.GoalId, cancellationToken);
+            await _notificationService.NotifyAsync(
+                goal.CustomerId.Value,
+                "goal_milestone",
+                title,
+                message,
+                "goal",
+                goal.GoalId,
+                cancellationToken);
         }
     }
 
@@ -550,6 +522,7 @@ public class SavingGoalService : ISavingGoalService
             GoalId = goal.GoalId,
             CustomerId = goal.CustomerId ?? Guid.Empty,
             GoalName = goal.GoalName,
+            IconEmoji = goal.IconEmoji,
             TargetAmount = target,
             CurrentAmount = current,
             Deadline = goal.Deadline,
@@ -558,6 +531,9 @@ public class SavingGoalService : ISavingGoalService
             ProgressPercent = progressPercent,
             DaysRemaining = daysRemaining,
             IsCompleted = goal.IsCompleted || current >= target,
+            IsDeleted = goal.IsDeleted,
+            CreatedAt = goal.CreatedAt,
+            UpdatedAt = goal.UpdatedAt,
             MonthlySavingNeeded = monthlySavingNeeded,
             MonthsRemaining = monthsRemaining
         };

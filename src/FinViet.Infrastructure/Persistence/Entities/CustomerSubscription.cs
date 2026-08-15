@@ -23,7 +23,32 @@ public partial class CustomerSubscription
 
     public DateTime? UpdatedAt { get; set; }
 
+    /// <summary>
+    /// Snapshotted from <see cref="SubscriptionPlan.Price"/> the moment this subscription was
+    /// created and never re-read afterward. Every renewal charge (see
+    /// SubscriptionRenewalScheduler) charges this value, never the plan's live price — this is
+    /// what makes editing SubscriptionPlan.Price in place safe for existing subscribers.
+    /// </summary>
+    public decimal LockedPrice { get; set; }
+
+    public bool AutoRenew { get; set; }
+
+    public DateOnly? NextBillingDate { get; set; }
+
+    public DateOnly? NextRetryAt { get; set; }
+
+    public int RetryCount { get; set; }
+
+    /// <summary>Lease timestamp for the renewal job's claim/lease pattern. Stale after 15 minutes.</summary>
+    public DateTime? RenewalClaimedAt { get; set; }
+
+    public string? VnpayCardToken { get; set; }
+
+    public DateTime? CanceledAt { get; set; }
+
     public virtual Customer? Customer { get; set; }
 
     public virtual SubscriptionPlan? Plan { get; set; }
+
+    public virtual ICollection<Payment> Payments { get; set; } = new List<Payment>();
 }

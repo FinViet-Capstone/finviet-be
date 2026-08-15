@@ -1,7 +1,9 @@
 using FinViet.Api.Common;
 using FinViet.Application.Common;
 using FinViet.Application.DTOs.Categories;
+using FinViet.Application.Features.Categories.Commands.UploadCategoryIcon;
 using FinViet.Application.Interfaces;
+using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -13,10 +15,30 @@ namespace FinViet.Api.Controllers;
 public class CategoriesController : ControllerBase
 {
     private readonly ICategoryService _categoryService;
+    private readonly IMediator _mediator;
 
-    public CategoriesController(ICategoryService categoryService)
+    public CategoriesController(ICategoryService categoryService, IMediator mediator)
     {
         _categoryService = categoryService;
+        _mediator = mediator;
+    }
+
+    [HttpPost("icons")]
+    [Authorize(Roles = "Customer")]
+    public async Task<ActionResult<ApiResponse<string>>> UploadCategoryIcon(
+        IFormFile file, CancellationToken cancellationToken)
+    {
+        if (file is null || file.Length == 0)
+            return BadRequest(ApiResponse<string>.Fail("No file provided."));
+
+        using var ms = new MemoryStream();
+        await file.CopyToAsync(ms, cancellationToken);
+
+        var url = await _mediator.Send(
+            new UploadCategoryIconCommand(ms.ToArray(), file.FileName, file.ContentType),
+            cancellationToken);
+
+        return Ok(ApiResponse<string>.Ok(url, "Icon uploaded successfully"));
     }
 
     [HttpGet]
