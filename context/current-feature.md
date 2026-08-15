@@ -2,52 +2,69 @@
 
 <!-- Feature name and short description -->
 
-Saving-goal archive follow-up: prove archived contribution/withdrawal transactions remain in the
-paged transaction list and monthly summary, and make integration cleanup compatible with that audit trail.
+Feature: canonical notification persistence with multi-device Expo push delivery and authenticated
+device registration for the FinViet mobile app.
 
 ## Status
 
 <!-- Not Started | In Progress | Completed -->
 
-Implemented locally — archive audit-trail integration execution remains pending an explicitly prepared non-production API/database on branch `fix/saving-goal-archive`
+Implemented — automated backend/mobile verification passes; physical-device push acceptance,
+non-production credentials, and migration rehearsal remain before the feature can be marked completed.
 
 ## Goals
 
 <!-- Goals and requirements -->
 
-- Change `DELETE /api/saving-goals/{id}` from physical deletion and ledger reversal to a soft
-  archive that succeeds only when `currentAmount == 0`.
-- Return 422 `goal_balance_must_be_withdrawn` while money remains; the customer must first use the
-  existing idempotent withdrawal endpoint and explicitly select a regular destination wallet.
-- Preserve every linked transaction and contribution/withdrawal row. Archiving must not change any
-  wallet balance.
-- Add active-versus-archived list filtering and allow owned archived detail/ledger reads for a
-  read-only mobile archive section; all mutations continue rejecting archived goals.
-- Return truthful goal fields (`iconEmoji`, `isDeleted`, `createdAt`, `updatedAt`, nullable deadline)
-  and persist the create request's icon.
-- Keep PATCH deadline semantics explicit: a non-null date sets it; omitted/null does not clear it.
-- Update focused/unit/integration coverage and API documentation.
+- Add authenticated idempotent endpoints to register/upsert and unregister one app installation,
+  scoped to the current customer and carrying an Expo push token, platform, and stable installation
+  identifier.
+- Add a dedicated multi-device `notification_devices` table/entity with customer ownership,
+  timestamps, and uniqueness constraints; do not rely on the legacy single FCM-token setting.
+- Make one notification service operation persist the canonical Notification Center row first and
+  then send a best-effort Expo push containing `notificationId`, `type`, `entityType`, and
+  `entityId`. Provider failure must never roll back persistence.
+- Replace the customer-token no-op and Firebase topic-only paths with per-device Expo Push Service
+  delivery. Remove registrations rejected as invalid/unregistered without logging token values.
+- Route budget alerts, saving-goal milestones, and weekly-report completion through the common
+  persistence/delivery operation while honoring `NotifBudget`, `NotifGoals`, and `NotifReport`.
+- Ensure weekly reports persist a matching `weekly_report` row before push.
+- Preserve existing list/unread/mark-read/mark-all response contracts and customer isolation.
+- Add focused unit and integration coverage for registration ownership/idempotency/token rotation,
+  unregister, canonical payloads, preference suppression, invalid-token cleanup, and persistence
+  despite provider failure.
 
 ## Notes
 
 <!-- Any extra notes -->
 
-- No schema migration is required: `savings_goals.is_deleted`, timestamps, icon, ledger, and
-  transaction links already exist.
-- No restore/unarchive or permanent purge endpoint is included.
-- Cross-repo mobile work is in `D:/SEP490/fe/mobile/finviet-mobile` on
-  `fix/saving-goal-archive-navigation`.
-- No commit, push, production database action, or deployment without explicit permission.
-- 2026-08-14 — Started after confirming current DELETE reverses every contribution/withdrawal,
-  removes generated transactions and ledger rows, and physically deletes the goal. Approved
-  replacement is locked zero-balance soft archive with preserved read-only history.
-- 2026-08-15 — Extended `SavingGoal_Lifecycle_Works` to prove archive preserves both linked
-  transaction directions through the paged collection endpoint and leaves monthly gross income and
-  expense unchanged; cleanup now removes those isolated transaction fixtures before the test wallet.
-  Application tests pass 200/200, the solution and API integration-test project compile, and
-  `git diff --check` is clean. The live integration test was not executed because no prepared
-  non-production API/database was explicitly approved; no commit, push, deployment, or database
-  operation run.
+- Cross-repo mobile work is in `D:/SEP490/fe/mobile/finviet-mobile` on the matching
+  `feature/notification-delivery` branch.
+- Persisted notifications are canonical; push is best-effort and must not participate in the
+  database transaction that creates the inbox row.
+- Use Expo Push Service tokens. EAS handles the downstream FCM/APNs credentials for mobile builds;
+  do not add service-account JSON, APNs keys, push tokens, or other credentials to Git.
+- This repository uses immutable DbUp SQL migrations. Add the next zero-padded migration; never
+  edit the released V0001-V0003 scripts.
+- Device registrations must support multiple installations per customer and token rotation without
+  exposing or logging raw tokens.
+- Invalid/unregistered provider responses should delete only the matching registration; transient
+  provider errors retain registrations for a future attempt.
+- No commit, push, deployment, production database action/migration, provider credential change, or
+  branch deletion without explicit permission.
+- 2026-08-15 — Started after confirming `NotificationService.PushFcmAsync` is a no-op,
+  Firebase budget/report notifiers publish to topics the Expo client never subscribes to, no API
+  writes a device token, and weekly-report push does not create a durable notification row.
+- 2026-08-15 — Implemented authenticated customer-scoped device upsert/unregister, the immutable
+  `V0004__notification_devices.sql` migration, multi-installation token ownership/rotation, and
+  canonical notification persistence followed by best-effort Expo Push Service delivery. Push data
+  includes notification/type/entity metadata; only immediate `DeviceNotRegistered` ticket failures
+  remove registrations, and provider failure cannot roll back the inbox row. Budget alerts, goal
+  milestones, and completed weekly reports now use the canonical service while respecting customer
+  preferences. Verified focused notification tests 10/10, all Application tests 210/210, Domain
+  tests 1/1, and the complete solution build with 0 warnings / 0 errors. Mobile verification passes
+  TypeScript, lint, and 109/109 tests. No commit, push, deployment, provider credential change,
+  production migration, or physical-device acceptance was performed.
 
 - The reported response was a formatting meta-instruction rather than a financial answer. The exact
   text does not exist in repository prompts; Google.GenAI 1.17.0 documents that `response.Text`
