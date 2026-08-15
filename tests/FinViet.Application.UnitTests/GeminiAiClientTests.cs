@@ -27,7 +27,7 @@ public class GeminiAiClientTests
 
         Assert.Equal("Ăn uống", result.CategoryName);
         Assert.Equal(1m, result.Confidence);
-        Assert.Equal("gemini-3.6-flash", Assert.Single(sdk.GenerationModels));
+        Assert.Equal("gemini-3.1-flash-lite", Assert.Single(sdk.GenerationModels));
         Assert.Contains("Highlands Coffee", sdk.Prompt);
         Assert.NotNull(sdk.GenerationConfig?.SystemInstruction);
         Assert.Equal("application/json", sdk.GenerationConfig?.ResponseMimeType);
@@ -193,7 +193,7 @@ public class GeminiAiClientTests
         {
             GenerateResult = new GeminiGenerationResult(
                 "Câu trả lời",
-                "gemini-3.6-flash-001",
+                "gemini-3.1-flash-lite-001",
                 "response-123",
                 12,
                 8,
@@ -213,7 +213,7 @@ public class GeminiAiClientTests
                 record.Feature == "chat"
                 && record.Provider == "gemini"
                 && record.Outcome == "success"
-                && record.Model == "gemini-3.6-flash-001"
+                && record.Model == "gemini-3.1-flash-lite-001"
                 && record.ProviderRequestId == "response-123"
                 && record.InputTokens == 12
                 && record.OutputTokens == 8
@@ -236,19 +236,19 @@ public class GeminiAiClientTests
 
         Assert.Equal("Câu trả lời dự phòng", result);
         Assert.Equal(
-            ["gemini-3.6-flash", "gemini-2.5-flash-lite"],
+            ["gemini-3.1-flash-lite", "gemini-3-flash-preview"],
             sdk.GenerationModels);
         Assert.Collection(
             records,
             record =>
             {
                 Assert.Equal("rate_limited", record.Outcome);
-                Assert.Equal("gemini-3.6-flash", record.Model);
+                Assert.Equal("gemini-3.1-flash-lite", record.Model);
             },
             record =>
             {
                 Assert.Equal("success", record.Outcome);
-                Assert.Equal("gemini-2.5-flash-lite", record.Model);
+                Assert.Equal("gemini-3-flash-preview", record.Model);
             });
     }
 
@@ -267,10 +267,10 @@ public class GeminiAiClientTests
 
         Assert.Equal(
             [
-                "gemini-3.6-flash",
-                "gemini-2.5-flash-lite",
                 "gemini-3.1-flash-lite",
-                "gemini-3-flash-preview"
+                "gemini-3-flash-preview",
+                "gemini-3.6-flash",
+                "gemini-2.5-flash"
             ],
             sdk.GenerationModels);
     }
@@ -290,11 +290,11 @@ public class GeminiAiClientTests
 
         Assert.Equal(
             [
-                "gemini-3.6-flash",
-                "gemini-2.5-flash-lite",
                 "gemini-3.1-flash-lite",
                 "gemini-3-flash-preview",
-                "gemini-2.5-pro"
+                "gemini-3.6-flash",
+                "gemini-2.5-flash",
+                "gemini-2.5-flash-lite"
             ],
             sdk.GenerationModels);
         Assert.Equal(5, records.Count);
@@ -306,18 +306,29 @@ public class GeminiAiClientTests
     [InlineData(401)]
     [InlineData(403)]
     [InlineData(404)]
-    public async Task ChatAsync_NonRateLimitClientError_DoesNotUseFallback(int statusCode)
+    public async Task ChatAsync_NonRateLimitClientError_DoesNotUseFallbackAndRecordsSafeStatus(
+        int statusCode)
     {
+        const string providerMessage = "request rejected with sensitive provider details";
         var sdk = new StubGeminiSdkClient
         {
-            GenerateException = new ClientError("request rejected", statusCode)
+            GenerateException = new ClientError(providerMessage, statusCode)
         };
-        var client = CreateModelClient(sdk);
+        var records = new List<AiUsageRecord>();
+        var client = CreateModelClient(sdk, Telemetry(records));
 
         await Assert.ThrowsAsync<AiProviderUnavailableException>(
             () => client.ChatAsync("context", [], "question"));
 
-        Assert.Equal(["gemini-3.6-flash"], sdk.GenerationModels);
+        Assert.Equal(["gemini-3.1-flash-lite"], sdk.GenerationModels);
+        var record = Assert.Single(records);
+        Assert.Equal("error", record.Outcome);
+        Assert.Equal("gemini-3.1-flash-lite", record.Model);
+        Assert.NotNull(record.Metadata);
+        Assert.Equal(statusCode, record.Metadata["statusCode"]);
+        Assert.DoesNotContain(
+            record.Metadata.Values,
+            value => string.Equals(value?.ToString(), providerMessage, StringComparison.Ordinal));
     }
 
     [Fact]
@@ -332,7 +343,7 @@ public class GeminiAiClientTests
         await Assert.ThrowsAsync<AiProviderUnavailableException>(
             () => client.ChatAsync("context", [], "question"));
 
-        Assert.Equal(["gemini-3.6-flash"], sdk.GenerationModels);
+        Assert.Equal(["gemini-3.1-flash-lite"], sdk.GenerationModels);
     }
 
     [Fact]
@@ -345,10 +356,10 @@ public class GeminiAiClientTests
         await Assert.ThrowsAsync<AiProviderUnavailableException>(
             () => client.ChatAsync("context", [], "question"));
 
-        Assert.Equal(["gemini-3.6-flash"], sdk.GenerationModels);
+        Assert.Equal(["gemini-3.1-flash-lite"], sdk.GenerationModels);
         var record = Assert.Single(records);
         Assert.Equal("error", record.Outcome);
-        Assert.Equal("gemini-3.6-flash", record.Model);
+        Assert.Equal("gemini-3.1-flash-lite", record.Model);
     }
 
     [Fact]
@@ -357,10 +368,10 @@ public class GeminiAiClientTests
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
-                ["Gemini:GenerationFallbackModels:0"] = "gemini-2.5-flash-lite",
-                ["Gemini:GenerationFallbackModels:1"] = "gemini-3.1-flash-lite",
-                ["Gemini:GenerationFallbackModels:2"] = "gemini-3-flash-preview",
-                ["Gemini:GenerationFallbackModels:3"] = "gemini-2.5-pro"
+                ["Gemini:GenerationFallbackModels:0"] = "gemini-3-flash-preview",
+                ["Gemini:GenerationFallbackModels:1"] = "gemini-3.6-flash",
+                ["Gemini:GenerationFallbackModels:2"] = "gemini-2.5-flash",
+                ["Gemini:GenerationFallbackModels:3"] = "gemini-2.5-flash-lite"
             })
             .Build();
         var services = new ServiceCollection();
@@ -372,10 +383,10 @@ public class GeminiAiClientTests
 
         Assert.Equal(
             [
-                "gemini-2.5-flash-lite",
-                "gemini-3.1-flash-lite",
                 "gemini-3-flash-preview",
-                "gemini-2.5-pro"
+                "gemini-3.6-flash",
+                "gemini-2.5-flash",
+                "gemini-2.5-flash-lite"
             ],
             options.GenerationFallbackModels);
     }
@@ -402,6 +413,28 @@ public class GeminiAiClientTests
         {
             FlashModel = "gemini-primary",
             GenerationFallbackModels = ["GEMINI-PRIMARY"]
+        };
+
+        var valid = options.TryGetGenerationModels(out var models);
+
+        Assert.False(valid);
+        Assert.Empty(models);
+    }
+
+    [Fact]
+    public void TryGetGenerationModels_MoreThanFourFallbacks_IsInvalid()
+    {
+        var options = new GeminiOptions
+        {
+            FlashModel = "gemini-primary",
+            GenerationFallbackModels =
+            [
+                "gemini-fallback-1",
+                "gemini-fallback-2",
+                "gemini-fallback-3",
+                "gemini-fallback-4",
+                "gemini-fallback-5"
+            ]
         };
 
         var valid = options.TryGetGenerationModels(out var models);
@@ -497,13 +530,13 @@ public class GeminiAiClientTests
     {
         var options = Options.Create(new GeminiOptions
         {
-            FlashModel = "gemini-3.6-flash",
+            FlashModel = "gemini-3.1-flash-lite",
             GenerationFallbackModels =
             [
-                "gemini-2.5-flash-lite",
-                "gemini-3.1-flash-lite",
                 "gemini-3-flash-preview",
-                "gemini-2.5-pro"
+                "gemini-3.6-flash",
+                "gemini-2.5-flash",
+                "gemini-2.5-flash-lite"
             ]
         });
         return new GeminiAiModelClient(

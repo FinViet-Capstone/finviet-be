@@ -7,37 +7,105 @@ using Microsoft.Extensions.Logging;
 
 namespace FinViet.Infrastructure.Services;
 
-/// <summary>
-/// Persists in-app notifications. FCM push is hooked in <see cref="PushFcmAsync"/>;
-/// it is a no-op until device-token registration + FirebaseMessaging are wired up.
-/// </summary>
 public class NotificationService : INotificationService
 {
     private readonly FinVietDbContext _dbContext;
+    private readonly INotificationPushSender _pushSender;
     private readonly ILogger<NotificationService> _logger;
 
-    public NotificationService(FinVietDbContext dbContext, ILogger<NotificationService> logger)
+    public NotificationService(
+        FinVietDbContext dbContext,
+        INotificationPushSender pushSender,
+        ILogger<NotificationService> logger)
     {
         _dbContext = dbContext;
+        _pushSender = pushSender;
         _logger = logger;
     }
 
-    public async Task NotifyAsync(
+    public async Task RegisterDeviceAsync(
         Guid customerId,
+        RegisterNotificationDeviceRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var token = request.Token.Trim();
+        var installationId = request.InstallationId.Trim();
+        var platform = request.Platform.Trim().ToLowerInvariant();
+        var now = DateTime.UtcNow;
+
+        var tokenOwner = await _dbContext.NotificationDevices
+            .FirstOrDefaultAsync(device => device.Token == token, cancellationToken);
+        if (tokenOwner is not null
+            && (tokenOwner.CustomerId != customerId || tokenOwner.InstallationId != installationId))
+        {
+            _dbContext.NotificationDevices.Remove(tokenOwner);
+        }
+
+        var device = await _dbContext.NotificationDevices
+            .FirstOrDefaultAsync(
+                item => item.CustomerId == customerId && item.InstallationId == installationId,
+                cancellationToken);
+
+        if (device is null)
+        {
+            _dbContext.NotificationDevices.Add(new NotificationDevice
+            {
+                DeviceId = Guid.NewGuid(),
+                CustomerId = customerId,
+                Token = token,
+                Platform = platform,
+                InstallationId = installationId,
+                CreatedAt = now,
+                UpdatedAt = now
+            });
+        }
+        else
+        {
+            device.Token = token;
+            device.Platform = platform;
+            device.UpdatedAt = now;
+        }
+
+        await _dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task<bool> UnregisterDeviceAsync(
+        Guid customerId,
+        string installationId,
+        CancellationToken cancellationToken = default)
+    {
+        var normalizedInstallationId = installationId.Trim();
+        var device = await _dbContext.NotificationDevices
+            .FirstOrDefaultAsync(
+                item => item.CustomerId == customerId
+                    && item.InstallationId == normalizedInstallationId,
+                cancellationToken);
+        if (device is null)
+            return false;
+
+        _dbContext.NotificationDevices.Remove(device);
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        return true;
+    }
+
+    public async Task<NotificationResponse> NotifyAsync(
+        Guid customerId,
+        string type,
         string title,
         string message,
-        Guid? goalId = null,
+        string? entityType = null,
+        Guid? entityId = null,
         CancellationToken cancellationToken = default)
     {
         var notification = new Notification
         {
             NotificationId = Guid.NewGuid(),
             CustomerId = customerId,
-            Type = "announcement",
+            Type = type,
             Title = title,
             Message = message,
-            EntityType = goalId.HasValue ? "goal" : null,
-            EntityId = goalId,
+            EntityType = entityType,
+            EntityId = entityId,
             IsRead = false,
             CreatedAt = DateTime.UtcNow
         };
@@ -45,7 +113,8 @@ public class NotificationService : INotificationService
         _dbContext.Notifications.Add(notification);
         await _dbContext.SaveChangesAsync(cancellationToken);
 
-        await PushFcmAsync(customerId, title, message, cancellationToken);
+        await PushBestEffortAsync(notification, cancellationToken);
+        return Map(notification);
     }
 
     public async Task<IReadOnlyList<NotificationResponse>> GetNotificationsAsync(
@@ -55,23 +124,23 @@ public class NotificationService : INotificationService
     {
         var query = _dbContext.Notifications
             .AsNoTracking()
-            .Where(n => n.CustomerId == customerId);
+            .Where(notification => notification.CustomerId == customerId);
 
         if (unreadOnly)
-            query = query.Where(n => n.IsRead != true);
+            query = query.Where(notification => notification.IsRead != true);
 
         return await query
-            .OrderByDescending(n => n.CreatedAt)
-            .Select(n => new NotificationResponse
+            .OrderByDescending(notification => notification.CreatedAt)
+            .Select(notification => new NotificationResponse
             {
-                NotificationId = n.NotificationId,
-                Type = n.Type,
-                Title = n.Title,
-                Message = n.Message,
-                EntityType = n.EntityType,
-                EntityId = n.EntityId,
-                IsRead = n.IsRead == true,
-                SentAt = n.CreatedAt
+                NotificationId = notification.NotificationId,
+                Type = notification.Type,
+                Title = notification.Title,
+                Message = notification.Message,
+                EntityType = notification.EntityType,
+                EntityId = notification.EntityId,
+                IsRead = notification.IsRead == true,
+                SentAt = notification.CreatedAt
             })
             .ToListAsync(cancellationToken);
     }
@@ -83,9 +152,8 @@ public class NotificationService : INotificationService
     {
         var notification = await _dbContext.Notifications
             .FirstOrDefaultAsync(
-                n => n.NotificationId == notificationId && n.CustomerId == customerId,
+                item => item.NotificationId == notificationId && item.CustomerId == customerId,
                 cancellationToken);
-
         if (notification is null)
             return false;
 
@@ -103,7 +171,7 @@ public class NotificationService : INotificationService
         CancellationToken cancellationToken = default)
     {
         var unread = await _dbContext.Notifications
-            .Where(n => n.CustomerId == customerId && n.IsRead != true)
+            .Where(notification => notification.CustomerId == customerId && notification.IsRead != true)
             .ToListAsync(cancellationToken);
 
         foreach (var notification in unread)
@@ -115,16 +183,63 @@ public class NotificationService : INotificationService
         return unread.Count;
     }
 
-    /// <summary>
-    /// Sends an FCM push to the customer's registered devices.
-    /// No device-token store exists yet, so this currently logs intent only.
-    /// To enable: register device tokens, then call FirebaseMessaging.DefaultInstance.SendAsync.
-    /// </summary>
-    private Task PushFcmAsync(Guid customerId, string title, string message, CancellationToken cancellationToken)
+    private async Task PushBestEffortAsync(
+        Notification notification,
+        CancellationToken cancellationToken)
     {
-        _logger.LogInformation(
-            "FCM push (pending device-token wiring) for customer {CustomerId}: {Title} - {Message}",
-            customerId, title, message);
-        return Task.CompletedTask;
+        var devices = await _dbContext.NotificationDevices
+            .AsNoTracking()
+            .Where(device => device.CustomerId == notification.CustomerId)
+            .Select(device => new NotificationPushDevice(device.DeviceId, device.Token))
+            .ToListAsync(cancellationToken);
+        if (devices.Count == 0)
+            return;
+
+        try
+        {
+            var result = await _pushSender.SendAsync(
+                devices,
+                new NotificationPushMessage(
+                    notification.NotificationId,
+                    notification.Type,
+                    notification.Title,
+                    notification.Message ?? string.Empty,
+                    notification.EntityType,
+                    notification.EntityId),
+                cancellationToken);
+
+            if (result.InvalidDeviceIds.Count == 0)
+                return;
+
+            var invalidDevices = await _dbContext.NotificationDevices
+                .Where(device => result.InvalidDeviceIds.Contains(device.DeviceId))
+                .ToListAsync(cancellationToken);
+            _dbContext.NotificationDevices.RemoveRange(invalidDevices);
+            await _dbContext.SaveChangesAsync(cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Push delivery failed after notification {NotificationId} was persisted.",
+                notification.NotificationId);
+        }
     }
+
+    private static NotificationResponse Map(Notification notification)
+        => new()
+        {
+            NotificationId = notification.NotificationId,
+            Type = notification.Type,
+            Title = notification.Title,
+            Message = notification.Message,
+            EntityType = notification.EntityType,
+            EntityId = notification.EntityId,
+            IsRead = notification.IsRead == true,
+            SentAt = notification.CreatedAt
+        };
 }

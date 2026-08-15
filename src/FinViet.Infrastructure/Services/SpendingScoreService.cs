@@ -10,7 +10,8 @@ namespace FinViet.Infrastructure.Services;
 
 /// <summary>
 /// Computes the "Chấm Điểm Ví" spending score (0–100) from live transaction data.
-/// Weekly = Spike×50 + Budget×50; Monthly = Spike×30 + Budget×40 + Savings×30.
+/// Weights come from <c>scoring_criteria</c> (admin-configurable via ScoringCriteriaController);
+/// seeded defaults are Weekly = Spike×50 + Budget×50, Monthly = Spike×30 + Budget×40 + Savings×30.
 /// Missing metrics (null) are dropped and remaining weights re-normalized.
 /// </summary>
 public class SpendingScoreService : ISpendingScoreService
@@ -55,10 +56,11 @@ public class SpendingScoreService : ISpendingScoreService
             ? await ComputeSavingsAsync(customerId, periodEnd, cancellationToken)
             : null;
 
-        // Base weights per view.
-        var baseWeights = isMonthly
-            ? new Dictionary<string, decimal> { ["spike"] = 30m, ["budget"] = 40m, ["savings"] = 30m }
-            : new Dictionary<string, decimal> { ["spike"] = 50m, ["budget"] = 50m };
+        // Base weights per view, from scoring_criteria (admin-configurable — see ScoringCriteriaController).
+        var criteria = await _db.ScoringCriteria.AsNoTracking().ToListAsync(cancellationToken);
+        var baseWeights = criteria.ToDictionary(
+            c => c.Code.ToLowerInvariant(),
+            c => isMonthly ? c.WeightMonthly : c.WeightWeekly);
 
         var present = new Dictionary<string, (decimal score, decimal weight)>();
         if (spike is not null) present["spike"] = (spike.Value, baseWeights["spike"]);

@@ -219,6 +219,11 @@ public class CategoryService : ICategoryService
         if (duplicateName)
             throw new ValidationException("Category name already exists for this type.");
 
+        // Icon must come from POST /api/categories/icons — reject anything else so a client can't
+        // smuggle an arbitrary external URL into a field the FE renders directly.
+        if (request.Icon is not null && !request.Icon.StartsWith("/category-icons/", StringComparison.Ordinal))
+            throw new ValidationException("Icon must be a URL returned by POST /api/categories/icons.");
+
         // Guid.NewGuid() collisions aren't a practical concern, unlike the name-based admin slug.
         var categoryId = $"{CustomCategoryIdPrefix}{Guid.NewGuid()}";
 
@@ -231,8 +236,7 @@ public class CategoryService : ICategoryService
             Type = "expense",
             IsMandatory = false,
             DefaultBucket = normalizedBucket,
-            // The icon file stays device-local per FE's plan — nothing to store here.
-            Icon = null,
+            Icon = request.Icon,
             Color = request.Color
         };
         _dbContext.Categories.Add(category);
