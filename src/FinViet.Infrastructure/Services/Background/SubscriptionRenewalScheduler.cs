@@ -74,7 +74,7 @@ public class SubscriptionRenewalScheduler : BackgroundService
                     WITH due AS (
                         SELECT id FROM customer_subscriptions
                         WHERE auto_renew = true
-                          AND status IN ({Active}, {PastDue})
+                          AND status IN ({Active}::subscription_status, {PastDue}::subscription_status)
                           AND COALESCE(next_retry_at, next_billing_date) <= {todayVn}
                           AND (renewal_claimed_at IS NULL OR renewal_claimed_at < now() - {LeaseStaleness})
                         ORDER BY id
