@@ -56,6 +56,8 @@ public partial class FinVietDbContext : DbContext
 
     public virtual DbSet<NotificationDevice> NotificationDevices { get; set; }
 
+    public virtual DbSet<Payment> Payments { get; set; }
+
     public virtual DbSet<SavingGoal> SavingGoals { get; set; }
 
     public virtual DbSet<SavingGoalContribution> SavingGoalContributions { get; set; }
@@ -359,6 +361,22 @@ public partial class FinVietDbContext : DbContext
             entity.Property(e => e.UpdatedAt)
                 .HasDefaultValueSql("now()")
                 .HasColumnName("updated_at");
+            entity.Property(e => e.LockedPrice)
+                .HasPrecision(10, 2)
+                .HasColumnName("locked_price");
+            entity.Property(e => e.AutoRenew)
+                .HasDefaultValue(true)
+                .HasColumnName("auto_renew");
+            entity.Property(e => e.NextBillingDate).HasColumnName("next_billing_date");
+            entity.Property(e => e.NextRetryAt).HasColumnName("next_retry_at");
+            entity.Property(e => e.RetryCount)
+                .HasDefaultValue(0)
+                .HasColumnName("retry_count");
+            entity.Property(e => e.RenewalClaimedAt).HasColumnName("renewal_claimed_at");
+            entity.Property(e => e.VnpayCardToken)
+                .HasMaxLength(100)
+                .HasColumnName("vnpay_card_token");
+            entity.Property(e => e.CanceledAt).HasColumnName("canceled_at");
 
             entity.HasOne(d => d.Customer).WithMany(p => p.CustomerSubscriptions)
                 .HasForeignKey(d => d.CustomerId)
@@ -553,6 +571,84 @@ public partial class FinVietDbContext : DbContext
             entity.Property(e => e.CreatedAt)
                 .HasDefaultValueSql("now()")
                 .HasColumnName("created_at");
+            entity.Property(e => e.IsActive)
+                .HasDefaultValue(true)
+                .HasColumnName("is_active");
+            entity.Property(e => e.BillingIntervalMonths)
+                .HasDefaultValue((short)1)
+                .HasColumnName("billing_interval_months");
+        });
+
+        modelBuilder.Entity<Payment>(entity =>
+        {
+            entity.HasKey(e => e.PaymentId).HasName("payments_pkey");
+
+            entity.ToTable("payments");
+
+            entity.Property(e => e.PaymentId)
+                .HasDefaultValueSql("gen_random_uuid()")
+                .HasColumnName("id");
+            entity.Property(e => e.SubscriptionId).HasColumnName("subscription_id");
+            entity.Property(e => e.CustomerId).HasColumnName("customer_id");
+            entity.Property(e => e.PlanId).HasColumnName("plan_id");
+            entity.Property(e => e.Amount)
+                .HasPrecision(10, 2)
+                .HasColumnName("amount");
+            entity.Property(e => e.ChargeType)
+                .HasMaxLength(20)
+                .HasColumnName("charge_type");
+            entity.Property(e => e.Status)
+                .HasColumnName("status")
+                .HasConversion(PgEnumStringConverter.Create<PaymentStatus>());
+            entity.Property(e => e.VnpTxnRef)
+                .HasMaxLength(100)
+                .HasColumnName("vnp_txn_ref");
+            entity.Property(e => e.VnpTransactionNo)
+                .HasMaxLength(50)
+                .HasColumnName("vnp_transaction_no");
+            entity.Property(e => e.VnpResponseCode)
+                .HasMaxLength(2)
+                .HasColumnName("vnp_response_code");
+            entity.Property(e => e.VnpTransactionStatus)
+                .HasMaxLength(2)
+                .HasColumnName("vnp_transaction_status");
+            entity.Property(e => e.VnpBankCode)
+                .HasMaxLength(20)
+                .HasColumnName("vnp_bank_code");
+            entity.Property(e => e.VnpCardType)
+                .HasMaxLength(20)
+                .HasColumnName("vnp_card_type");
+            entity.Property(e => e.VnpPayDate)
+                .HasMaxLength(14)
+                .HasColumnName("vnp_pay_date");
+            entity.Property(e => e.PaidAt).HasColumnName("paid_at");
+            entity.Property(e => e.RawIpnPayload)
+                .HasColumnType("jsonb")
+                .HasColumnName("raw_ipn_payload");
+            entity.Property(e => e.IdempotencyKey)
+                .HasMaxLength(200)
+                .HasColumnName("idempotency_key");
+            entity.Property(e => e.CreatedAt)
+                .HasDefaultValueSql("now()")
+                .HasColumnName("created_at");
+            entity.Property(e => e.UpdatedAt)
+                .HasDefaultValueSql("now()")
+                .HasColumnName("updated_at");
+
+            entity.HasOne(d => d.Subscription).WithMany(p => p.Payments)
+                .HasForeignKey(d => d.SubscriptionId)
+                .OnDelete(DeleteBehavior.Cascade)
+                .HasConstraintName("payments_subscription_id_fkey");
+
+            entity.HasOne(d => d.Customer).WithMany()
+                .HasForeignKey(d => d.CustomerId)
+                .OnDelete(DeleteBehavior.Cascade)
+                .HasConstraintName("payments_customer_id_fkey");
+
+            entity.HasOne(d => d.Plan).WithMany(p => p.Payments)
+                .HasForeignKey(d => d.PlanId)
+                .OnDelete(DeleteBehavior.Restrict)
+                .HasConstraintName("payments_plan_id_fkey");
         });
 
         modelBuilder.Entity<SystemAnalytic>(entity =>

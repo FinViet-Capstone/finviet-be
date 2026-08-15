@@ -2,48 +2,252 @@
 
 <!-- Feature name and short description -->
 
-Gemini free-tier model ordering: prioritize the stable generation model with the largest available
-project quota and retain strict, privacy-safe provider failure handling.
+VNPay auto-renewing premium subscriptions + admin `SubscriptionPlan` CRUD. Built independently
+from the existing unmerged `origin/dunglt` branch (a different, manual SePay-QR payment flow) per
+explicit user decision. Core guarantee: `CustomerSubscription.LockedPrice` is snapshotted at
+subscribe time and used for every renewal charge, so admins can edit `SubscriptionPlan.Price` in
+place at any time without silently repricing existing subscribers.
 
 ## Status
 
 <!-- Not Started | In Progress | Completed -->
 
-Implemented on branch `fix/gemini-free-tier-model-order`; merged with the latest `origin/dev` to
-resolve the pull-request conflict. Deployment configuration and one live quota smoke test remain
-pending explicit permission.
+Implemented, verified via `dotnet build`/`dotnet test` (real Postgres/VNPay sandbox not available
+in this environment — see Notes) — branch `feature/vnpay-subscriptions`, worked in an isolated
+worktree (`finviet-be-vnpay`) since `finviet-be`'s main checkout has another agent's in-progress
+`fix/scoring-weights` work. Committed locally; merged latest `origin/dev` to resolve conflicts
+before opening the PR (migration renumbered `V0004` → `V0006`, since `V0004`/`V0005` were claimed
+by other work that merged first — see Notes).
 
 ## Goals
 
 <!-- Goals and requirements -->
 
-- Make `gemini-3.1-flash-lite` the primary generation/classification model because the current
-  project dashboard reports 500 free RPD for it without billing.
-- Keep four ordered fallbacks, removing the model with no usable project quota and placing the
-  currently failing `gemini-2.5-flash-lite` last.
-- Preserve HTTP 429-only model failover so authentication, request, model-compatibility, timeout,
-  transport, empty-response, and parse failures are not hidden by extra provider calls.
-- Record a non-429 provider HTTP status as privacy-safe operational metadata without storing provider
-  messages, prompts, answers, financial data, or credentials.
-- Keep Gemini embeddings unchanged at `gemini-embedding-001`/768 dimensions; no migration or RAG
-  re-index is part of this fix.
-- Update focused tests and the Gemini deployment runbook.
+- Migration `V0006__vnpay_subscriptions_payments.sql`: `subscription_plans.is_active`/
+  `billing_interval_months`, `customer_subscriptions.locked_price`/`auto_renew`/
+  `next_billing_date`/retry fields, new `payments` table + `payment_status` enum.
+- `ExternalServices/VNPay/`: options, HMAC-SHA512 sign/verify helper, client.
+- CQRS: customer subscribe (returns VNPay redirect URL), VNPay return-URL handler (informational
+  only), VNPay IPN handler (authoritative, idempotent), admin `SubscriptionPlan` CRUD.
+- `SubscriptionRenewalScheduler` background job: claim/lease pattern (`FOR UPDATE SKIP LOCKED`),
+  1/3/7-day dunning retry schedule, always charges `LockedPrice`, never live `SubscriptionPlan.Price`.
+- `finviet-web` companion: JWT propagation (blocking prerequisite), numeric price type change,
+  `real/plans.ts` wired to the new admin endpoints.
 
 ## Notes
 
 <!-- Any extra notes -->
 
-- Production telemetry on 2026-08-15 showed `gemini-3.6-flash` as `rate_limited`, followed by
-  `gemini-2.5-flash-lite` as `error`; strict non-429 handling then correctly stopped before reaching
-  `gemini-3.1-flash-lite`.
-- Runtime environment variables override `appsettings.json`; deployment/restart and a live quota
-  smoke test remain separate outward-facing actions requiring explicit permission.
-- The latest `origin/dev` contains completed notification-delivery and five backend-gap features;
-  their implementation details and history are preserved below during conflict resolution.
-- No API key, billing change, RAG re-index, production database action, deployment, or branch deletion
-  without explicit permission.
-
+- Migration renumbered `V0004` → `V0006`: `origin/dev` claimed `V0004` for `notification_devices`
+  and `V0005` for the scoring-criteria seed while this branch was in progress — resolved by
+  renumbering this branch's migration to the next free slot when merging `origin/dev` in, rather
+  than contesting either already-landed number.
+- VNPay sandbox/merchant credentials for recurring billing are not available in this environment;
+  `ChargeByTokenAsync`'s exact request/response shape is provisional pending real VNPay docs. Code
+  and unit tests (hash sign/verify, dunning schedule, state transitions) can be completed and
+  verified now; live end-to-end payment verification is blocked until real credentials exist.
+- No push, or production database action without explicit permission.
 - The reported response was a formatting meta-instruction rather than a financial answer. The exact
+  text does not exist in repository prompts; Google.GenAI 1.17.0 documents that `response.Text`
+  concatenates every text part from the first candidate, while each part exposes a `Thought` marker.
+- No automatic cleanup of historical chat rows is included; this change protects new responses.
+- User selected the stable local database dump as the schema source of truth, DbUp as the future
+  migration engine, and reference data plus configured admin as the production bootstrap policy.
+- The baseline must include the current V25/Gemini tables, all mapped PostgreSQL enums, `pgcrypto`,
+  `vector`, `rag_chunk.embedding = vector(768)`, and the HNSW cosine index.
+- Full database dumps, schema-diff artifacts, `.env`, passwords, and provider credentials must remain
+  outside Git and the Docker build context.
+- Once released, baseline scripts are immutable; future migrations continue after the current
+  `V0003` and use zero-padded names.
+- Existing/restored databases require an explicit confirmed adoption command after schema fingerprint
+  validation; normal startup never marks an unknown schema current.
+- 2026-08-13: two other branches merged into this one — `feature/sentry-backend-setup` (Sentry
+  error tracking: exception middleware, csproj package, Program.cs wiring) and, riding along on
+  that branch, `docs/api-reference-health-status` (documented the `GET /`/`GET /health` endpoints,
+  removed the now-resolved `docs/10-08-2026-be-todos.md`). No overlap with the database-baseline
+  work itself — different files, clean auto-merge apart from this Notes/History section.
+- Gemini Flash safe-copilot context (from `feature/gemini-safe-copilot`, already on `dev` before
+  this branch started): official `Google.GenAI` provider, 768-dim embeddings, per-customer AI
+  preferences, owner-scoped categorization, customer-owned chat sessions, durable rate limits. Solution
+  build and 183 Application unit tests passed as of 2026-08-11; live Gemini-key verification and RAG
+  re-index remained outstanding at that time. Gemini API keys are supplied only via .NET user-secrets
+  or environment variables, never committed.
+- No `.env`, API key, live quota exhaustion, production cutover, production-data change,
+  or RAG re-index without separate explicit permission.
+- 2026-08-15 — Started. Full design plan (migration, entities, VNPay client, CQRS features,
+  renewal job, frontend wiring) approved by the user after a multi-turn scoping discussion:
+  VNPay chosen over SePay/Momo/Stripe, true auto-renewal chosen over manual pay-per-period,
+  explicitly independent of `origin/dunglt`.
+- 2026-08-15 — Implemented, in an isolated `finviet-be-vnpay` worktree (branch
+  `feature/vnpay-subscriptions`) to avoid disturbing another agent's uncommitted
+  `fix/scoring-weights` work in the main `finviet-be` checkout. `V0004__vnpay_subscriptions_payments.sql`
+  adds `subscription_plans.is_active`/`billing_interval_months`, `customer_subscriptions.locked_price`/
+  `auto_renew`/`next_billing_date`/`next_retry_at`/`retry_count`/`renewal_claimed_at`/
+  `vnpay_card_token`/`canceled_at`, a new `payments` table (audit trail of every VNPay charge
+  attempt, `payment_status` enum, `uq_payments_one_pending_per_subscription` double-charge
+  backstop). New `Payment` entity + `PaymentStatus` CLR enum registered via the existing
+  `MapEnum`/`PgEnumStringConverter` convention. New `ExternalServices/VNPay/`
+  (`VNPayOptions`, `VNPayHashHelper` implementing VNPay's documented HMAC-SHA512 sign/verify
+  algorithm exactly — sorted, URL-encoded `vnp_*` params, `FixedTimeEquals` comparison —
+  `IVNPayClient`/`VNPayClient`, empty-credentials-disables-at-point-of-use like SePay's
+  `WebhookApiKey`). New `Features/Subscriptions/` CQRS: `SubscribeToPlanCommand` (idempotent,
+  snapshots `plan.Price` onto the pending `Payment`), `GetVNPayReturnStatusQuery`
+  (informational-only browser-return handler), `ProcessVNPayIpnCommand` (authoritative, never
+  throws, row-locks the `Payment` under an explicit transaction, delegates state transitions to a
+  new shared `ISubscriptionPaymentResultService` so the IPN handler and the renewal job can't
+  drift apart — on an `initial` success this is where `CustomerSubscription.LockedPrice` gets
+  snapshotted from `payment.Amount`, never re-read from `SubscriptionPlan.Price`). New
+  `Features/SubscriptionPlans/` CQRS for admin CRUD (`Update` deliberately excludes `Code` and
+  freely edits `Price` in place — safe specifically because of the `LockedPrice` guarantee;
+  `Discontinue` only flips `IsActive`, never cascades to subscriptions). New
+  `SubscriptionRenewalScheduler` background job: hourly poll, `FOR UPDATE SKIP LOCKED` claim/lease
+  (15-minute staleness) so a slow VNPay call never blocks other workers, 1/3/7-day dunning retry
+  schedule (`active` → `past_due` from the 2nd failure → `canceled`/`AutoRenew=false` on the 4th,
+  ~11-day window), reused `WeeklyReportScheduler`'s VN-timezone resolution pattern. New
+  `SubscriptionsController` (customer-facing subscribe/return/IPN) and
+  `AdminSubscriptionPlansController` (`[Authorize(Roles = "Admin")]` CRUD). Also fixed
+  `AdminLoginCommandHandler` to read a new `Jwt:AdminAccessTokenExpiryMinutes` (default 480 = 8h)
+  instead of the shared 15-minute customer expiry — needed by `finviet-web`'s JWT-propagation
+  companion change. 18 new unit tests (`VNPayHashHelperTests`, `SubscriptionRenewalDunningTests`,
+  `SubscriptionPaymentResultServiceTests` — the last explicitly proves a payment resolved after
+  the catalog price already changed still locks in the amount actually charged, not the live
+  price) all pass; full Application suite 218/218, Domain suite 1/1, `dotnet build` 0 errors.
+  **Known, called-out gaps, not silently papered over**: no VNPay sandbox/merchant credentials
+  exist in this environment, so `ChargeByTokenAsync`'s exact recurring-charge request/response
+  field names are provisional pending real VNPay docs, and live end-to-end payment verification
+  (QR/redirect → pay → IPN → activation → simulated renewal) has not run — this feature should not
+  be considered fully done until that happens. No commit, push, or merge performed yet at this
+  point.
+- 2026-08-15 — Committed locally (`f57c7f2`) at the user's request, then merged the latest
+  `origin/dev` in to prepare for opening a PR. `origin/dev` had moved forward by 8 merged branches
+  since this branch started (Gemini free-tier model order, and 5 completed `backend-gaps.md`
+  items: scoring weights, bucket admin CRUD, category icon upload, RAG document preview, admin
+  list endpoints, plus notification-delivery). Two conflicts: `FinVietDbContext.cs` (both this
+  branch and `origin/dev` added a new `DbSet`/entity-config block in the same region — resolved by
+  keeping both, `NotificationDevice` and `Payment`, as separate blocks) and this file (resolved
+  per this repo's own established convention — see the entries below — keeping the active feature
+  as the header and preserving every branch's History entries). `DependencyInjection.cs` merged
+  automatically with no conflict. Migration renumbered `V0004` → `V0006` (see Notes above).
+  Rebuilt clean after merging, all 218 Application tests still pass.
+- 2026-08-15 — Started free-tier model-order fix after provider telemetry proved HTTP 429 failover was
+  working but stopped on the next model's non-429 error. Approved scope: prioritize stable
+  `gemini-3.1-flash-lite`, retain 429-only failover, add privacy-safe HTTP-status telemetry, and leave
+  embedding/RAG unchanged.
+- 2026-08-15 — Implemented `gemini-3.1-flash-lite` as the primary generation model with the ordered
+  free-tier fallback chain `gemini-3-flash-preview` → `gemini-3.6-flash` → `gemini-2.5-flash` →
+  `gemini-2.5-flash-lite`; removed `gemini-2.5-pro`, retained 429-only failover, and added numeric
+  non-429 status metadata without provider messages. Focused Gemini tests passed 29/29, all Application
+  tests passed 201/201, solution build passed with 0 warnings/errors, and `git diff --check` is clean.
+  No live Gemini call, deploy, provider configuration change, billing change, RAG re-index, commit, or
+  push was performed.
+- 2026-08-15 — Merged the latest `origin/dev` into the Gemini fix branch after GitHub reported it
+  could not merge automatically. The only conflict was this living feature document; resolved by
+  retaining the complete upstream notification/backend-gap history and making the Gemini fix the
+  current header at the time.
+- 2026-08-15 — Completed item 1 (scoring weights) on branch `fix/scoring-weights`: new migration
+  `V0004__seed_scoring_criteria.sql` (briefly renumbered to `V0005` and back — see below) seeds
+  `scoring_criteria` (previously empty since `V0002` deliberately excluded it) with the weights
+  that were hardcoded in `SpendingScoreService.ComputeAsync`; that method now reads
+  `WeightWeekly`/`WeightMonthly` from the table instead. New `ScoringCriteriaController`
+  (`GET`/`PATCH /api/scoring-criteria`, Admin role) backed by
+  `GetScoringCriteriaQuery`/`UpdateScoringCriterionCommand`. `dotnet build` 0 errors, all 200
+  Application unit tests pass. Live-verified against a local PostgreSQL instance: migration
+  applied cleanly, `GET` returns seeded rows, `PATCH` persists and increments `Version`,
+  out-of-range weight returns 400, unknown `code` returns 404, unauthenticated returns 401; test
+  change reverted to defaults afterward. `docs/api-reference.md` updated (score-weights note +
+  new Scoring Criteria section).
+- 2026-08-15 — Renamed the seed migration from `V0004` to `V0005__seed_scoring_criteria.sql` per
+  user instruction, after the other agent's VNPay subscription work claimed `V0004`. Updated the
+  two doc references (`docs/api-reference.md`, this file) accordingly; no re-verification needed
+  since only the filename changed, not the SQL content.
+- 2026-08-15 — Reverted the rename: user confirmed this work finished first, so it keeps `V0004`
+  and the VNPay work renumbers instead when it lands. Renamed back to
+  `V0004__seed_scoring_criteria.sql`, restored the two doc references, rebuilt, and re-verified the
+  migration applies cleanly against the local database. Then merged all 5 branches into `dev`
+  locally per explicit user instruction (not pushed) — see the summary entry below.
+- 2026-08-15 — Completed item 2 (bucket admin CRUD) on branch `fix/bucket-admin-crud`: new
+  `GetBucketsQuery`/`UpdateBucketCommand` + `BucketsController` (`GET`/`PATCH /api/buckets`, Admin
+  role). `UpdateBucketCommandHandler` deliberately does not check `Bucket.IsLocked` — admin can
+  edit every bucket including the locked `savings` row, per the product decision recorded in
+  `backend-gaps.md` item 2. No migration needed (table and rows already existed). `dotnet build` 0
+  errors, all 200 Application unit tests pass. Live-verified: `GET` lists all 3 buckets, `PATCH` on
+  the locked `savings` bucket succeeds and persists, unknown id returns 404, unauthenticated
+  returns 401; test change reverted afterward. `docs/api-reference.md` updated (new Buckets
+  section after Categories).
+- 2026-08-15 — Completed item 3 (category icon upload) on branch `feature/category-icon-upload`:
+  new `ICategoryIconService`/`CategoryIconService` mirroring `AvatarService`'s pattern (writes to
+  `wwwroot/category-icons/`, served via the already-wired `UseStaticFiles()`); new
+  `CategoryIconValidationRules` (SVG-only, 1 byte–200 KB, must start with `<svg`/`<?xml`, rejects
+  `<script`/`on*=` as a defense-in-depth XSS guard); new `POST /api/categories/icons` (Customer) on
+  `CategoriesController`. `CreateCustomCategoryRequest` gained `Icon`;
+  `CategoryService.CreateCustomCategoryAsync` now persists it (was previously hardcoded to `null`
+  with a "stays device-local" comment — that decision is reversed) and rejects any value not
+  prefixed `/category-icons/` so a client can't smuggle an arbitrary external URL into a
+  frontend-rendered field.
+  **Bug found and fixed in this new code**: `AppSettings:WebRootPath` is configured as `""` (empty
+  string, not absent) in `appsettings.json`, so the copied `?? fallback` pattern from
+  `AvatarService` never triggered — files wrote relative to the process's current directory
+  instead of `wwwroot`. Fixed with an explicit `string.IsNullOrWhiteSpace` check in
+  `CategoryIconService`; `AvatarService` itself has the same latent bug but was left untouched
+  (out of scope) — flagged separately.
+  **Pre-existing unrelated bug found while verifying, not fixed (out of scope)**: every
+  `POST /api/categories/custom` call fails with a 500 regardless of this change — the generated id
+  (`"custom_" + Guid.NewGuid()`, 43 chars) exceeds `categories.id`'s `varchar(40)` column. Flagged
+  as a separate task (likely fix: `Guid.NewGuid().ToString("N")`, 32 chars, fits).
+  `dotnet build` 0 errors, all 200 Application unit tests pass. Live-verified everything in this
+  feature's own scope: icon upload accepts a valid SVG and serves it back at the returned URL
+  (200), rejects wrong content-type and `<script>`-bearing SVGs (400), and the external-URL
+  rejection on `POST /custom` fires correctly (400) — full category creation with the icon
+  attached couldn't be end-to-end verified because of the unrelated id-length bug above.
+  `docs/api-reference.md` updated (Categories table + new `POST /icons` section).
+- 2026-08-15 — Completed item 4 (RAG document preview) on branch `feature/rag-document-preview`:
+  `PdfDocumentIngestionService.IngestPdfAsync` now buffers the upload into memory once, validates
+  the `%PDF` magic number (400 otherwise — no format check existed before), writes the raw bytes
+  to `wwwroot/documents/{id}.pdf` (served via the already-wired `UseStaticFiles()`), and sets
+  `RagDocument.Uri` accordingly (previously always null for PDFs — the file was discarded after
+  text extraction). New `IRagDocumentQueryService`/`RagDocumentQueryService` (direct DbContext
+  query, matching the AI feature area's existing non-MediatR convention) backs a new
+  `GET /api/ai/documents` on `AdminAiController`, returning
+  `{ id, title, sourceType, uri?, createdAt, chunkCount }` newest first, no pagination (low,
+  admin-curated volume). `dotnet build` 0 errors, all 200 Application unit tests pass.
+  Live-verified: non-PDF upload rejected (400 wrong magic bytes); a hand-crafted real PDF passed
+  magic-byte validation, text extraction, and disk-write (confirmed the file landed at
+  `wwwroot/documents/{guid}.pdf`) — ingestion then failed at the Gemini embedding call itself
+  (`ai_provider_unavailable`), a pre-existing external dependency unreachable in this sandbox, not
+  related to this change. Verified the list endpoint and static serving independently by
+  inserting a test `rag_document` row directly: `GET /api/ai/documents` returned it with the
+  correct shape and the file served at its `uri` with 200; test row and file removed afterward.
+  `docs/api-reference.md` updated (`POST /documents` validation note + new `GET /documents`
+  section).
+- 2026-08-15 — Completed item 5 (admin list endpoints), the last of the five, on branch
+  `feature/admin-list-endpoints`: new `GET /api/category-corrections` (`CategoryCorrectionQueryDto`
+  with `categoryId?`/`createdAtFrom?`/`createdAtTo?`/`page`/`pageSize`, backed by
+  `GetCategoryCorrectionsQuery` reading `CategoryCorrectionLog` directly via `FinVietDbContext`,
+  matching the CategoryService/SpendingScoreService direct-DbContext convention rather than adding
+  a one-off repository interface) and new `GET /api/users` (`UserQueryDto` with `search?` +
+  paging, backed by `GetUsersQuery` reading `Customer`, excluding soft-deleted rows, no sensitive
+  fields in the response). Both follow `TransactionRepository.GetPagedAsync`'s exact pattern:
+  `page`/`pageSize` clamped to `[1,100]`/default 20, UTC start-of-day/exclusive-next-day date
+  range, `PagedResult<T>`. `dotnet build` 0 errors, all 200 Application unit tests pass.
+  Live-verified: users list returns all 4 seeded accounts with correct paging metadata; `search`
+  filters correctly; unauthenticated returns 401; category-corrections returns empty against a
+  clean table, then correctly filters by `categoryId` and `createdAtFrom` once two test rows were
+  inserted directly (no real correction rows existed to exercise otherwise); all test rows removed
+  afterward. `docs/api-reference.md` updated (new Category Corrections + Users sections).
+  **All 5 backend-gaps.md items (excluding subscription/payment) are now complete**, each
+  committed on its own branch.
+- 2026-08-15 — Merged all 5 branches into `dev` locally, per explicit user instruction, in order
+  1→5 (`fix/scoring-weights`, `fix/bucket-admin-crud`, `feature/category-icon-upload`,
+  `feature/rag-document-preview`, `feature/admin-list-endpoints`). Every merge after the first
+  conflicted in this file (`context/current-feature.md`) since each branch independently rewrote
+  the same Status/Goals/Notes/History header off the original `dev` baseline — resolved by hand
+  each time, keeping every branch's unique History entry and consolidating Status/Goals/Notes into
+  one accurate final state. `docs/api-reference.md` merged cleanly every time (each branch's
+  documentation additions landed in different, non-overlapping sections).
+  `src/FinViet.Infrastructure/DependencyInjection.cs` merged cleanly once (items 3 and 4 both added
+  a registration line, in different parts of the file). `dotnet build` passed with 0 errors after
+  every merge commit. Not pushed to `origin/dev`.
+- 2026-08-14 — Started Gemini thought-response filtering after a current-month budget question returned a formatting meta-instruction. Approved scope: filter `Part.Thought` at the SDK boundary, request no thought output, treat thought-only output as provider unavailable, preserve HTTP 429-only model fallback, and add provider/persistence regressions without cleaning historical rows.
   text does not exist in repository prompts; Google.GenAI 1.17.0 documents that `response.Text`
   concatenates every text part from the first candidate, while each part exposes a `Thought` marker.
 - No automatic cleanup of historical chat rows is included; this change protects new responses.
@@ -74,6 +278,15 @@ pending explicit permission.
 ## History
 
 <!-- Keep this updated. Earliest to latest -->
+- 2026-08-15 — Saving-goal archive follow-up (branch `fix/saving-goal-archive`, already merged
+  into `dev` before this feature started): changed `DELETE /api/saving-goals/{id}` from physical
+  deletion to a zero-balance-only soft archive (422 `goal_balance_must_be_withdrawn` otherwise),
+  preserving all linked transactions/contributions and wallet balances; added active/archived list
+  filtering and read-only archived detail/ledger access; fixed truthful goal field reporting and
+  explicit PATCH deadline semantics. Extended `SavingGoal_Lifecycle_Works` to prove the paged
+  transaction list and monthly summary are unaffected by archiving. Application tests 200/200,
+  solution and integration-test project compiled. Live integration-test execution against a
+  non-production DB was not run (no environment explicitly approved for it).
 - 2026-08-15 — Started free-tier model-order fix after provider telemetry proved HTTP 429 failover was
   working but stopped on the next model's non-429 error. Approved scope: prioritize stable
   `gemini-3.1-flash-lite`, retain 429-only failover, add privacy-safe HTTP-status telemetry, and leave

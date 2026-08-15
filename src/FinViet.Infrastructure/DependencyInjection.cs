@@ -7,6 +7,7 @@ using FinViet.Infrastructure.ExternalServices.Notification;
 using FinViet.Infrastructure.ExternalServices.Ocr;
 using FinViet.Infrastructure.ExternalServices.TransactionImport;
 using FinViet.Infrastructure.ExternalServices.SePay;
+using FinViet.Infrastructure.ExternalServices.VNPay;
 using FinViet.Infrastructure.Features.Auth.Commands.Login;
 using FinViet.Infrastructure.Identity;
 using FinViet.Infrastructure.Persistence.Context;
@@ -47,6 +48,7 @@ public static class DependencyInjection
         dataSourceBuilder.MapEnum<NotificationType>("notification_type");
         dataSourceBuilder.MapEnum<NotificationEntityType>("notification_entity_type");
         dataSourceBuilder.MapEnum<SubscriptionStatus>("subscription_status");
+        dataSourceBuilder.MapEnum<PaymentStatus>("payment_status");
         dataSourceBuilder.MapEnum<ChatRole>("chat_role");
         dataSourceBuilder.MapEnum<ScoreView>("score_view");
         dataSourceBuilder.MapEnum<ScoreColor>("score_color");
@@ -79,6 +81,17 @@ public static class DependencyInjection
             http.BaseAddress = new Uri(baseUrl.EndsWith('/') ? baseUrl : $"{baseUrl}/");
             http.Timeout = TimeSpan.FromSeconds(Math.Clamp(options.TimeoutSeconds, 5, 120));
         });
+
+        // VNPay (recurring/tokenized billing). TmnCode/HashSecret are validated at the point of
+        // use (VNPayClient.EnsureConfigured), not at startup, so the API still boots in
+        // environments without VNPay configured — same convention as SePay's WebhookApiKey.
+        services.AddOptions<VNPayOptions>()
+            .Bind(configuration.GetSection(VNPayOptions.SectionName))
+            .Validate(options => options.TimeoutSeconds is >= 5 and <= 120,
+                "VNPay:TimeoutSeconds must be between 5 and 120.")
+            .ValidateOnStart();
+        services.AddHttpClient<IVNPayClient, VNPayClient>();
+        services.AddScoped<ISubscriptionPaymentResultService, SubscriptionPaymentResultService>();
 
         // JWT
         services.AddScoped<IJwtTokenService, JwtTokenService>();
@@ -211,6 +224,7 @@ public static class DependencyInjection
         services.AddScoped<IRagDocumentQueryService, RagDocumentQueryService>();
 
         services.AddHostedService<WeeklyReportScheduler>();
+        services.AddHostedService<SubscriptionRenewalScheduler>();
 
         return services;
     }
