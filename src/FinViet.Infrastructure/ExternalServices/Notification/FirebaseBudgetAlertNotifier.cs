@@ -63,6 +63,7 @@ public class FirebaseBudgetAlertNotifier : IBudgetAlertNotifier
 
     public async Task SendBudgetAlertAsync(
         Guid customerId,
+        Guid budgetId,
         string title,
         string message,
         CancellationToken cancellationToken = default)

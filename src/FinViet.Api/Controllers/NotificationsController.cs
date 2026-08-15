@@ -19,6 +19,27 @@ public class NotificationsController : ControllerBase
         _notificationService = notificationService;
     }
 
+    [HttpPut("devices")]
+    public async Task<ActionResult<ApiResponse<object?>>> RegisterDevice(
+        [FromBody] RegisterNotificationDeviceRequest request,
+        CancellationToken cancellationToken)
+    {
+        await _notificationService.RegisterDeviceAsync(GetCustomerId(), request, cancellationToken);
+        return Ok(ApiResponse<object?>.Ok(null, "Notification device registered"));
+    }
+
+    [HttpDelete("devices")]
+    public async Task<ActionResult<ApiResponse<object?>>> UnregisterDevice(
+        [FromBody] UnregisterNotificationDeviceRequest request,
+        CancellationToken cancellationToken)
+    {
+        await _notificationService.UnregisterDeviceAsync(
+            GetCustomerId(),
+            request.InstallationId,
+            cancellationToken);
+        return Ok(ApiResponse<object?>.Ok(null, "Notification device unregistered"));
+    }
+
     [HttpGet]
     public async Task<ActionResult<ApiResponse<IReadOnlyList<NotificationResponse>>>> GetNotifications(
         [FromQuery] bool unread,
