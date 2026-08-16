@@ -2,39 +2,34 @@
 
 <!-- Feature name and short description -->
 
-**Admin analytics endpoint**: `GET /api/analytics/summary` + `GET /api/analytics/trend`, backing
-the `finviet-web` admin Overview dashboard (previously 100% hardcoded — no admin analytics
-endpoint existed anywhere in this backend; `SystemAnalytic` was unused schema and
-`KnownGapsTests.Admin_SystemAnalytics_Endpoint` was a permanently-skipped placeholder). Companion
-frontend work in `finviet-web` on branch `feature/overview-analytics-wiring` wires the Overview
-screen to these endpoints for real, replacing every hardcoded stat/chart value.
+**Fix: `SubscriptionRenewalScheduler` renewal poll always failed** — found while flagging
+out-of-scope issues during the admin analytics endpoint work (now merged, see History below).
+The background job's raw-SQL claim query compared `customer_subscriptions.status` (a real
+Postgres enum, `subscription_status`) against plain string parameters
+(`status IN ({Active}, {PastDue})`), which Npgsql sends as `text` — Postgres has no `=`/`IN`
+operator between an enum type and `text` without an explicit cast, so every poll (every 60
+minutes, since the job first shipped) threw `operator does not exist: subscription_status = text`,
+was swallowed by the outer `try/catch` in `ExecuteAsync`, logged, and retried next cycle. No
+subscription has ever actually been auto-renewed by this job as a result.
 
 ## Status
 
 <!-- Not Started | In Progress | Completed -->
 
-Completed — implemented, `dotnet build` clean (0 errors), integration test added, live-verified
-against a real local Postgres (see History).
+Completed — one-line fix, `dotnet build` clean, verified live against real Postgres (see
+History). Not committed/pushed yet.
 
 ## Goals
 
 <!-- Goals and requirements -->
 
-- New `AnalyticsController` (`api/analytics`, Admin role): `GET /summary` returns
-  `AdminAnalyticsSummaryDto` (totalCustomers, activeCustomers, newCustomers [trailing 30 days],
-  totalTransactions, totalWallets, totalBudgets, freeSubscriptions, premiumSubscriptions); `GET
-  /trend?metric=signups|transactions&days=30` returns a zero-filled `DailyMetricDto[]`
-  (`{date, count}`, one point per UTC calendar day, oldest first).
-- Live-aggregate queries only, no `SystemAnalytic` writes — that table stays unused, matching the
-  frontend's own earlier finding that nothing populates it.
-- **Documented product decisions** (no existing convention to follow, since no
-  `subscription_plans` seed data exists anywhere): `premiumSubscriptions` = distinct customers
-  with an `active`-status subscription to a plan priced `> 0`; `freeSubscriptions` = every other
-  customer (`totalCustomers - premiumSubscriptions`), so an empty `subscription_plans` table
-  yields `premiumSubscriptions = 0`, not an error. `newCustomers` uses a trailing 30-day window.
-- Both handlers query `FinVietDbContext` directly (`AsNoTracking()`, no repository interface),
-  matching `GetUsersQueryHandler`'s established style — 7 independent scalar counts for summary,
-  one `GROUP BY` + in-memory zero-fill for trend.
+- Cast the raw-SQL parameters to the enum type explicitly, matching the existing precedent in
+  `V0001__baseline_schema.sql` (`'active'::public.subscription_status`) rather than casting the
+  column (which would block any index on `status`):
+  `status IN ({Active}::subscription_status, {PastDue}::subscription_status)`.
+- Scoped to `SubscriptionRenewalScheduler.cs` only — every other `Status` comparison in this repo
+  goes through EF Core's normal LINQ translation (which already knows the enum mapping and casts
+  correctly), so this raw-SQL query was the only place affected.
 
 ## Notes
 
@@ -384,6 +379,21 @@ for the full verification trail, including two real bugs found and fixed there),
 ## History
 
 <!-- Keep this updated. Earliest to latest -->
+- 2026-08-15 — Fixed on branch `fix/subscription-renewal-status-enum-cast`: one-line change in
+  `SubscriptionRenewalScheduler.cs`'s claim query, casting the `Active`/`PastDue` string
+  parameters to `::subscription_status` so the `status IN (...)` comparison against the Postgres
+  enum column no longer throws. `dotnet build` 0 errors (6 pre-existing nullable warnings,
+  unchanged). **Live-verified two ways**: (1) booted the API against the real local Postgres —
+  before the fix this logged `fail: ... SubscriptionRenewalScheduler batch failed` /
+  `operator does not exist: subscription_status = text` on every poll (reproduced earlier in this
+  session); after the fix, the same poll runs clean with no error (0 due subscriptions exist in
+  this local DB, so nothing to claim, but the query itself no longer throws). (2) Not satisfied
+  with "doesn't error on an empty set" alone — inserted a real `subscription_plans` row and a
+  `customer_subscriptions` row (`status='active'`, `auto_renew=true`,
+  `next_billing_date = CURRENT_DATE - 1`, genuinely due) inside a transaction, ran the exact fixed
+  query pattern directly against Postgres, confirmed it matched exactly 1 row, then `ROLLBACK` —
+  no test data persisted. No production database action; local dev-only Postgres only. Not
+  committed/pushed yet.
 - 2026-08-15 — Implemented the admin analytics endpoint on branch `feature/admin-analytics-endpoint`:
   new `AnalyticsController` (`api/analytics`, Admin role) with `GET /summary`
   (`AdminAnalyticsSummaryDto`) and `GET /trend?metric=&days=` (`DailyMetricDto[]`), backed by
