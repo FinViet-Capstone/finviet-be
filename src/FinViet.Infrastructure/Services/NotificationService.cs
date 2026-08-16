@@ -39,6 +39,7 @@ public class NotificationService : INotificationService
             && (tokenOwner.CustomerId != customerId || tokenOwner.InstallationId != installationId))
         {
             _dbContext.NotificationDevices.Remove(tokenOwner);
+            await _dbContext.SaveChangesAsync(cancellationToken);
         }
 
         var device = await _dbContext.NotificationDevices
@@ -48,7 +49,7 @@ public class NotificationService : INotificationService
 
         if (device is null)
         {
-            _dbContext.NotificationDevices.Add(new NotificationDevice
+            var newDevice = new NotificationDevice
             {
                 DeviceId = Guid.NewGuid(),
                 CustomerId = customerId,
@@ -57,16 +58,41 @@ public class NotificationService : INotificationService
                 InstallationId = installationId,
                 CreatedAt = now,
                 UpdatedAt = now
-            });
-        }
-        else
-        {
-            device.Token = token;
-            device.Platform = platform;
-            device.UpdatedAt = now;
+            };
+            _dbContext.NotificationDevices.Add(newDevice);
+
+            try
+            {
+                await _dbContext.SaveChangesAsync(cancellationToken);
+                return;
+            }
+            catch (DbUpdateException ex) when (IsCustomerInstallationConflict(ex))
+            {
+                // Lost a race with a concurrent registration for the same (customerId,
+                // installationId) — e.g. an app-foreground retry — that committed between our
+                // read above and this insert. Fall through to update the row the other request
+                // just created instead of surfacing this as a 500.
+                _dbContext.Entry(newDevice).State = EntityState.Detached;
+                device = await _dbContext.NotificationDevices
+                    .FirstAsync(
+                        item => item.CustomerId == customerId && item.InstallationId == installationId,
+                        cancellationToken);
+            }
         }
 
+        device.Token = token;
+        device.Platform = platform;
+        device.UpdatedAt = now;
         await _dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    private static bool IsCustomerInstallationConflict(DbUpdateException ex)
+    {
+        var inner = ex.InnerException?.Message ?? string.Empty;
+        // Npgsql error code 23505 = unique_violation. Scoped to this specific constraint —
+        // uq_notification_devices_token can also fire on insert here (handled above by removing
+        // the stale token owner first) and needs different handling than a re-fetch-and-update.
+        return inner.Contains("23505") && inner.Contains("uq_notification_devices_customer_installation");
     }
 
     public async Task<bool> UnregisterDeviceAsync(

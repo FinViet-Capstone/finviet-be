@@ -2,48 +2,61 @@
 
 <!-- Feature name and short description -->
 
-**Fix: `SubscriptionRenewalScheduler` renewal poll always failed** — found while flagging
-out-of-scope issues during the admin analytics endpoint work (now merged, see History below).
-The background job's raw-SQL claim query compared `customer_subscriptions.status` (a real
-Postgres enum, `subscription_status`) against plain string parameters
-(`status IN ({Active}, {PastDue})`), which Npgsql sends as `text` — Postgres has no `=`/`IN`
-operator between an enum type and `text` without an explicit cast, so every poll (every 60
-minutes, since the job first shipped) threw `operator does not exist: subscription_status = text`,
-was swallowed by the outer `try/catch` in `ExecuteAsync`, logged, and retried next cycle. No
-subscription has ever actually been auto-renewed by this job as a result.
+**Fix: notification device registration race (`PUT /api/notifications/devices`)** — surfaced by a
+live Sentry issue (`Microsoft.EntityFrameworkCore.DbUpdateException`, last seen Aug 15 11:43 AM),
+found while triaging a batch of production Sentry errors from the `finviet-web` side.
+`NotificationService.RegisterDeviceAsync` does a non-atomic check-then-insert on
+`(CustomerId, InstallationId)`: two near-simultaneous registration calls for the same
+customer+installation (e.g. an app-foreground retry) both see "not found" and both try to insert,
+so the second `SaveChangesAsync` throws on `uq_notification_devices_customer_installation`,
+unhandled, surfacing as a 500.
 
 ## Status
 
 <!-- Not Started | In Progress | Completed -->
 
-Completed — one-line fix, `dotnet build` clean, verified live against real Postgres (see
-History). Not committed/pushed yet.
+Completed — `dotnet build` clean, full `FinViet.Application.UnitTests` suite passes 229/229
+(including all pre-existing `NotificationServiceTests`, no regressions). Not committed/pushed yet.
 
 ## Goals
 
 <!-- Goals and requirements -->
 
-- Cast the raw-SQL parameters to the enum type explicitly, matching the existing precedent in
-  `V0001__baseline_schema.sql` (`'active'::public.subscription_status`) rather than casting the
-  column (which would block any index on `status`):
-  `status IN ({Active}::subscription_status, {PastDue}::subscription_status)`.
-- Scoped to `SubscriptionRenewalScheduler.cs` only — every other `Status` comparison in this repo
-  goes through EF Core's normal LINQ translation (which already knows the enum mapping and casts
-  correctly), so this raw-SQL query was the only place affected.
+- Keep the existing stale-token-owner removal block (the separate `uq_notification_devices_token`
+  constraint) untouched — out of scope, not what Sentry captured.
+- No schema change — reuses the existing constraint from `V0004__notification_devices.sql`.
 
 ## Notes
 
 <!-- Any extra notes -->
 
-- Investigation for this feature was prompted from the `finviet-web` side (auditing whether the
-  admin Knowledge Base screen was "enough" to control AI, and separately whether the Overview
-  dashboard could be wired to real data) — see `finviet-web`'s `context/current-feature.md` for
-  the full reasoning chain.
-- While designing this, found and fixed a genuine, unrelated, pre-existing build-breaking bug on
-  `finviet-web`'s `dev`: nothing to do here — it had already been fixed upstream by the time this
-  branch started (verified via a fresh `dev` pull, `npm run build`/`tsc --noEmit` both clean).
-  Mentioned here only because it was discovered mid-investigation and could have been mistaken for
-  something this feature needed to fix.
+- Investigation prompted from the `finviet-web` side while triaging 3 Sentry issues shared by the
+  user; two other issues from that same batch: `SubscriptionRenewalScheduler`'s enum/text cast bug
+  (already fixed separately, see History) and a CSV-extract parser gap (`fix/csv-extract-parser`,
+  separate branch/session).
+- **Implementation approach changed from the original plan**: originally planned as an atomic
+  `INSERT ... ON CONFLICT ... DO UPDATE` raw SQL statement (matching `IdempotencyStore.cs`'s
+  idiom). Discovered mid-implementation this breaks `FinViet.Application.UnitTests` —
+  `ExecuteSqlInterpolatedAsync`/raw SQL throws `InvalidOperationException` against the EF Core
+  InMemory provider `TestDbContextFactory` uses for all unit tests (`Relational-specific methods
+  can only be used when the context is using a relational database provider`). Switched to
+  catch-`DbUpdateException`-and-retry-as-update instead, matching the exact existing
+  `IsUniqueViolation` idiom already used in `RegisterCommandHandler.cs` (and mirrored in
+  `CreateAdminCommandHandler.cs` per an earlier History entry) — checks
+  `ex.InnerException?.Message` for `"23505"`, scoped to
+  `"uq_notification_devices_customer_installation"` specifically since the *other* unique
+  constraint on this table (`uq_notification_devices_token`) can also fire here and is already
+  handled separately by the pre-existing stale-token-owner removal block above it. This keeps the
+  fix provider-agnostic and consistent with established codebase convention, at the cost of one
+  extra DB round trip only on the rare actual-conflict path (the common case — no conflict — is
+  unchanged: one query, one insert).
+- No synthetic-concurrency unit test was added to force the catch-block path itself — the two
+  precedent handlers in this codebase with the identical pattern
+  (`RegisterCommandHandler`/`CreateAdminCommandHandler`) also ship without one, since forcing a
+  true race against the InMemory provider deterministically would need test-only refactoring
+  beyond this fix's scope. Correctness of the retry path was verified by code review against the
+  exact Sentry stack trace (same `DbUpdateException` → `PostgresException 23505` shape) rather than
+  a live Postgres in this environment (no local Postgres connection string configured here).
 - No `.env`, API key, production cutover, production-data change, commit, or push without explicit
   permission.
 
