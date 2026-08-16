@@ -11,7 +11,7 @@ public record UpdateProfileCommand(
     Gender? Gender = null,
     DateOnly? DateOfBirth = null,
     bool? OnboardingDone = null,
-    int? NeedsPct = null,
-    int? WantsPct = null,
-    int? SavingsPct = null
+    decimal? NeedsPct = null,
+    decimal? WantsPct = null,
+    decimal? SavingsPct = null
 ) : IRequest<ProfileDto>;

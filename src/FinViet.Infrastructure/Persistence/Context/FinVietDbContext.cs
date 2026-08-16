@@ -285,9 +285,9 @@ public partial class FinVietDbContext : DbContext
             entity.Property(e => e.MonthlyIncomeExpected)
                 .HasPrecision(15, 2)
                 .HasColumnName("monthly_income");
-            entity.Property(e => e.NeedsPct).HasDefaultValue(50).HasColumnName("needs_pct");
-            entity.Property(e => e.WantsPct).HasDefaultValue(30).HasColumnName("wants_pct");
-            entity.Property(e => e.SavingsPct).HasDefaultValue(20).HasColumnName("savings_pct");
+            entity.Property(e => e.NeedsPct).HasPrecision(5, 2).HasDefaultValue(50).HasColumnName("needs_pct");
+            entity.Property(e => e.WantsPct).HasPrecision(5, 2).HasDefaultValue(30).HasColumnName("wants_pct");
+            entity.Property(e => e.SavingsPct).HasPrecision(5, 2).HasDefaultValue(20).HasColumnName("savings_pct");
             entity.Property(e => e.IsActive)
                 .HasDefaultValue(true)
                 .HasColumnName("is_active");

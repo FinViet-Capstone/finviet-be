@@ -29,8 +29,8 @@ public interface IIncomeAllocationService
     Task<IncomeAllocationEntryDto> ScheduleNextMonthAsync(
         Guid customerId,
         decimal monthlyIncome,
-        int needsPct,
-        int wantsPct,
-        int savingsPct,
+        decimal needsPct,
+        decimal wantsPct,
+        decimal savingsPct,
         CancellationToken cancellationToken = default);
 }

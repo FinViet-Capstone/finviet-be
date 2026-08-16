@@ -321,9 +321,9 @@ public partial class FinVietDbContext
             entity.Property(e => e.CustomerId).HasColumnName("customer_id");
             entity.Property(e => e.EffectiveMonth).HasMaxLength(7).HasColumnName("effective_month");
             entity.Property(e => e.MonthlyIncome).HasPrecision(15, 2).HasColumnName("monthly_income");
-            entity.Property(e => e.NeedsPct).HasColumnName("needs_pct");
-            entity.Property(e => e.WantsPct).HasColumnName("wants_pct");
-            entity.Property(e => e.SavingsPct).HasColumnName("savings_pct");
+            entity.Property(e => e.NeedsPct).HasPrecision(5, 2).HasColumnName("needs_pct");
+            entity.Property(e => e.WantsPct).HasPrecision(5, 2).HasColumnName("wants_pct");
+            entity.Property(e => e.SavingsPct).HasPrecision(5, 2).HasColumnName("savings_pct");
             entity.Property(e => e.CreatedAt)
                 .HasDefaultValueSql("now()")
                 .HasColumnName("created_at");

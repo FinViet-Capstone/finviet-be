@@ -98,9 +98,9 @@ public class BudgetService : IBudgetService
 
         var bucketConfigs = new[]
         {
-            new { Bucket = "needs", Pct = (decimal)allocation.NeedsPct },
-            new { Bucket = "wants", Pct = (decimal)allocation.WantsPct },
-            new { Bucket = "savings", Pct = (decimal)allocation.SavingsPct }
+            new { Bucket = "needs", Pct = allocation.NeedsPct },
+            new { Bucket = "wants", Pct = allocation.WantsPct },
+            new { Bucket = "savings", Pct = allocation.SavingsPct }
         };
 
         var summaries = new List<BucketSummaryResponse>();
