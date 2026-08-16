@@ -28,12 +28,13 @@ public partial class Customer
     /// <summary>Maps to column <c>monthly_income</c> in the v3 schema.</summary>
     public decimal? MonthlyIncomeExpected { get; set; }
 
-    // Phân bổ 50-30-20 — NGUỒN SỰ THẬT DUY NHẤT của % hũ (INTEGER, tổng=100).
-    public int NeedsPct { get; set; } = 50;
+    // Phân bổ 50-30-20 — NGUỒN SỰ THẬT DUY NHẤT của % hũ (decimal, tối đa 2 chữ số
+    // thập phân — numeric(5,2), tổng=100).
+    public decimal NeedsPct { get; set; } = 50;
 
-    public int WantsPct { get; set; } = 30;
+    public decimal WantsPct { get; set; } = 30;
 
-    public int SavingsPct { get; set; } = 20;
+    public decimal SavingsPct { get; set; } = 20;
 
     public bool IsActive { get; set; }
 

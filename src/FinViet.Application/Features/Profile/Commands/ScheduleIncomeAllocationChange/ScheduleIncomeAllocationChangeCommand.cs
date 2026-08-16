@@ -6,7 +6,7 @@ namespace FinViet.Application.Features.Profile.Commands.ScheduleIncomeAllocation
 public record ScheduleIncomeAllocationChangeCommand(
     Guid CustomerId,
     decimal MonthlyIncome,
-    int NeedsPct,
-    int WantsPct,
-    int SavingsPct
+    decimal NeedsPct,
+    decimal WantsPct,
+    decimal SavingsPct
 ) : IRequest<IncomeAllocationEntryDto>;

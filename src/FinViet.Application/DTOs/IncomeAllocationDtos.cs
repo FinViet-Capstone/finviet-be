@@ -6,9 +6,9 @@ public class IncomeAllocationEntryDto
     /// <summary><c>yyyy-MM</c>.</summary>
     public string EffectiveMonth { get; set; } = string.Empty;
     public decimal MonthlyIncome { get; set; }
-    public int NeedsPct { get; set; }
-    public int WantsPct { get; set; }
-    public int SavingsPct { get; set; }
+    public decimal NeedsPct { get; set; }
+    public decimal WantsPct { get; set; }
+    public decimal SavingsPct { get; set; }
 }
 
 /// <summary>

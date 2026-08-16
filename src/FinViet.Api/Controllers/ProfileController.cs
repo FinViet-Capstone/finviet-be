@@ -150,15 +150,15 @@ public record UpdateProfileRequest(
     Gender? Gender = null,
     DateOnly? DateOfBirth = null,
     bool? OnboardingDone = null,
-    int? NeedsPct = null,
-    int? WantsPct = null,
-    int? SavingsPct = null);
+    decimal? NeedsPct = null,
+    decimal? WantsPct = null,
+    decimal? SavingsPct = null);
 
 public record ScheduleIncomeAllocationRequest(
     decimal MonthlyIncome,
-    int NeedsPct,
-    int WantsPct,
-    int SavingsPct);
+    decimal NeedsPct,
+    decimal WantsPct,
+    decimal SavingsPct);
 
 public record UpdateProfileSettingsRequest(
     AppTheme? Theme = null,

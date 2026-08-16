@@ -18,11 +18,11 @@ public sealed class IncomeAllocationSetting
 
     public decimal MonthlyIncome { get; set; }
 
-    public int NeedsPct { get; set; }
+    public decimal NeedsPct { get; set; }
 
-    public int WantsPct { get; set; }
+    public decimal WantsPct { get; set; }
 
-    public int SavingsPct { get; set; }
+    public decimal SavingsPct { get; set; }
 
     public DateTime CreatedAt { get; set; }
 
