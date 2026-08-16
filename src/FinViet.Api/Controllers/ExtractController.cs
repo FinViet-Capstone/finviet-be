@@ -96,7 +96,7 @@ public class ExtractController : ControllerBase
             return BadRequest(ApiResponse<ExtractResponse>.Fail("maxRows phải lớn hơn 0."));
 
         await using var stream = request.File.OpenReadStream();
-        var result = await _extract.ExtractCsvAsync(GetCustomerId(), stream, request.MaxRows, cancellationToken);
+        var result = await _extract.ExtractCsvAsync(GetCustomerId(), stream, extension, request.MaxRows, cancellationToken);
         return Ok(ApiResponse<ExtractResponse>.Ok(result, "File extracted successfully"));
     }
 

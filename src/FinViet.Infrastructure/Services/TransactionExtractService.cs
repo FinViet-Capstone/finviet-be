@@ -40,9 +40,9 @@ public class TransactionExtractService : ITransactionExtractService
         return await BuildResponseAsync(customerId, parsed, cancellationToken);
     }
 
-    public async Task<ExtractResponse> ExtractCsvAsync(Guid customerId, Stream fileStream, int? maxRows, CancellationToken cancellationToken = default)
+    public async Task<ExtractResponse> ExtractCsvAsync(Guid customerId, Stream fileStream, string fileExtension, int? maxRows, CancellationToken cancellationToken = default)
     {
-        var parsed = _bankParser.Parse(fileStream, maxRows);
+        var parsed = _bankParser.Parse(fileStream, fileExtension, maxRows);
         return await BuildResponseAsync(customerId, parsed, cancellationToken);
     }
 

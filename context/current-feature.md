@@ -2,48 +2,64 @@
 
 <!-- Feature name and short description -->
 
-**Fix: `SubscriptionRenewalScheduler` renewal poll always failed** — found while flagging
-out-of-scope issues during the admin analytics endpoint work (now merged, see History below).
-The background job's raw-SQL claim query compared `customer_subscriptions.status` (a real
-Postgres enum, `subscription_status`) against plain string parameters
-(`status IN ({Active}, {PastDue})`), which Npgsql sends as `text` — Postgres has no `=`/`IN`
-operator between an enum type and `text` without an explicit cast, so every poll (every 60
-minutes, since the job first shipped) threw `operator does not exist: subscription_status = text`,
-was swallowed by the outer `try/catch` in `ExecuteAsync`, logged, and retried next cycle. No
-subscription has ever actually been auto-renewed by this job as a result.
+**Fix: `POST /api/extract/csv` has no real CSV parser** — surfaced by a live Sentry issue
+(`ExcelDataReader.Exceptions.HeaderException: Invalid file signature`, last seen Aug 15 10:23 AM),
+found while triaging a batch of production Sentry errors from the `finviet-web` side. The endpoint
+explicitly advertises and validates `.csv`/`.xlsx`/`.xls`, but `TransactionExtractService.
+ExtractCsvAsync` unconditionally delegates to the single registered `IBankStatementParser`
+(`BankStatementExcelParser`), which uses `ExcelDataReader` — a binary-Excel-only reader that
+throws on any genuine plain-text `.csv` upload. There is currently no actual CSV parser anywhere
+in the codebase.
 
 ## Status
 
 <!-- Not Started | In Progress | Completed -->
 
-Completed — one-line fix, `dotnet build` clean, verified live against real Postgres (see
-History). Not committed/pushed yet.
+Completed — `dotnet build` clean (6 pre-existing warnings, unchanged), full
+`FinViet.Application.UnitTests` suite passes 235/235 (229 pre-existing + 6 new for this fix),
+`FinViet.Domain.UnitTests` 1/1. Not committed/pushed yet.
 
 ## Goals
 
 <!-- Goals and requirements -->
 
-- Cast the raw-SQL parameters to the enum type explicitly, matching the existing precedent in
-  `V0001__baseline_schema.sql` (`'active'::public.subscription_status`) rather than casting the
-  column (which would block any index on `status`):
-  `status IN ({Active}::subscription_status, {PastDue}::subscription_status)`.
-- Scoped to `SubscriptionRenewalScheduler.cs` only — every other `Status` comparison in this repo
-  goes through EF Core's normal LINQ translation (which already knows the enum mapping and casts
-  correctly), so this raw-SQL query was the only place affected.
+- Added `CsvHelper` 33.1.0 and gave `.csv` uploads a real text-based parsing path, keeping the
+  existing `ExcelDataReader` path for `.xlsx`/`.xls` unchanged (same library call, same output
+  shape).
+- Extracted the shared per-row business rules (column layout, amount/date parsing, skip rules)
+  out of `BankStatementExcelParser.ParseSheet` into a new `BankStatementRowParser` static helper,
+  used by both the Excel and CSV read paths so the two formats can't drift apart.
+- Threaded the file extension from `ExtractController` (already computed for validation,
+  previously discarded) through `ITransactionExtractService.ExtractCsvAsync` →
+  `IBankStatementParser.Parse` so the parser knows which format it's reading.
+- No schema change.
 
 ## Notes
 
 <!-- Any extra notes -->
 
-- Investigation for this feature was prompted from the `finviet-web` side (auditing whether the
-  admin Knowledge Base screen was "enough" to control AI, and separately whether the Overview
-  dashboard could be wired to real data) — see `finviet-web`'s `context/current-feature.md` for
-  the full reasoning chain.
-- While designing this, found and fixed a genuine, unrelated, pre-existing build-breaking bug on
-  `finviet-web`'s `dev`: nothing to do here — it had already been fixed upstream by the time this
-  branch started (verified via a fresh `dev` pull, `npm run build`/`tsc --noEmit` both clean).
-  Mentioned here only because it was discovered mid-investigation and could have been mistaken for
-  something this feature needed to fix.
+- Investigation prompted from the `finviet-web` side while triaging 3 Sentry issues shared by the
+  user; two other issues from that same batch: `SubscriptionRenewalScheduler`'s enum/text cast bug
+  (already fixed separately, see History) and a notification-device registration race
+  (`fix/notification-device-race`, separate branch/worktree, built in parallel).
+- Built in an isolated worktree (`finviet-be-csv-extract`, branched from `dev`), matching this
+  repo's established pattern for running two independent fix branches at once — the primary
+  checkout was mid-flight on `fix/notification-device-race`.
+- New `BankStatementExcelParserTests.cs` (6 tests, `FinViet.Application.UnitTests`) — this parser
+  had no test coverage at all before this fix. Covers: CSV credit row → INCOME, CSV debit row →
+  EXPENSE with thousands-separator/`VND`-suffix amount parsing (quoted per real CSV export
+  conventions, since the amount itself contains commas), silent header/blank-row skipping,
+  no-amount and unparseable-date rows recorded in `ParseErrors`, and `maxRows` truncation. The
+  Excel (`.xlsx`/`.xls`) path itself was not given new test coverage — its actual parsing library
+  usage (`ExcelDataReader.CreateReader().AsDataSet()`) is unchanged, only reorganized to route
+  through the same shared `BankStatementRowParser`, so its regression risk is covered by the
+  existing test suite passing plus this fix's CSV tests exercising the now-shared row logic.
+- No live end-to-end verification against a running API (no local Postgres connection string
+  configured in this environment) — verified via the new unit tests calling
+  `BankStatementExcelParser.Parse(...)` directly, which exercises the exact code path
+  `POST /api/extract/csv` calls, without needing a database.
+- `docs/api-reference.md` has no existing section for `POST /api/extract/*` — not adding one now,
+  out of scope for this fix (no existing doc to update).
 - No `.env`, API key, production cutover, production-data change, commit, or push without explicit
   permission.
 

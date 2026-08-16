@@ -8,5 +8,5 @@ public interface ITransactionExtractService
 {
     Task<ExtractResponse> ExtractSmsAsync(Guid customerId, string text, CancellationToken cancellationToken = default);
 
-    Task<ExtractResponse> ExtractCsvAsync(Guid customerId, Stream fileStream, int? maxRows, CancellationToken cancellationToken = default);
+    Task<ExtractResponse> ExtractCsvAsync(Guid customerId, Stream fileStream, string fileExtension, int? maxRows, CancellationToken cancellationToken = default);
 }
