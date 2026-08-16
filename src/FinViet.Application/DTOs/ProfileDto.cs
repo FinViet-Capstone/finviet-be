@@ -20,9 +20,9 @@ public class ProfileDto
     // IBudgetService.GetBudgetBucketsAsync for bucket scoring. Defaults match the
     // Customer entity's column defaults so admin profiles (which have no allocation)
     // still serialize a sane value.
-    public int NeedsPct { get; set; } = 50;
-    public int WantsPct { get; set; } = 30;
-    public int SavingsPct { get; set; } = 20;
+    public decimal NeedsPct { get; set; } = 50;
+    public decimal WantsPct { get; set; } = 30;
+    public decimal SavingsPct { get; set; } = 20;
 
     // Per-customer preferences (customer_settings) — default when the customer has no
     // settings row yet (nothing writes one until UpdateProfileSettingsCommand is first called).

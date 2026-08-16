@@ -60,13 +60,23 @@ public class CoreValidatorTests
     }
 
     // TC-PROF-U02
+    // decimal isn't a valid attribute-argument type, so InlineData can't carry it —
+    // MemberData sidesteps that (also lets Nullable<decimal> box the actual decimal
+    // values directly, avoiding a reflection Invoke quirk where InlineData's boxed
+    // int literals fail to convert into a decimal? parameter).
+    public static IEnumerable<object?[]> InvalidIncomeOrAllocationCases =>
+        new List<object?[]>
+        {
+            new object?[] { -1m, null, null, null },
+            new object?[] { 1m, 50m, null, 50m },
+            new object?[] { 1m, 60m, 30m, 20m },
+            new object?[] { 1m, 101m, 0m, -1m },
+        };
+
     [Theory]
-    [InlineData(-1, null, null, null)]
-    [InlineData(1, 50, null, 50)]
-    [InlineData(1, 60, 30, 20)]
-    [InlineData(1, 101, 0, -1)]
+    [MemberData(nameof(InvalidIncomeOrAllocationCases))]
     public void UpdateProfileValidator_InvalidIncomeOrAllocation_IsInvalid(
-        decimal income, int? needs, int? wants, int? savings)
+        decimal income, decimal? needs, decimal? wants, decimal? savings)
     {
         var command = new UpdateProfileCommand(Guid.NewGuid(), "User", income,
             NeedsPct: needs, WantsPct: wants, SavingsPct: savings);
