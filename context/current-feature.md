@@ -2,6 +2,120 @@
 
 <!-- Feature name and short description -->
 
+**CI/CD: GitHub Actions deploy workflow to Render** — the previous CSV-parser fix
+(`fix/csv-flexible-parser`) merged into `dev`; this follow-up adds `.github/workflows/
+deploy-render.yml` so pushes to `main` build, run the Domain/Application unit test suites (no DB
+needed — integration tests are intentionally excluded since they require a live server/DB CI
+doesn't have), and only then trigger a deploy on Render via its REST API
+(`POST /v1/services/{id}/deploys`), polling the deploy status until `live`/failed/timeout so a
+build failure surfaces as a red Actions run instead of silently failing on Render's side. Requires
+two GitHub Actions repo secrets not yet configured by this session: `RENDER_API_KEY` (an API key
+from the Render account settings) and `RENDER_SERVICE_ID` (the `srv-...` id of the
+`finviet-be-7t8w` web service, visible in its Render dashboard URL). Per explicit user instruction,
+Render's own native "auto-deploy on push" toggle should be turned off on the Render dashboard for
+this service once this workflow is merged, to avoid double-deploys — this workflow becomes the sole
+deploy trigger for `main`.
+
+## Status
+
+In Progress — workflow file written, not yet committed/pushed. Cannot be verified end-to-end in
+this environment: no GitHub Actions run can be triggered without pushing, and the two Render
+secrets aren't set. **Needs, before/after merge**: (1) add `RENDER_API_KEY`/`RENDER_SERVICE_ID` as
+repo secrets (Settings → Secrets and variables → Actions), (2) turn off Render's native auto-deploy
+toggle for this service, (3) watch the first real Actions run on a push to `main` to confirm the
+Render API calls actually succeed (this session cannot do this itself — no Render credentials are
+available here).
+
+## Goals
+
+- Deploy triggers only on push to `main` (plus manual `workflow_dispatch`), matching this repo's
+  existing main-is-production branch convention.
+- Build + unit tests (`FinViet.Domain.UnitTests`, `FinViet.Application.UnitTests`) must pass before
+  the deploy step runs; a failure in either stops the deploy.
+- Deploy uses the Render REST API (not a Deploy Hook URL) so the workflow can poll deploy status
+  and fail the Actions run if the Render-side build/deploy itself fails, rather than declaring
+  success as soon as the trigger request is accepted.
+- No new secrets/credentials were entered or guessed in this session — `RENDER_API_KEY`/
+  `RENDER_SERVICE_ID` must be added as GitHub Actions repo secrets by the user.
+
+## Notes
+
+- No `.env`, API key, production cutover, production-data change, commit, or push without explicit
+  permission beyond what's already been asked for.
+
+---
+
+**Fix: flexible CSV bank-statement import (`POST /api/extract/csv`)** — triggered by a mobile
+screenshot showing the "Nhập từ file CSV" screen failing with "Không tìm thấy giao dịch hợp lệ nào
+trong file" (no valid transactions found) even though the file matched the screen's own advertised
+requirement (a date column, a description column, and an amount column). Root cause:
+`BankStatementRowParser` only ever recognized one fixed 14-column full bank-statement export layout
+by hardcoded positional index (`cells[1]`/`2`/`5`/`6`/`11`/`13`), gated entirely on `cells[1]`
+parsing as an integer STT. Any CSV not shaped like that — including the simple 3-column format the
+app advertises — has every row silently skipped with zero telemetry (`TotalRowsScanned` stays 0, no
+`ParseErrors`), so the client always falls back to a generic "nothing found" message with no way to
+tell the user why. Confirmed reproducible via the existing (but stale-commented)
+`ExtractAndAiTests.ExtractCsv_PlainCsv_ParsesRows` integration test, branch `fix/csv-flexible-parser`.
+
+## Status
+
+Completed — `dotnet build FinViet.sln` clean (6 pre-existing nullable warnings, unchanged). Full
+`FinViet.Application.UnitTests` suite passes 243/243 (232 pre-existing + 11 new/extended
+`BankStatementExcelParserTests`, no regressions — all 6 original tests pass byte-for-byte unchanged,
+confirming the fixed-position fallback preserves prior behavior exactly). Committed (`1fcaa09`),
+merged via PR #54 into `dev`.
+
+## Goals
+
+- `BankStatementRowParser` resolves columns by header name (Vietnamese + English aliases) when a
+  recognizable header row is present, instead of only fixed positional indices; falls back to the
+  existing fixed-index/STT-gated behavior when no header is recognized, so existing full-export
+  behavior and all 6 existing unit tests are unaffected.
+- Support a single signed `Amount` column (sign determines income/expense) in addition to the
+  existing separate Debit/Credit columns, since that's the shape of the app's advertised format.
+- Every non-blank candidate data row increments `TotalRowsScanned` (fixes the silent-zero-telemetry
+  gap), with `ParseErrors` entries for rows that still fail to parse.
+- Locale-aware amount parsing (`đ`/`VNĐ`/`₫` suffixes, Vietnamese `.`-thousands/`,`-decimal
+  formatting) and an added `yyyy-MM-dd`/`yyyy/MM/dd` date format.
+- Delimiter sniffing (`,`/`;`/tab) for the CSV path instead of a hardcoded comma.
+- `POST /api/extract/csv` returns an explanatory message (mirroring `/sms`'s
+  `BuildSmsResultMessage`) instead of a generic "success" message when `Rows` comes back empty.
+- No DTO/response shape change, no new endpoint, no schema/migration change.
+
+## Notes
+
+- `docs/api-reference.md`'s `/csv` section is stale (still describes `ExcelDataReader`-only parsing
+  from before the `fix/csv-extract-parser` branch moved CSV to `CsvHelper`) — update alongside this
+  fix.
+- Out of scope, flagged not fixed: non-UTF-8/non-BOM encoding fallback (Windows-1258/ANSI), and
+  deduplicating the near-identical `ParseMoney`/date-parsing logic duplicated in
+  `SmsTransactionParser.cs`.
+- Implemented: `BankStatementRowParser.ParseRows` now runs a two-phase pass over all rows (header
+  lookup by normalized/diacritic-stripped alias matching, then per-row parse using either the
+  resolved named-column layout or the original fixed-position fallback); `BankStatementExcelParser`
+  collects rows into a list first (needed since header detection must see the whole file, not one
+  row at a time) and sniffs the CSV delimiter from the first non-blank line before constructing
+  `CsvReader`. `ExtractController.ExtractCsv` gained `BuildCsvResultMessage` (mirrors the existing
+  `BuildSmsResultMessage`) so a zero-row result explains the expected format instead of returning
+  the old generic "File extracted successfully". Fixed the stale
+  `ExtractAndAiTests.ExtractCsv_PlainCsv_ParsesRows` integration test (removed its outdated "500
+  Invalid file signature" `Skip.If`, now asserts 200 + 2 rows directly) and updated
+  `docs/api-reference.md`'s `/csv` section to describe the new header/fallback behavior.
+- **Live end-to-end verification (Swagger / integration suite against a running server) was not
+  performed** — no `ConnectionStrings:DefaultConnection` is configured in this environment (checked
+  `dotnet user-secrets list`; a Postgres process is listening on 5432 but no credentials are on
+  file), so the API can't be booted here. Verified instead via the unit suite: all 6 pre-existing
+  `BankStatementExcelParserTests` pass unchanged (proves the fixed-position fallback is
+  byte-for-byte identical to prior behavior, including that the existing tests' own header row
+  `"STT","Ngay","No","Co","Dien giai","Doi ung"` now also resolves by name to the *same* column
+  indices as the fallback would have used), plus 5 new tests covering the simple 3-column format in
+  Vietnamese and English headers, semicolon delimiting, Vietnamese-locale amount formatting, and the
+  no-header fallback path explicitly.
+- No `.env`, API key, production cutover, production-data change, commit, or push without explicit
+  permission.
+
+---
+
 **Fix: Savings-bucket goal netting (`GET /budgets/buckets`)** — cross-repo work with
 `finviet-mobile` (branch `fix/savings-goal-budget-score-integration` there; this repo's branch is
 `fix/savings-bucket-goal-netting`), triggered by a mobile-side inspection of how Saving Goals,
