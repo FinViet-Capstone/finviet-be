@@ -2,6 +2,49 @@
 
 <!-- Feature name and short description -->
 
+**CI/CD: GitHub Actions deploy workflow to Render** — the previous CSV-parser fix
+(`fix/csv-flexible-parser`) merged into `dev`; this follow-up adds `.github/workflows/
+deploy-render.yml` so pushes to `main` build, run the Domain/Application unit test suites (no DB
+needed — integration tests are intentionally excluded since they require a live server/DB CI
+doesn't have), and only then trigger a deploy on Render via its REST API
+(`POST /v1/services/{id}/deploys`), polling the deploy status until `live`/failed/timeout so a
+build failure surfaces as a red Actions run instead of silently failing on Render's side. Requires
+two GitHub Actions repo secrets not yet configured by this session: `RENDER_API_KEY` (an API key
+from the Render account settings) and `RENDER_SERVICE_ID` (the `srv-...` id of the
+`finviet-be-7t8w` web service, visible in its Render dashboard URL). Per explicit user instruction,
+Render's own native "auto-deploy on push" toggle should be turned off on the Render dashboard for
+this service once this workflow is merged, to avoid double-deploys — this workflow becomes the sole
+deploy trigger for `main`.
+
+## Status
+
+In Progress — workflow file written, not yet committed/pushed. Cannot be verified end-to-end in
+this environment: no GitHub Actions run can be triggered without pushing, and the two Render
+secrets aren't set. **Needs, before/after merge**: (1) add `RENDER_API_KEY`/`RENDER_SERVICE_ID` as
+repo secrets (Settings → Secrets and variables → Actions), (2) turn off Render's native auto-deploy
+toggle for this service, (3) watch the first real Actions run on a push to `main` to confirm the
+Render API calls actually succeed (this session cannot do this itself — no Render credentials are
+available here).
+
+## Goals
+
+- Deploy triggers only on push to `main` (plus manual `workflow_dispatch`), matching this repo's
+  existing main-is-production branch convention.
+- Build + unit tests (`FinViet.Domain.UnitTests`, `FinViet.Application.UnitTests`) must pass before
+  the deploy step runs; a failure in either stops the deploy.
+- Deploy uses the Render REST API (not a Deploy Hook URL) so the workflow can poll deploy status
+  and fail the Actions run if the Render-side build/deploy itself fails, rather than declaring
+  success as soon as the trigger request is accepted.
+- No new secrets/credentials were entered or guessed in this session — `RENDER_API_KEY`/
+  `RENDER_SERVICE_ID` must be added as GitHub Actions repo secrets by the user.
+
+## Notes
+
+- No `.env`, API key, production cutover, production-data change, commit, or push without explicit
+  permission beyond what's already been asked for.
+
+---
+
 **Fix: flexible CSV bank-statement import (`POST /api/extract/csv`)** — triggered by a mobile
 screenshot showing the "Nhập từ file CSV" screen failing with "Không tìm thấy giao dịch hợp lệ nào
 trong file" (no valid transactions found) even though the file matched the screen's own advertised
@@ -19,7 +62,8 @@ tell the user why. Confirmed reproducible via the existing (but stale-commented)
 Completed — `dotnet build FinViet.sln` clean (6 pre-existing nullable warnings, unchanged). Full
 `FinViet.Application.UnitTests` suite passes 243/243 (232 pre-existing + 11 new/extended
 `BankStatementExcelParserTests`, no regressions — all 6 original tests pass byte-for-byte unchanged,
-confirming the fixed-position fallback preserves prior behavior exactly). Not committed/pushed yet.
+confirming the fixed-position fallback preserves prior behavior exactly). Committed (`1fcaa09`),
+merged via PR #54 into `dev`.
 
 ## Goals
 
