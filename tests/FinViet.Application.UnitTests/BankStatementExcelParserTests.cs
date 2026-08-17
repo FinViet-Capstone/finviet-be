@@ -97,6 +97,78 @@ public class BankStatementExcelParserTests
         Assert.Equal(2, result.Rows.Count);
     }
 
+    [Fact]
+    public void Parse_Csv_SimpleThreeColumnHeaderVietnamese_ParsesSignedAmounts()
+    {
+        var csv = "Ngay,Mo ta,So tien\n12/06/2026,Grab 4.7km,-45000\n12/06/2026,Tien luong,2500000\n";
+        var parser = new BankStatementExcelParser();
+
+        var result = parser.Parse(ToStream(csv), ".csv");
+
+        Assert.Equal(2, result.Rows.Count);
+        Assert.Equal("EXPENSE", result.Rows[0].TransactionType);
+        Assert.Equal(45_000m, result.Rows[0].Amount);
+        Assert.Equal("Grab 4.7km", result.Rows[0].Note);
+        Assert.Equal("INCOME", result.Rows[1].TransactionType);
+        Assert.Equal(2_500_000m, result.Rows[1].Amount);
+        Assert.Equal(2, result.TotalRowsScanned);
+        Assert.Empty(result.ParseErrors);
+    }
+
+    [Fact]
+    public void Parse_Csv_SimpleThreeColumnHeaderEnglish_ParsesRows()
+    {
+        var csv = "Date,Description,Amount\n2026-08-15,Coffee,-65000\n";
+        var parser = new BankStatementExcelParser();
+
+        var result = parser.Parse(ToStream(csv), ".csv");
+
+        var row = Assert.Single(result.Rows);
+        Assert.Equal("EXPENSE", row.TransactionType);
+        Assert.Equal(65_000m, row.Amount);
+        Assert.Equal(new DateTime(2026, 8, 15, 0, 0, 0, DateTimeKind.Utc), row.TransactionDate);
+    }
+
+    [Fact]
+    public void Parse_Csv_SemicolonDelimited_ParsesRows()
+    {
+        var csv = "Ngay;Mo ta;So tien\n12/06/2026;Grab 4.7km;-45000\n";
+        var parser = new BankStatementExcelParser();
+
+        var result = parser.Parse(ToStream(csv), ".csv");
+
+        var row = Assert.Single(result.Rows);
+        Assert.Equal("EXPENSE", row.TransactionType);
+        Assert.Equal(45_000m, row.Amount);
+    }
+
+    [Fact]
+    public void Parse_Csv_VietnameseLocaleAmountFormat_ParsesCorrectMagnitude()
+    {
+        var csv = "Ngay,Mo ta,So tien\n12/06/2026,Big purchase,\"-1.250.000,50\"\n";
+        var parser = new BankStatementExcelParser();
+
+        var result = parser.Parse(ToStream(csv), ".csv");
+
+        var row = Assert.Single(result.Rows);
+        Assert.Equal(1_250_000.50m, row.Amount);
+    }
+
+    [Fact]
+    public void Parse_Csv_NoRecognizableHeader_FallsBackToLegacyPositionalLayout()
+    {
+        var csv = BuildCsv(
+            BuildRow(no: "1", date: "15/08/2026", debit: "", credit: "50000", description: "Legacy row", correspondent: ""));
+        var parser = new BankStatementExcelParser();
+
+        var result = parser.Parse(ToStream(csv), ".csv");
+
+        var row = Assert.Single(result.Rows);
+        Assert.Equal("INCOME", row.TransactionType);
+        Assert.Equal(50_000m, row.Amount);
+        Assert.Equal("Legacy row", row.Note);
+    }
+
     private static string BuildRow(string no, string date, string debit, string credit, string description, string correspondent)
         => string.Join(",", new[] { "", no, date, "", "", debit, credit, "", "", "", "", description, "", correspondent }
             .Select(QuoteIfNeeded));
