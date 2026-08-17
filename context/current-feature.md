@@ -2,37 +2,29 @@
 
 <!-- Feature name and short description -->
 
-**Fix: `POST /api/extract/csv` has no real CSV parser** — surfaced by a live Sentry issue
-(`ExcelDataReader.Exceptions.HeaderException: Invalid file signature`, last seen Aug 15 10:23 AM),
-found while triaging a batch of production Sentry errors from the `finviet-web` side. The endpoint
-explicitly advertises and validates `.csv`/`.xlsx`/`.xls`, but `TransactionExtractService.
-ExtractCsvAsync` unconditionally delegates to the single registered `IBankStatementParser`
-(`BankStatementExcelParser`), which uses `ExcelDataReader` — a binary-Excel-only reader that
-throws on any genuine plain-text `.csv` upload. There is currently no actual CSV parser anywhere
-in the codebase.
+**Fix: notification device registration race (`PUT /api/notifications/devices`)** — surfaced by a
+live Sentry issue (`Microsoft.EntityFrameworkCore.DbUpdateException`, last seen Aug 15 11:43 AM),
+found while triaging a batch of production Sentry errors from the `finviet-web` side.
+`NotificationService.RegisterDeviceAsync` does a non-atomic check-then-insert on
+`(CustomerId, InstallationId)`: two near-simultaneous registration calls for the same
+customer+installation (e.g. an app-foreground retry) both see "not found" and both try to insert,
+so the second `SaveChangesAsync` throws on `uq_notification_devices_customer_installation`,
+unhandled, surfacing as a 500.
 
 ## Status
 
 <!-- Not Started | In Progress | Completed -->
 
-Completed — `dotnet build` clean (6 pre-existing warnings, unchanged), full
-`FinViet.Application.UnitTests` suite passes 235/235 (229 pre-existing + 6 new for this fix),
-`FinViet.Domain.UnitTests` 1/1. Not committed/pushed yet.
+Completed — `dotnet build` clean, full `FinViet.Application.UnitTests` suite passes 229/229
+(including all pre-existing `NotificationServiceTests`, no regressions). Not committed/pushed yet.
 
 ## Goals
 
 <!-- Goals and requirements -->
 
-- Added `CsvHelper` 33.1.0 and gave `.csv` uploads a real text-based parsing path, keeping the
-  existing `ExcelDataReader` path for `.xlsx`/`.xls` unchanged (same library call, same output
-  shape).
-- Extracted the shared per-row business rules (column layout, amount/date parsing, skip rules)
-  out of `BankStatementExcelParser.ParseSheet` into a new `BankStatementRowParser` static helper,
-  used by both the Excel and CSV read paths so the two formats can't drift apart.
-- Threaded the file extension from `ExtractController` (already computed for validation,
-  previously discarded) through `ITransactionExtractService.ExtractCsvAsync` →
-  `IBankStatementParser.Parse` so the parser knows which format it's reading.
-- No schema change.
+- Keep the existing stale-token-owner removal block (the separate `uq_notification_devices_token`
+  constraint) untouched — out of scope, not what Sentry captured.
+- No schema change — reuses the existing constraint from `V0004__notification_devices.sql`.
 
 ## Notes
 
@@ -40,26 +32,31 @@ Completed — `dotnet build` clean (6 pre-existing warnings, unchanged), full
 
 - Investigation prompted from the `finviet-web` side while triaging 3 Sentry issues shared by the
   user; two other issues from that same batch: `SubscriptionRenewalScheduler`'s enum/text cast bug
-  (already fixed separately, see History) and a notification-device registration race
-  (`fix/notification-device-race`, separate branch/worktree, built in parallel).
-- Built in an isolated worktree (`finviet-be-csv-extract`, branched from `dev`), matching this
-  repo's established pattern for running two independent fix branches at once — the primary
-  checkout was mid-flight on `fix/notification-device-race`.
-- New `BankStatementExcelParserTests.cs` (6 tests, `FinViet.Application.UnitTests`) — this parser
-  had no test coverage at all before this fix. Covers: CSV credit row → INCOME, CSV debit row →
-  EXPENSE with thousands-separator/`VND`-suffix amount parsing (quoted per real CSV export
-  conventions, since the amount itself contains commas), silent header/blank-row skipping,
-  no-amount and unparseable-date rows recorded in `ParseErrors`, and `maxRows` truncation. The
-  Excel (`.xlsx`/`.xls`) path itself was not given new test coverage — its actual parsing library
-  usage (`ExcelDataReader.CreateReader().AsDataSet()`) is unchanged, only reorganized to route
-  through the same shared `BankStatementRowParser`, so its regression risk is covered by the
-  existing test suite passing plus this fix's CSV tests exercising the now-shared row logic.
-- No live end-to-end verification against a running API (no local Postgres connection string
-  configured in this environment) — verified via the new unit tests calling
-  `BankStatementExcelParser.Parse(...)` directly, which exercises the exact code path
-  `POST /api/extract/csv` calls, without needing a database.
-- `docs/api-reference.md` has no existing section for `POST /api/extract/*` — not adding one now,
-  out of scope for this fix (no existing doc to update).
+  (already fixed separately, see History) and a CSV-extract parser gap (`fix/csv-extract-parser`,
+  separate branch/session).
+- **Implementation approach changed from the original plan**: originally planned as an atomic
+  `INSERT ... ON CONFLICT ... DO UPDATE` raw SQL statement (matching `IdempotencyStore.cs`'s
+  idiom). Discovered mid-implementation this breaks `FinViet.Application.UnitTests` —
+  `ExecuteSqlInterpolatedAsync`/raw SQL throws `InvalidOperationException` against the EF Core
+  InMemory provider `TestDbContextFactory` uses for all unit tests (`Relational-specific methods
+  can only be used when the context is using a relational database provider`). Switched to
+  catch-`DbUpdateException`-and-retry-as-update instead, matching the exact existing
+  `IsUniqueViolation` idiom already used in `RegisterCommandHandler.cs` (and mirrored in
+  `CreateAdminCommandHandler.cs` per an earlier History entry) — checks
+  `ex.InnerException?.Message` for `"23505"`, scoped to
+  `"uq_notification_devices_customer_installation"` specifically since the *other* unique
+  constraint on this table (`uq_notification_devices_token`) can also fire here and is already
+  handled separately by the pre-existing stale-token-owner removal block above it. This keeps the
+  fix provider-agnostic and consistent with established codebase convention, at the cost of one
+  extra DB round trip only on the rare actual-conflict path (the common case — no conflict — is
+  unchanged: one query, one insert).
+- No synthetic-concurrency unit test was added to force the catch-block path itself — the two
+  precedent handlers in this codebase with the identical pattern
+  (`RegisterCommandHandler`/`CreateAdminCommandHandler`) also ship without one, since forcing a
+  true race against the InMemory provider deterministically would need test-only refactoring
+  beyond this fix's scope. Correctness of the retry path was verified by code review against the
+  exact Sentry stack trace (same `DbUpdateException` → `PostgresException 23505` shape) rather than
+  a live Postgres in this environment (no local Postgres connection string configured here).
 - No `.env`, API key, production cutover, production-data change, commit, or push without explicit
   permission.
 
