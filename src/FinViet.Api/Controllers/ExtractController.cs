@@ -97,7 +97,20 @@ public class ExtractController : ControllerBase
 
         await using var stream = request.File.OpenReadStream();
         var result = await _extract.ExtractCsvAsync(GetCustomerId(), stream, extension, request.MaxRows, cancellationToken);
-        return Ok(ApiResponse<ExtractResponse>.Ok(result, "File extracted successfully"));
+        return Ok(ApiResponse<ExtractResponse>.Ok(result, BuildCsvResultMessage(result)));
+    }
+
+    /// <summary>Mirrors <see cref="BuildSmsResultMessage"/>: when nothing was recognized, explain
+    /// the expected columns instead of returning a generic success message that gives the user no
+    /// clue why their file produced zero rows.</summary>
+    private static string BuildCsvResultMessage(ExtractResponse result)
+    {
+        if (result.Rows.Count == 0)
+            return "Không tìm thấy giao dịch hợp lệ nào trong file. File CSV cần có cột ngày, " +
+                   "nội dung/diễn giải và số tiền (ví dụ: \"Ngay,Mo ta,So tien\"), hoặc đúng định " +
+                   "dạng sao kê ngân hàng đầy đủ.";
+
+        return $"Đã trích xuất {result.Rows.Count} giao dịch từ file.";
     }
 
     // POST /api/extract/photo — OCR a receipt photo → a single candidate row (same ExtractResponse

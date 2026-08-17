@@ -27,9 +27,8 @@ public class ExtractAndAiTests : ApiTestBase
         Assert.Equal(400, r.Code);
     }
 
-    // TC-EXT-03 — CSV import of a plain .csv bank export (Capstone requirement)
-    // KNOWN BUG: the parser (BankStatementExcelParser) only accepts Excel binaries and
-    // throws 500 "Invalid file signature" on plain CSV text.
+    // TC-EXT-03 — CSV import of a plain, simple-format .csv (date/description/amount columns,
+    // Capstone requirement). The parser resolves these columns by header name.
     [SkippableFact]
     public async Task ExtractCsv_PlainCsv_ParsesRows()
     {
@@ -38,12 +37,8 @@ public class ExtractAndAiTests : ApiTestBase
         var r = await Fx.Client.UploadFileAsync("/api/extract/csv", "File", "sao_ke.csv",
             Encoding.UTF8.GetBytes(csv), "text/csv", Cust);
 
-        Skip.If(r.Code == 500,
-            "KNOWN BUG #C: CSV import returns 500 'Invalid file signature' for plain CSV — parser is Excel-only. " +
-            "Capstone requires CSV import (VietinBank/BIDV/Vietcombank exports).");
-
         Assert.Equal(200, r.Code);
-        Assert.True(ArrayLen(ApiTestFixture.Data(r)?["rows"]) >= 1);
+        Assert.True(ArrayLen(ApiTestFixture.Data(r)?["rows"]) >= 2);
     }
 
     // TC-AI-01 — AI Spending Score, weekly view (50/50 weights)
