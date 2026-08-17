@@ -96,6 +96,14 @@ public class BudgetService : IBudgetService
         var uncategorizedSpent = await ComputeUncategorizedSpentAsync(customerId, window, cancellationToken);
         var uncategorizedRatio = totalSpent > 0 ? Math.Round(uncategorizedSpent / totalSpent * 100m, 2) : 0m;
 
+        // Saving-goal contributions/withdrawals are excluded from the categorized query above
+        // (cat_savings_goal is a system auto-category, not a real spend category) but they ARE
+        // the customer fulfilling their Savings allocation — a contribution with no funding
+        // wallet aside is functionally identical to a manual "Tiết kiệm" expense. Net them in
+        // here, contributions minus withdrawals, floored at 0, matching the mobile client's
+        // useBucketSpend convention exactly so both sides agree on what counts as saved.
+        var goalNetSavings = await ComputeGoalNetSavingsAsync(customerId, window, cancellationToken);
+
         var bucketConfigs = new[]
         {
             new { Bucket = "needs", Pct = allocation.NeedsPct },
@@ -111,9 +119,12 @@ public class BudgetService : IBudgetService
                 .Where(b => ResolveCustomerBucket(b.CategoryId, b.Category?.DefaultBucket, customerBuckets)
                     .Equals(config.Bucket, StringComparison.OrdinalIgnoreCase))
                 .Sum(b => b.MonthlyLimit);
-            var spent = spentByBucket
+            var categorySpent = spentByBucket
                 .Where(s => s.Bucket.Equals(config.Bucket, StringComparison.OrdinalIgnoreCase))
                 .Sum(s => s.Total);
+            var spent = config.Bucket.Equals("savings", StringComparison.OrdinalIgnoreCase)
+                ? categorySpent + goalNetSavings
+                : categorySpent;
             var expected = CalculateExpectedSpent(Math.Max(allocationCap, categoryLimitTotal), window.Start, window.End);
             var deviation = CalculatePaceDeviation(spent, expected);
 
@@ -379,6 +390,31 @@ public class BudgetService : IBudgetService
                 Total = group.Sum(x => x.Amount)
             })
             .ToList();
+    }
+
+    // Contributions (expense) minus withdrawals (income) on cat_savings_goal within the window,
+    // floored at 0 — the same net-savings formula the mobile client applies client-side, now
+    // the single authoritative source both sides agree on.
+    private async Task<decimal> ComputeGoalNetSavingsAsync(
+        Guid customerId,
+        MonthWindow window,
+        CancellationToken cancellationToken)
+    {
+        var rows = await (
+            from transaction in _dbContext.Transactions.AsNoTracking()
+            join wallet in _dbContext.Wallets.AsNoTracking()
+                on transaction.WalletId equals wallet.WalletId
+            where wallet.CustomerId == customerId
+                  && transaction.CategoryId == SavingsGoalCategoryId
+                  && (transaction.TransactionType == "expense" || transaction.TransactionType == "income")
+                  && transaction.TransactionDate >= window.StartUtc
+                  && transaction.TransactionDate < window.EndExclusiveUtc
+            select new { transaction.TransactionType, transaction.Amount })
+            .ToListAsync(cancellationToken);
+
+        var contributions = rows.Where(r => r.TransactionType == "expense").Sum(r => r.Amount);
+        var withdrawals = rows.Where(r => r.TransactionType == "income").Sum(r => r.Amount);
+        return Math.Max(0m, contributions - withdrawals);
     }
 
     private async Task<decimal> ComputeUncategorizedSpentAsync(

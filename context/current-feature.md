@@ -2,6 +2,66 @@
 
 <!-- Feature name and short description -->
 
+**Fix: Savings-bucket goal netting (`GET /budgets/buckets`)** — cross-repo work with
+`finviet-mobile` (branch `fix/savings-goal-budget-score-integration` there; this repo's branch is
+`fix/savings-bucket-goal-netting`), triggered by a mobile-side inspection of how Saving Goals,
+Budgets bucket pacing, and the AI Spending Score relate to each other. Found that
+`BudgetService.ComputeBucketSpentAsync` excluded `cat_savings_goal` transactions from the Savings
+bucket's `Spent` figure entirely (contributions and withdrawals both), which is a real product gap
+rather than a considered design line: a saving-goal contribution *is* the customer fulfilling
+their Savings allocation, so excluding it made the Savings bucket effectively unfillable for any
+customer who actually uses Goals — the only alternative would be logging a redundant manual
+"Tiết kiệm" transaction with no connection to any goal. Confirmed safe to change now specifically
+because nothing in either app currently renders the affected `Spent`/`PaceDeviation`/`PaceStatus`/
+bucket-level `BudgetAdherenceScore` fields — no live behavior regresses, only a wrong number gets
+corrected before anything reads it.
+
+## Status
+
+<!-- Not Started | In Progress | Completed -->
+
+Completed — `dotnet build` clean (6 pre-existing nullable warnings, unchanged), full
+`FinViet.Application.UnitTests` suite passes 238/238 (235 pre-existing + 3 new
+`BudgetServiceTests`, no regressions). Not committed/pushed yet.
+
+## Goals
+
+<!-- Goals and requirements -->
+
+- `ComputeBucketSpentAsync`'s Savings bucket nets `cat_savings_goal` transactions —
+  contribution-expense minus withdrawal-income, floored at 0 — into `Spent`, instead of excluding
+  the category outright. Every other bucket's exclusion of `cat_savings_goal` is unchanged.
+- Do **not** touch `CalculateFlatBudgetAdherenceScore`'s needs/wants-only exclusion of the savings
+  bucket — that's a separate, correct design choice (spend-pacing framing doesn't apply
+  symmetrically to savings; more saved is better, not an overspend risk) and out of scope here.
+- No schema/migration change — this is a query-logic change inside an existing service method.
+- Companion `finviet-mobile` work (branch `fix/savings-goal-budget-score-integration`) mirrors this
+  exact formula client-side in `useBucketSpend` and the `getBudgetBuckets` mock, so mock, real, and
+  the rendered UI all agree on what counts as Savings-bucket progress.
+
+## Notes
+
+<!-- Any extra notes -->
+
+- Prompted by a mobile-side cross-repo inspection of Saving Goals ↔ Budget Adherence ↔ AI Spending
+  Score, which found the Savings bucket's `Spent` figure was blind to goal money entirely at the
+  backend level, while the mobile client's `useBucketSpend` had separately invented its own netting
+  convention to compensate — three independent implementations (mock, real backend, mobile
+  client-side convenience) that only coincidentally agreed most of the time. This fix makes the
+  backend the single authoritative source; mobile fixes its own bug (clamping the *whole* Savings
+  accumulator to 0 instead of just the goal-net component, which had been silently erasing real
+  non-goal savings in months with a large goal withdrawal) and mirrors this formula rather than
+  inventing its own.
+- Also confirmed, not touched: `allocationPct`/`AllocationCap` are already correct server-side
+  (`AllocationCap = income × pct / 100m`, `AllocationPct` returned as a raw 0–100 percent by
+  design, matching `Customer.NeedsPct` storage) — the "100× cap bug" reported from the mobile side
+  turned out to be a client-side passthrough bug in `finviet-mobile`'s real-mode service, not a
+  backend defect. Nothing changed here as a result.
+- No `.env`, API key, production cutover, production-data change, commit, or push without explicit
+  permission.
+
+---
+
 **Fix: notification device registration race (`PUT /api/notifications/devices`)** — surfaced by a
 live Sentry issue (`Microsoft.EntityFrameworkCore.DbUpdateException`, last seen Aug 15 11:43 AM),
 found while triaging a batch of production Sentry errors from the `finviet-web` side.
@@ -13,22 +73,16 @@ unhandled, surfacing as a 500.
 
 ## Status
 
-<!-- Not Started | In Progress | Completed -->
-
 Completed — `dotnet build` clean, full `FinViet.Application.UnitTests` suite passes 229/229
 (including all pre-existing `NotificationServiceTests`, no regressions). Not committed/pushed yet.
 
 ## Goals
-
-<!-- Goals and requirements -->
 
 - Keep the existing stale-token-owner removal block (the separate `uq_notification_devices_token`
   constraint) untouched — out of scope, not what Sentry captured.
 - No schema change — reuses the existing constraint from `V0004__notification_devices.sql`.
 
 ## Notes
-
-<!-- Any extra notes -->
 
 - Investigation prompted from the `finviet-web` side while triaging 3 Sentry issues shared by the
   user; two other issues from that same batch: `SubscriptionRenewalScheduler`'s enum/text cast bug
@@ -608,3 +662,17 @@ for the full verification trail, including two real bugs found and fixed there),
   `docs/api-reference-health-status`, then merged into
   `feature/sentry-backend-setup` (which also carries the separately-committed
   `af6c948` "feat: add Sentry error tracking to backend").
+- 2026-08-17 — Implemented savings-bucket goal netting on branch `fix/savings-bucket-goal-netting`:
+  `BudgetService.ComputeBucketSpentAsync`'s Savings bucket now nets `cat_savings_goal` transactions
+  (contribution-expense minus withdrawal-income, floored at 0, via a new
+  `ComputeGoalNetSavingsAsync` helper) into `Spent`, instead of excluding the category outright;
+  every other bucket's exclusion is unchanged, and
+  `CalculateFlatBudgetAdherenceScore`'s separate needs/wants-only exclusion was deliberately left
+  untouched (different, correct design choice). New `BudgetServiceTests.cs` (3 tests, using the
+  existing `TestDbContextFactory` EF Core InMemory pattern): nets a contribution against a
+  withdrawal correctly; a withdrawal exceeding this month's contributions floors only the goal
+  component at 0 without erasing an unrelated ordinary Savings-category expense (the exact
+  data-loss repro reported from the mobile side); a month with no goal activity is unaffected.
+  `dotnet build` 0 errors (6 pre-existing nullable warnings, unchanged); full
+  `FinViet.Application.UnitTests` 238/238 (235 pre-existing + 3 new), no regressions. No live
+  Postgres integration-test run (none configured in this environment). Not committed/pushed yet.
