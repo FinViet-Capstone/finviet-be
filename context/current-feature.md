@@ -2,6 +2,29 @@
 
 <!-- Feature name and short description -->
 
+**Feature: Custom-category id overflow + spending-score no-data gate** (branch
+`fix/custom-category-id-and-score-no-data`, cross-repo with `finviet-mobile`'s
+`fix/score-no-data-and-budget-pct`). Two mobile-reported bugs, both root-caused here:
+(1) `POST /categories/custom` 500s on every call ("An unexpected error occurred.") because
+`CategoryService.CreateCustomCategoryAsync` generated `custom_{Guid}` = 43 chars into the
+`varchar(40)` `categories.id` column — fixed by switching to `custom_{Guid:N}` (39 chars, no
+migration needed; every other `category_id` column is also varchar(40)). The user perceived it
+as "image required", but the FE never sends the icon at all — the insert itself failed.
+(2) `GET /ai/score` returned the hardcoded neutral 50 + a live LLM comment even when the
+selected week/month had zero expense transactions, and the spike metric counted spike days from
+its whole trailing-30-day window (so last month's spikes penalized the current week). Fixed:
+`SpendingScoreResult` gains `HasData` (false when no expense transactions inside
+`[PeriodStart, PeriodEnd]`; the LLM comment call is skipped then — the FE renders an empty
+state on `hasData: false`), and `ComputeSpikeAsync` now takes `periodStart`, counting spike
+days only inside the period while the trailing 30 days remain the mean/std baseline only.
+Interface/`ComputeCurrentAsync` signatures and snapshot persistence unchanged. Verified:
+`dotnet build` 0 errors; `FinViet.Application.UnitTests` 267/267 (5 new in
+`SpendingScoreServiceTests.cs`: HasData false/true/income-only-still-false, spike outside
+period not penalized, spike inside period penalized). Deploys via PR → `main` (Render
+auto-deploys on push to main).
+
+---
+
 **Feature: Wire up real receipt-photo OCR via Gemini (`IReceiptOcrService`)** — the mobile team
 asked why photo-import in the app always shows "Tính năng đang phát triển" (503
 `ocr_not_configured`). Traced to `UnconfiguredReceiptOcrService`, a deliberate placeholder added

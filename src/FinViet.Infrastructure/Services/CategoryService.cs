@@ -225,7 +225,9 @@ public class CategoryService : ICategoryService
             throw new ValidationException("Icon must be a URL returned by POST /api/categories/icons.");
 
         // Guid.NewGuid() collisions aren't a practical concern, unlike the name-based admin slug.
-        var categoryId = $"{CustomCategoryIdPrefix}{Guid.NewGuid()}";
+        // "N" (no dashes) keeps the id at 39 chars — categories.id is varchar(40), and the
+        // dashed form (43 chars) made every insert fail with a Postgres length error.
+        var categoryId = $"{CustomCategoryIdPrefix}{Guid.NewGuid():N}";
 
         var category = new Category
         {
