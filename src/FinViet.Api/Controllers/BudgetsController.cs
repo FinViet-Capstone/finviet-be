@@ -64,6 +64,8 @@ public class BudgetsController : ControllerBase
             "Budget saved successfully"));
     }
 
+    // Accepts PUT and PATCH — see ProfileController.UpdateProfileSettings for why.
+    [HttpPut("{id:guid}")]
     [HttpPatch("{id:guid}")]
     public async Task<ActionResult<ApiResponse<BudgetResponse>>> UpdateBudget(
         [FromRoute] Guid id,

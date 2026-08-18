@@ -73,6 +73,8 @@ public class WalletsController : ControllerBase
             "Wallet retrieved successfully"));
     }
 
+    // Accepts PUT and PATCH — see ProfileController.UpdateProfileSettings for why.
+    [HttpPut("{id:guid}")]
     [HttpPatch("{id:guid}")]
     public async Task<ActionResult<ApiResponse<WalletResponse>>> UpdateWallet(
         [FromRoute] Guid id,
