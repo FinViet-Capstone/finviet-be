@@ -20,7 +20,12 @@ public class GetCategoryCorrectionsQueryHandler
         var page = filter.Page < 1 ? 1 : filter.Page;
         var pageSize = filter.PageSize is < 1 or > 100 ? 20 : filter.PageSize;
 
-        var query = _db.CategoryCorrectionLogs.AsNoTracking();
+        var query = _db.CategoryCorrectionLogs
+            .AsNoTracking()
+            .Include(l => l.Customer)
+            .Include(l => l.Transaction)
+            .Include(l => l.CorrectedCategory)
+            .AsQueryable();
 
         if (!string.IsNullOrWhiteSpace(filter.CategoryId))
             query = query.Where(l => l.CorrectedCategoryId == filter.CategoryId);
@@ -47,9 +52,15 @@ public class GetCategoryCorrectionsQueryHandler
             {
                 LogId = l.LogId,
                 CustomerId = l.CustomerId,
+                CustomerEmail = l.Customer != null ? l.Customer.Email : null,
                 TransactionId = l.TransactionId,
+                TransactionDescription = l.Transaction != null ? l.Transaction.Description : null,
+                Amount = l.Transaction != null ? l.Transaction.Amount : (decimal?)null,
                 AdminId = l.AdminId,
                 CorrectedCategoryId = l.CorrectedCategoryId,
+                CorrectedCategoryName = l.CorrectedCategory != null
+                    ? (l.CorrectedCategory.NameVi ?? l.CorrectedCategory.CategoryName)
+                    : null,
                 OriginalAiGuess = l.OriginalAiGuess,
                 CreatedAt = l.CreatedAt
             })

@@ -19,4 +19,6 @@ public partial class Admin
     public virtual ICollection<CategoryCorrectionLog> CategoryCorrectionLogs { get; set; } = new List<CategoryCorrectionLog>();
 
     public virtual ICollection<SystemAnalytic> SystemAnalytics { get; set; } = new List<SystemAnalytic>();
+
+    public virtual ICollection<AnnouncementBroadcast> AnnouncementBroadcasts { get; set; } = new List<AnnouncementBroadcast>();
 }
