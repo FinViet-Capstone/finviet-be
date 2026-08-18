@@ -8,4 +8,7 @@ public class UserResponseDto
     public bool IsActive { get; set; }
     public bool IsEmailVerified { get; set; }
     public DateTime? CreatedAt { get; set; }
+    public int TotalTransactions { get; set; }
+    public int TotalWallets { get; set; }
+    public string SubscriptionPlanCode { get; set; } = "free";
 }

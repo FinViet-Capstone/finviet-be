@@ -2,6 +2,58 @@
 
 <!-- Feature name and short description -->
 
+**Fix: `GET /api/users` missing transaction/wallet counts and subscription plan** — reported from
+the `finviet-web` admin Users screen (`Tổng GD`/`Tổng ví` columns always showing 0), traced to
+`UserResponseDto` never having carried these fields — `real/users.ts` on the frontend side has
+always hardcoded `totalTransactions: 0, totalWallets: 0, plan: "free"` for exactly this reason
+(see `backend-gaps.md`'s "User list is missing transaction/wallet counts and subscription plan"
+entry). No schema change needed — `Transaction`/`Wallet` both already carry a direct `CustomerId`
+FK, and `Customer.CustomerSubscriptions` navigation already exists.
+
+## Status
+
+Completed (code) — `dotnet build FinViet.sln` clean (same 6 pre-existing nullable warnings as
+baseline, no new ones). Full `FinViet.Application.UnitTests` suite passes 243/243, no regressions
+(no existing tests specifically covered `GetUsersQueryHandler` — same as when the endpoint was
+originally built, per that entry in this file's History). **Live Swagger verification blocked**:
+the local Postgres (`FinViet_update` on `localhost:5432`, credentials already in user-secrets) has
+a schema-versions/DbUp drift unrelated to this change — `V0001` tries to `CREATE TYPE app_language`
+which already exists in that database outside `schema_versions`'s tracking, so `dotnet run` throws
+`DbInitializer.RunMigrations` → `42710: type "app_language" already exists` before the app finishes
+starting. This is a pre-existing local-environment issue (not touched, not caused by this change —
+see `docs/database-bootstrap.md`'s adoption flow, which this session deliberately did not run since
+it requires explicit confirmed flags and a backup step). Not committed/pushed — built in an isolated
+worktree (`finviet-be-users-fix`, branch `feature/admin-users-counts`, off `origin/dev`) per user
+request, reported back for review before any commit.
+
+## Goals
+
+- `UserResponseDto` gains `totalTransactions` (int), `totalWallets` (int), `subscriptionPlanCode`
+  (string, defaults `"free"`).
+- `GetUsersQueryHandler` populates them via subquery counts in the existing `Select` projection:
+  `_db.Transactions.Count(t => t.CustomerId == c.CustomerId)`,
+  `_db.Wallets.Count(w => w.CustomerId == c.CustomerId && !w.IsDeleted)`, and the customer's most
+  recent `CustomerSubscription` with `Status == "active"`, joined to `SubscriptionPlan.Code`
+  (falls back to `"free"` when none).
+- No new endpoint, no migration, no route/response-envelope change — same
+  `GET /api/users` shape, three additive fields.
+- `finviet-web`'s `src/services/real/users.ts` needs a follow-up change once this ships (stop
+  hardcoding the three fields, read them from the response instead) — not done in this pass, out
+  of scope for a backend-only fix.
+
+## Notes
+
+- Triggered directly from a `finviet-web` admin screenshot showing `Tổng GD`/`Tổng ví` stuck at 0
+  for every row — traced to the frontend's own documented stub rather than a frontend bug.
+- Deliberately did not attempt to fix or adopt the local database's schema drift to unblock live
+  verification — that requires an explicit backup + confirmed adoption flow per this repo's own
+  `docs/database-bootstrap.md`, out of scope for this fix and not something to do without asking
+  first.
+- No `.env`, API key, production cutover, production-data change, commit, or push without explicit
+  permission.
+
+---
+
 **CI/CD: GitHub Actions deploy workflow to Render** — the previous CSV-parser fix
 (`fix/csv-flexible-parser`) merged into `dev`; this follow-up adds `.github/workflows/
 deploy-render.yml` so pushes to `main` build, run the Domain/Application unit test suites (no DB
