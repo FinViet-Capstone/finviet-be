@@ -574,7 +574,7 @@ Only computed when `deadline` is set. `monthsRemaining` = whole calendar months 
 |---|---|---|---|
 | POST | `/sms` | `{ text: string }` | `ApiResponse<ExtractResponse>` |
 | POST | `/csv` | multipart: `file` + `maxRows?: number` | `ApiResponse<ExtractResponse>` |
-| POST | `/photo` | multipart: `file` | `ApiResponse<ExtractResponse>` (503 `ocr_not_configured`) |
+| POST | `/photo` | multipart: `file` | `ApiResponse<ExtractResponse>` |
 
 **ExtractResponse**: `{ rows: ExtractedTransactionItem[], totalScanned, skipped, errors: string[] }`
 **ExtractedTransactionItem**: `{ amount, type, merchant?, description?, transactionDate, categoryId?, categoryName?, confidence? }`
@@ -589,7 +589,7 @@ Only computed when `deadline` is set. `monthsRemaining` = whole calendar months 
 
 ### POST `/photo`
 **Validation**: file required/non-empty → 400 "Vui lòng chọn ảnh hóa đơn để trích xuất."; size `> 8 MB` (`MaxPhotoFileBytes`, exact) → 400 "Ảnh quá lớn (tối đa 8 MB)."; extension must be `.jpg`/`.jpeg`/`.png`/`.heic` → 400 otherwise.
-**Business logic**: Confirmed placeholder — `IReceiptOcrService` → `UnconfiguredReceiptOcrService` always throws `IntegrationUnavailableException` (503) `ocr_not_configured`, either "Receipt OCR is not configured on this server." or "OCR provider '{x}' has no implementation registered yet." No real OCR is wired.
+**Business logic**: `IReceiptOcrService` → `GeminiReceiptOcrService` (wired 2026-08-18, commit `aff76cc`), reusing the same Gemini model/key as score/report/chat — reads the photo and returns amount/merchant/description/transactionDate, or `null` if it isn't a readable receipt. The returned row then runs through the same rule-then-AI category suggestion as SMS/CSV extraction (`ITransactionExtractService.CategorizeItemAsync`). `UnconfiguredReceiptOcrService` (previously always throwing `IntegrationUnavailableException` 503 `ocr_not_configured`) is kept in the codebase, unregistered, as a fallback if OCR needs to be disabled again.
 
 ---
 
@@ -815,7 +815,7 @@ PagedResult<T>  = { page: number, pageSize: number, totalItems: number, totalPag
 | `goal_funding_wallet_sepay_unsupported` | 422 | SavingGoals | `fundingWalletId` (create or contribute) resolves to a `sepay_linked` wallet |
 | `goal_withdraw_exceeds_saved` | 422 | SavingGoals | `POST /saving-goals/{id}/withdraw` amount exceeds the goal's `currentAmount` |
 | `goal_withdraw_target_sepay_unsupported` | 422 | SavingGoals | `POST /saving-goals/{id}/withdraw` targeting a `sepay_linked` wallet |
-| `ocr_not_configured` | 503 | Extract | `POST /extract/photo` — no real OCR provider wired (`IReceiptOcrService` placeholder) |
+| `ocr_not_configured` | 503 | Extract | `POST /extract/photo` — only if `IReceiptOcrService` is ever unregistered back to `UnconfiguredReceiptOcrService`; a real Gemini-backed provider is wired as of `aff76cc` |
 
 Plain 400/404/409/403 errors (no `Code`, message-only) are noted inline in each endpoint's Validation/Business logic section above.
 

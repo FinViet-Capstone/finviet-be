@@ -114,8 +114,8 @@ public class ExtractController : ControllerBase
     }
 
     // POST /api/extract/photo — OCR a receipt photo → a single candidate row (same ExtractResponse
-    // shape as SMS/CSV so the client reuses the same mapper). No OCR provider is wired in yet
-    // (IReceiptOcrService is a placeholder), so this currently always responds 503.
+    // shape as SMS/CSV so the client reuses the same mapper), then runs the same rule-then-AI
+    // category suggestion SMS/CSV extraction applies per row.
     [HttpPost("photo")]
     public async Task<ActionResult<ApiResponse<ExtractResponse>>> ExtractPhoto(
         [FromForm] PhotoExtractFormRequest request, CancellationToken cancellationToken)
@@ -134,6 +134,9 @@ public class ExtractController : ControllerBase
 
         await using var stream = request.File.OpenReadStream();
         var row = await _ocr.ExtractAsync(stream, request.File.ContentType, cancellationToken);
+
+        if (row != null)
+            await _extract.CategorizeItemAsync(GetCustomerId(), row, cancellationToken);
 
         var result = new ExtractResponse
         {
