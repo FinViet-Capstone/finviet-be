@@ -44,6 +44,7 @@ public partial class FinVietDbContext
             entity.Property(e => e.Icon).HasMaxLength(60).HasColumnName("icon");
             entity.Property(e => e.SortOrder).HasColumnName("sort_order");
             entity.Property(e => e.IsLocked).HasDefaultValue(false).HasColumnName("is_locked");
+            entity.Property(e => e.DefaultPct).HasPrecision(5, 2).HasColumnName("default_pct");
         });
 
         modelBuilder.Entity<SepayLink>(entity =>

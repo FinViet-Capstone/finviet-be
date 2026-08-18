@@ -45,6 +45,14 @@ public class GoogleLoginCommandHandler : IRequestHandler<GoogleLoginCommand, Aut
 
         if (customer is null)
         {
+            // Same admin-editable system default (UC-15) as RegisterCommandHandler — Google
+            // sign-up also creates a brand-new Customer row and must not silently fall back to
+            // the CLR property initializers' hard-coded 50/30/20.
+            var defaultPcts = await _db.Buckets
+                .AsNoTracking()
+                .Where(b => b.Id == "needs" || b.Id == "wants" || b.Id == "savings")
+                .ToDictionaryAsync(b => b.Id, b => b.DefaultPct, cancellationToken);
+
             customer = new Customer
             {
                 CustomerId      = Guid.NewGuid(),
@@ -56,6 +64,9 @@ public class GoogleLoginCommandHandler : IRequestHandler<GoogleLoginCommand, Aut
                 IsEmailVerified = firebaseUser.EmailVerified,
                 EmailVerifiedAt = firebaseUser.EmailVerified ? DateTime.UtcNow : null,
                 IsActive        = true,
+                NeedsPct        = defaultPcts.GetValueOrDefault("needs") ?? 50,
+                WantsPct        = defaultPcts.GetValueOrDefault("wants") ?? 30,
+                SavingsPct      = defaultPcts.GetValueOrDefault("savings") ?? 20,
                 CreatedAt       = DateTime.UtcNow
             };
             _db.Customers.Add(customer);

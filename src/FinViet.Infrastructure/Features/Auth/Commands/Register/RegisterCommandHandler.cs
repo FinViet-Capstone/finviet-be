@@ -41,6 +41,11 @@ public class RegisterCommandHandler : IRequestHandler<RegisterCommand, string>
         if (exists)
             throw new ConflictException($"Email '{normalizedEmail}' is already registered.");
 
+        var defaultPcts = await _db.Buckets
+            .AsNoTracking()
+            .Where(b => b.Id == "needs" || b.Id == "wants" || b.Id == "savings")
+            .ToDictionaryAsync(b => b.Id, b => b.DefaultPct, cancellationToken);
+
         var customer = new Customer
         {
             CustomerId      = Guid.NewGuid(),
@@ -49,6 +54,12 @@ public class RegisterCommandHandler : IRequestHandler<RegisterCommand, string>
             PasswordHash    = BCrypt.Net.BCrypt.HashPassword(request.Password),
             IsEmailVerified = false,
             IsActive        = true,
+            // Reads the admin-editable system default (UC-15) instead of relying on the CLR
+            // property initializers below, which only exist as a fallback for a database that
+            // predates V0009 (buckets.default_pct not yet backfilled).
+            NeedsPct        = defaultPcts.GetValueOrDefault("needs") ?? 50,
+            WantsPct        = defaultPcts.GetValueOrDefault("wants") ?? 30,
+            SavingsPct      = defaultPcts.GetValueOrDefault("savings") ?? 20,
             CreatedAt       = DateTime.UtcNow
         };
 

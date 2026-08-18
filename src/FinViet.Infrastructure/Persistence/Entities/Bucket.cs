@@ -16,4 +16,7 @@ public class Bucket
     public int? SortOrder { get; set; }
 
     public bool IsLocked { get; set; }
+
+    /// <summary>System-wide default allocation percentage applied to new customers at registration.</summary>
+    public decimal? DefaultPct { get; set; }
 }

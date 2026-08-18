@@ -2,6 +2,56 @@
 
 <!-- Feature name and short description -->
 
+**Feature: System-wide default budget allocation ratio (UC-15, `Bucket.DefaultPct`)** — requested
+by the `finviet-web` frontend team. Unlike the two previous asks, this described a concept that
+didn't exist anywhere in the backend yet, not even in the schema: `Bucket` (`GET`/`PATCH
+/api/buckets`) had no percentage column, and the real Needs/Wants/Savings ratio lives per-customer
+on `Customer.NeedsPct/WantsPct/SavingsPct`, defaulted only by a hard-coded C# property initializer
+(`= 50`/`= 30`/`= 20`) that nothing ever read back from — there was no admin-editable "system
+default" to read from and no code path that consulted one when a new customer was created.
+
+## Status
+
+Completed (code) — `dotnet build FinViet.sln` clean (same 6 pre-existing warnings, none new).
+`FinViet.Application.UnitTests` 243/243 pass, no regressions. Live Swagger verification blocked by
+the same pre-existing local Postgres schema drift noted in the two entries below (`type
+"app_language" already exists`) — not this session's change. Not committed/pushed.
+
+## Goals
+
+- New migration `V0009__bucket_default_pct.sql`: `buckets.default_pct numeric(5,2)` (nullable, per
+  the frontend spec's own proposal), seeded to `needs=50, wants=30, savings=20` to match the
+  previous hard-coded defaults exactly (no behavior change on day one).
+- `PATCH /api/buckets/{id}` gains `defaultPct` (optional); `GET /api/buckets` returns it. Range
+  validated `[0, 100]` inline in the handler (`BadRequestException` on violation) — the exact same
+  pattern as `UpdateScoringCriterionCommandHandler`, no FluentValidation validator file (matching
+  how this controller already had zero request validation before this change).
+- **Locked down the frontend spec's open question #1 using its own recommendation**: changing the
+  system default does **not** retroactively touch existing customers (they may have already
+  customized their own ratio via `POST /api/profile/income-allocation` — silently overwriting that
+  would be unwanted-surprise behavior). Only applies to customers created *after* the change.
+- Both `RegisterCommandHandler` **and** `GoogleLoginCommandHandler` (the two places that construct
+  a brand-new `Customer` row) now read `Buckets.DefaultPct` for `needs`/`wants`/`savings` and set
+  them explicitly, falling back to `50`/`30`/`20` only if a row's `DefaultPct` is null (pre-V0009
+  database). Google sign-up wasn't named in the frontend spec but creates new customers through
+  the identical code path — leaving it on the old hard-coded default would have silently defeated
+  the feature for anyone who signs up via Google instead of email/password.
+- Declined the spec's open question #2 (audit log) — no `AdminAuditLog` mechanism exists anywhere
+  in this backend yet (the "Feature A" reference in the spec is to a not-yet-built frontend concept,
+  not existing backend infrastructure), so adding one is out of scope for this pass; flagged as a
+  follow-up rather than built speculatively.
+- No atomic sum-to-100 enforcement across the 3 buckets (3 independent PATCHes give the server no
+  single point to check the total against) — same as `POST /api/profile/income-allocation` and
+  `PATCH /api/scoring-criteria/{code}`; the frontend validates the merged set before sending.
+
+## Notes
+
+- `docs/api-reference.md` updated: `Buckets` section extended with `defaultPct`.
+- No `.env`, API key, production cutover, production-data change, commit, or push without explicit
+  permission.
+
+---
+
 **Feature: Admin Announcement Broadcast (`POST/GET /api/admin/announcements`) + Category
 Corrections join** — requested by the
 `finviet-web` frontend team (P1 blocker for the admin "Thông báo" screen, which was running 100%
