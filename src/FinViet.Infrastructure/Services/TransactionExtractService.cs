@@ -1,4 +1,5 @@
 using FinViet.Application.DTOs;
+using FinViet.Application.DTOs.Ai;
 using FinViet.Application.DTOs.Rules;
 using FinViet.Application.Interfaces;
 using Microsoft.Extensions.Logging;
@@ -60,6 +61,14 @@ public class TransactionExtractService : ITransactionExtractService
         // takes precedence over AI categorization for that row (BUSINESS_LOGIC §2b).
         var rules = await _ruleService.GetRulesAsync(customerId, ct);
 
+        // Rows a rule couldn't resolve are classified together via PreviewManyAsync instead of one
+        // at a time — a large statement import can have well over a hundred rows, and classifying
+        // them sequentially (one AI round trip each) made big imports painfully slow. Rule matching
+        // itself stays a synchronous, in-memory per-row pass since it's cheap.
+        var items = new List<ExtractedTransactionItem>(parsed.Rows.Count);
+        var pendingAiIndexes = new List<int>();
+        var pendingAiInputs = new List<string>();
+
         foreach (var row in parsed.Rows)
         {
             var item = new ExtractedTransactionItem
@@ -70,13 +79,62 @@ public class TransactionExtractService : ITransactionExtractService
                 Merchant = row.Note,
                 TransactionDate = row.TransactionDate
             };
+            items.Add(item);
 
-            await ApplyCategorizationAsync(customerId, item, row.Note, rules, ct);
+            if (!string.Equals(item.Type, "EXPENSE", StringComparison.OrdinalIgnoreCase)
+                || string.IsNullOrWhiteSpace(row.Note))
+            {
+                continue;
+            }
 
-            response.Rows.Add(item);
+            var ruleMatch = rules.FirstOrDefault(r =>
+                row.Note!.Contains(r.MerchantKeyword, StringComparison.OrdinalIgnoreCase));
+            if (ruleMatch is not null)
+            {
+                item.CategoryId = ruleMatch.CategoryId;
+                item.CategoryName = ruleMatch.CategoryName;
+                item.Confidence = 1.0m;
+                continue;
+            }
+
+            pendingAiIndexes.Add(items.Count - 1);
+            pendingAiInputs.Add(row.Note!);
         }
 
+        if (pendingAiInputs.Count > 0)
+        {
+            var results = await PreviewManySafeAsync(customerId, pendingAiInputs, ct);
+            for (var i = 0; i < pendingAiIndexes.Count && i < results.Count; i++)
+            {
+                var suggestion = results[i];
+                var item = items[pendingAiIndexes[i]];
+                item.CategoryId = suggestion.CategoryId;
+                item.CategoryName = suggestion.CategoryName;
+                item.Confidence = suggestion.Confidence;
+            }
+        }
+
+        response.Rows.AddRange(items);
         return response;
+    }
+
+    /// <summary>Wraps PreviewManyAsync so a setup-time failure (e.g. the preference/category-catalog
+    /// DB read) degrades every pending row to uncategorized instead of failing the whole extraction
+    /// request — matching ApplyCategorizationAsync's single-row degrade-on-failure behavior.</summary>
+    private async Task<IReadOnlyList<AiClassificationResult>> PreviewManySafeAsync(
+        Guid customerId,
+        IReadOnlyList<string> inputs,
+        CancellationToken ct)
+    {
+        try
+        {
+            return await _categorization.PreviewManyAsync(customerId, inputs, ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Batch category preview failed; returning {Count} rows uncategorized.", inputs.Count);
+            return Array.Empty<AiClassificationResult>();
+        }
     }
 
     public async Task CategorizeItemAsync(Guid customerId, ExtractedTransactionItem item, CancellationToken cancellationToken = default)

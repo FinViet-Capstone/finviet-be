@@ -8,17 +8,22 @@ using Npgsql;
 
 namespace FinViet.Infrastructure.Services;
 
-/// <summary>Atomic fixed-window limiter persisted in PostgreSQL and shared by all API instances.</summary>
+/// <summary>Atomic fixed-window limiter persisted in PostgreSQL and shared by all API instances.
+/// Uses <see cref="IDbContextFactory{TContext}"/> rather than an injected scoped context so it's
+/// safe to call concurrently — e.g. from bulk-import's parallel per-row classification, where many
+/// TryAcquireAsync calls can be in flight at once within the same request.</summary>
 public sealed class PostgresAiRateLimiter : IAiRateLimiter
 {
-    private readonly FinVietDbContext _db;
+    private const string BulkImportFeature = "classification_batch";
+
+    private readonly IDbContextFactory<FinVietDbContext> _dbFactory;
     private readonly AiLimitsOptions _limits;
 
     public PostgresAiRateLimiter(
-        FinVietDbContext db,
+        IDbContextFactory<FinVietDbContext> dbFactory,
         IOptions<AiLimitsOptions> limits)
     {
-        _db = db;
+        _dbFactory = dbFactory;
         _limits = limits.Value;
     }
 
@@ -30,21 +35,27 @@ public sealed class PostgresAiRateLimiter : IAiRateLimiter
         if (string.IsNullOrWhiteSpace(feature))
             throw new ArgumentException("AI feature is required.", nameof(feature));
 
+        var (perMinute, perDay) = string.Equals(feature, BulkImportFeature, StringComparison.OrdinalIgnoreCase)
+            ? (_limits.BulkImportPerMinute, _limits.BulkImportPerDay)
+            : (_limits.PerUserPerMinute, _limits.PerUserPerDay);
+
         var now = DateTime.UtcNow;
         var minuteStart = new DateTime(
             now.Year, now.Month, now.Day, now.Hour, now.Minute, 0, DateTimeKind.Utc);
         var dayStart = new DateTime(now.Year, now.Month, now.Day, 0, 0, 0, DateTimeKind.Utc);
 
-        await using var transaction = await _db.Database.BeginTransactionAsync(
+        await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        await using var transaction = await db.Database.BeginTransactionAsync(
             IsolationLevel.ReadCommitted,
             cancellationToken);
 
         var minuteAllowed = await IncrementWindowAsync(
+            db,
             customerId,
             feature,
             "minute",
             minuteStart,
-            _limits.PerUserPerMinute,
+            perMinute,
             cancellationToken);
         if (!minuteAllowed)
         {
@@ -53,11 +64,12 @@ public sealed class PostgresAiRateLimiter : IAiRateLimiter
         }
 
         var dayAllowed = await IncrementWindowAsync(
+            db,
             customerId,
             feature,
             "day",
             dayStart,
-            _limits.PerUserPerDay,
+            perDay,
             cancellationToken);
         if (!dayAllowed)
         {
@@ -69,7 +81,8 @@ public sealed class PostgresAiRateLimiter : IAiRateLimiter
         return true;
     }
 
-    private async Task<bool> IncrementWindowAsync(
+    private static async Task<bool> IncrementWindowAsync(
+        FinVietDbContext db,
         Guid customerId,
         string feature,
         string windowType,
@@ -90,10 +103,10 @@ public sealed class PostgresAiRateLimiter : IAiRateLimiter
             RETURNING request_count;
             """;
 
-        var connection = (NpgsqlConnection)_db.Database.GetDbConnection();
+        var connection = (NpgsqlConnection)db.Database.GetDbConnection();
         await using var command = new NpgsqlCommand(sql, connection)
         {
-            Transaction = (NpgsqlTransaction)_db.Database.CurrentTransaction!.GetDbTransaction()
+            Transaction = (NpgsqlTransaction)db.Database.CurrentTransaction!.GetDbTransaction()
         };
         command.Parameters.AddWithValue("customerId", customerId);
         command.Parameters.AddWithValue("feature", feature.Trim().ToLowerInvariant());
