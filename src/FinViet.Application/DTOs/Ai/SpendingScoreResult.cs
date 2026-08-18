@@ -24,6 +24,13 @@ public class SpendingScoreResult
     /// <summary>"GREEN" | "YELLOW" | "RED".</summary>
     public string ColorBadge { get; set; } = "YELLOW";
 
+    /// <summary>
+    /// False when the customer has no expense transactions inside [PeriodStart, PeriodEnd] —
+    /// the score fields then carry the neutral/metric fallbacks and the FE should render a
+    /// "no data yet" state instead of presenting them as a real assessment.
+    /// </summary>
+    public bool HasData { get; set; } = true;
+
     /// <summary>Short Vietnamese comment (may be empty if AI comment was skipped/unavailable).</summary>
     public string? Comment { get; set; }
 }
