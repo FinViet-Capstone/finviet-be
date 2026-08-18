@@ -63,6 +63,8 @@ public class SavingGoalsController : ControllerBase
             ApiResponse<SavingGoalResponse>.Ok(goal, "Saving goal created successfully"));
     }
 
+    // Accepts PUT and PATCH — see ProfileController.UpdateProfileSettings for why.
+    [HttpPut("{id:guid}")]
     [HttpPatch("{id:guid}")]
     public async Task<ActionResult<ApiResponse<SavingGoalResponse>>> UpdateGoal(
         [FromRoute] Guid id,
