@@ -647,6 +647,32 @@ public class GeminiAiClientTests
             return Task.FromResult(GenerateResult ?? new GeminiGenerationResult(GenerateResponse));
         }
 
+        public Content? MultimodalContent { get; private set; }
+
+        public Task<GeminiGenerationResult> GenerateContentAsync(
+            string model,
+            Content content,
+            GenerateContentConfig config,
+            CancellationToken cancellationToken = default)
+        {
+            GenerationModels.Add(model);
+            MultimodalContent = content;
+            GenerationConfig = config;
+
+            if (GenerationSequence.Count > 0)
+            {
+                var outcome = GenerationSequence.Dequeue();
+                if (outcome is Exception exception)
+                    throw exception;
+                return Task.FromResult((GeminiGenerationResult)outcome);
+            }
+
+            if (GenerateException is not null)
+                throw GenerateException;
+
+            return Task.FromResult(GenerateResult ?? new GeminiGenerationResult(GenerateResponse));
+        }
+
         public Task<GeminiEmbeddingResult> EmbedContentAsync(
             string model,
             string text,

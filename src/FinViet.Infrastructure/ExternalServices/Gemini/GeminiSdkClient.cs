@@ -25,6 +25,14 @@ internal interface IGeminiSdkClient
         GenerateContentConfig config,
         CancellationToken cancellationToken = default);
 
+    /// <summary>Multimodal overload — <paramref name="content"/> carries the image/text parts
+    /// directly (see <see cref="Part.FromBytes"/>/<see cref="Part.FromText"/>).</summary>
+    Task<GeminiGenerationResult> GenerateContentAsync(
+        string model,
+        Content content,
+        GenerateContentConfig config,
+        CancellationToken cancellationToken = default);
+
     Task<GeminiEmbeddingResult> EmbedContentAsync(
         string model,
         string text,
@@ -51,6 +59,27 @@ internal sealed class GeminiSdkClient : IGeminiSdkClient
         var response = await _client.Models.GenerateContentAsync(
             model: model,
             contents: prompt,
+            config: config,
+            cancellationToken: cancellationToken);
+
+        return new GeminiGenerationResult(
+            ExtractAnswerText(response.Parts),
+            response.ModelVersion,
+            response.ResponseId,
+            response.UsageMetadata?.PromptTokenCount,
+            response.UsageMetadata?.CandidatesTokenCount,
+            response.UsageMetadata?.TotalTokenCount);
+    }
+
+    public async Task<GeminiGenerationResult> GenerateContentAsync(
+        string model,
+        Content content,
+        GenerateContentConfig config,
+        CancellationToken cancellationToken = default)
+    {
+        var response = await _client.Models.GenerateContentAsync(
+            model: model,
+            contents: content,
             config: config,
             cancellationToken: cancellationToken);
 
