@@ -2,6 +2,67 @@
 
 <!-- Feature name and short description -->
 
+**Feature: Admin Announcement Broadcast (`POST/GET /api/admin/announcements`) + Category
+Corrections join** — requested by the
+`finviet-web` frontend team (P1 blocker for the admin "Thông báo" screen, which was running 100%
+mock). `NotificationsController` only had `[Authorize(Roles = "Customer")]` inbox actions
+(`GET`/`PATCH {id}/read`/`POST read-all`/device registration) — no admin-facing endpoint existed to
+create a notification, and `INotificationService.NotifyAsync` requires one specific `customerId`,
+with no fan-out mechanism. This adds a separate `AdminAnnouncementsController`
+(`api/admin/announcements`, `[Authorize(Roles = "Admin")]`) rather than touching
+`NotificationsController`, matching the existing `AdminAiController`/`api/ai` precedent of a
+dedicated admin controller over combined Customer+Admin authorization on one controller.
+
+## Status
+
+Completed (code) — `dotnet build FinViet.sln` clean (same 6 pre-existing nullable warnings as
+baseline, no new ones). **Live Swagger verification blocked**: same pre-existing local Postgres
+(`FinViet_update`) schema-versions drift as the previous entry in this file (`V0001` tries to
+`CREATE TYPE app_language` which already exists in that database outside `schema_versions`'s
+tracking) — `dotnet run` throws `DbInitializer.RunMigrations` → `42710: type "app_language" already
+exists` before the app finishes starting, for every migration including the new `V0008` added here.
+Not this session's change, not touched (see `docs/database-bootstrap.md`'s adoption flow, which
+requires explicit confirmed flags + a backup step, deliberately not run here). Not committed/pushed.
+
+## Goals
+
+- New migration `V0008__announcement_broadcasts.sql`: `announcement_broadcasts` table (`admin_id`
+  FK → `admins`, `title`, `message`, `target_segment` — check-constrained to `'all'` only for now,
+  `target_label`, `recipient_count`, `sent_at`). No change needed to `notifications`/`notification_type`
+  — `'announcement'` was already a valid enum member, just never used from an admin-triggered path.
+- `POST /api/admin/announcements`: fans out one `Notification` row (`type="announcement"`) to every
+  `Customer.IsActive == true` row, batched (`AddRange`, 1000 rows/`SaveChanges`) inside one DB
+  transaction together with the `announcement_broadcasts` history insert, so a broadcast is
+  all-or-nothing. Returns `{ id, title, targetLabel, recipientCount, sentAt }`.
+- `GET /api/admin/announcements`: paginated broadcast history, newest first, same
+  `PagedResult<T>`/page-pageSize-clamping convention as `GET /api/category-corrections`.
+- Open questions from the frontend spec, decided for this pass: `targetSegment` only supports
+  `"all"` (validator rejects anything else — no segment-filter criteria has been chosen yet);
+  `"all"` excludes deactivated (`IsActive = false`) customers; no server-side duplicate-send
+  guard — left to the frontend disabling its send button while a request is pending, per the
+  spec's own suggestion.
+- Deliberately did not send a push notification as part of a broadcast (existing per-customer push
+  goes through `NotificationService.NotifyAsync`/`INotificationPushSender` and is unrelated to
+  this fan-out path).
+
+**Also done in this same pass (frontend spec's P2 item):** `GetCategoryCorrectionsQueryHandler`
+now `.Include()`s `Customer`/`Transaction`/`CorrectedCategory` and `CategoryCorrectionResponseDto`
+gained `customerEmail`, `transactionDescription`, `amount`, `correctedCategoryName` — no migration,
+no new endpoint, the navigation properties already existed on `CategoryCorrectionLog`. All four new
+fields are null-safe (ternary on the included nav, not `!.`) since `customerId`/`transactionId`/
+`correctedCategoryId` are nullable FKs on old/incomplete rows. `correctedCategoryName` prefers
+`Category.NameVi`, falls back to `Category.CategoryName`.
+
+## Notes
+
+- `docs/api-reference.md` updated: new `Announcements — api/admin/announcements` section, and the
+  `CategoryCorrectionResponseDto` line under `Category Corrections` extended with the four joined
+  fields.
+- No `.env`, API key, production cutover, production-data change, commit, or push without explicit
+  permission.
+
+---
+
 **Fix: `GET /api/users` missing transaction/wallet counts and subscription plan** — reported from
 the `finviet-web` admin Users screen (`Tổng GD`/`Tổng ví` columns always showing 0), traced to
 `UserResponseDto` never having carried these fields — `real/users.ts` on the frontend side has
