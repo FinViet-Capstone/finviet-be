@@ -2,6 +2,75 @@
 
 <!-- Feature name and short description -->
 
+**Feature: Wire up real receipt-photo OCR via Gemini (`IReceiptOcrService`)** — the mobile team
+asked why photo-import in the app always shows "Tính năng đang phát triển" (503
+`ocr_not_configured`). Traced to `UnconfiguredReceiptOcrService`, a deliberate placeholder added
+2026-07-27 (`feature/photo-extraction-ocr-scaffold`) pending a real OCR vendor decision — no
+provider had been chosen or paid for since. User compared Azure AI Document Intelligence
+(prebuilt-receipt model, ~$10/1,000 pages, F0 free tier 500 pages/month, but requires
+provisioning a separate Azure resource + credentials) against reusing the Gemini API key/model
+this backend already has configured for score/report/chat (`GeminiOptions`/`IGeminiSdkClient`,
+`Infrastructure/ExternalServices/Gemini/`) — Gemini's flash models are multimodal and accept an
+image directly. Chose Gemini: zero new vendor account, zero new credentials, generous standing
+free tier (no card required, no expiry), and Vietnamese-receipt support out of the box.
+
+## Status
+
+Implemented on branch `feature/gemini-receipt-ocr` (branched from `dev`, after the fact —
+implementation was started directly on `dev` and caught before committing, same slip as the
+2026-07-27 custom-category and customer-settings entries below; corrected by branching before
+any commit). `dotnet build FinViet.sln` 0 errors / 0 warnings.
+`FinViet.Application.UnitTests` 249/249 pass (6 new — `GeminiReceiptOcrServiceTests` covering the
+not-a-receipt / zero-amount / valid-mapping / missing-date-fallback / missing-description-fallback
+/ markdown-code-fence-stripped cases of the pure `ParseReceipt` parser). No live Gemini call
+verified against a real receipt photo in this environment (no device/Swagger session run this
+pass) — worth a live Swagger check with an actual photo before trusting field-extraction accuracy
+end to end. Not committed/pushed.
+
+## Goals
+
+- `IGeminiSdkClient` gained a multimodal `GenerateContentAsync(model, Content, config, ct)`
+  overload alongside the existing string-prompt one (`GeminiSdkClient.cs`) — purely additive, no
+  existing call site changed.
+- New `GeminiReceiptOcrService : IReceiptOcrService`
+  (`Infrastructure/ExternalServices/Ocr/GeminiReceiptOcrService.cs`): builds a `Content` with an
+  inline-bytes image `Part` (`Part.FromBytes`) plus a Vietnamese instruction `Part`, requests
+  strict JSON via `ResponseSchema`/`ResponseMimeType` (same pattern as
+  `GeminiAiModelClient.ClassifyAsync`'s `ClassificationSchema`), and retries across
+  `Gemini:GenerationFallbackModels` on HTTP 429 the same way `GeminiAiModelClient` does. Failures
+  surface as `ExternalServiceException` (502, code `ocr_provider_error`) rather than the old 503
+  `ocr_not_configured` — Gemini genuinely is configured (`GeminiOptions` is
+  `ValidateOnStart()`-checked at app boot), so "not configured" no longer applies; a real
+  transient/quota failure is now an upstream-provider failure, matching the documented exception
+  table in this repo's `CLAUDE.md`.
+- The schema intentionally only asks Gemini for `isReceipt`/`amount`/`merchant`/`description`/
+  `transactionDate` — no category. `IReceiptOcrService.ExtractAsync` doesn't receive `customerId`
+  (unlike `TransactionExtractService`'s SMS/CSV path, which applies per-customer merchant rules +
+  `IAiCategorizationService`), and changing that signature would be a breaking interface change
+  the user explicitly didn't want. A photo-extracted row is returned uncategorized, same as an
+  SMS/CSV row with no rule match and a failed AI categorization call — the existing review-list UX
+  already handles that case.
+- `DependencyInjection.cs`: swapped the `IReceiptOcrService` registration from
+  `UnconfiguredReceiptOcrService` to a factory-lambda `GeminiReceiptOcrService` (its constructor is
+  `internal`, matching `GeminiAiModelClient`'s convention, so it can't use the generic
+  `AddScoped<TService,TImplementation>()` overload). `UnconfiguredReceiptOcrService`/`OcrOptions`
+  are left in place, unregistered, as the documented fallback if a dedicated OCR vendor is wired in
+  later instead.
+- No controller, `IReceiptOcrService` interface, or mobile-side change needed — matches the
+  scaffold's original "no controller or interface changes needed" design.
+
+## Notes
+
+- No `.env`, API key, commit, push, or production change made. The mobile app will keep showing
+  the 503 "coming soon" message until this branch is merged and deployed — no behavior changes
+  until then.
+- Considered but did not add: OCR-specific usage telemetry (`IAiTelemetryRecorder`, used by
+  `GeminiAiModelClient` for score/report/chat) — kept out of scope to keep this a minimal,
+  focused wiring change; flagged as a reasonable follow-up if OCR usage/cost needs to be tracked
+  separately from the other AI features sharing the same API key.
+
+---
+
 **Feature: System-wide default budget allocation ratio (UC-15, `Bucket.DefaultPct`)** — requested
 by the `finviet-web` frontend team. Unlike the two previous asks, this described a concept that
 didn't exist anywhere in the backend yet, not even in the schema: `Bucket` (`GET`/`PATCH
