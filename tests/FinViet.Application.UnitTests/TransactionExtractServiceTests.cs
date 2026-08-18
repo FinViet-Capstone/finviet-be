@@ -164,6 +164,42 @@ public class TransactionExtractServiceTests
         Assert.Equal("Mua sắm", item.CategoryName);
     }
 
+    [Fact]
+    public async Task ExtractSmsAsync_RowWithCorrespondentName_UsesItAsMerchantAndCombinesForCategorization()
+    {
+        var customerId = Guid.NewGuid();
+        var smsParser = SmsParserFor(new ParsedTransactionDto
+        {
+            TransactionType = "EXPENSE",
+            Amount = 50_000m,
+            TransactionDate = DateTime.UtcNow,
+            Note = "Chuyen khoan",
+            CorrespondentName = "Circle K",
+            RawText = "Chuyen khoan",
+        });
+        var categorization = new Mock<IAiCategorizationService>(MockBehavior.Strict);
+        categorization
+            .Setup(x => x.PreviewManyAsync(
+                customerId,
+                It.Is<IReadOnlyList<string>>(inputs => inputs.SequenceEqual(new[] { "Chuyen khoan Circle K" })),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<AiClassificationResult>
+            {
+                new() { CategoryId = "cat_shopping", CategoryName = "Mua sắm", Confidence = 0.8m },
+            });
+        var service = CreateService(smsParser, NoRule(), categorization);
+
+        var result = await service.ExtractSmsAsync(customerId, "any text");
+
+        var item = Assert.Single(result.Rows);
+        // Merchant/Description stay genuinely separate — Merchant is the counterparty name,
+        // Description is the raw transaction note — rather than the old behavior of both being
+        // set to the same combined string.
+        Assert.Equal("Circle K", item.Merchant);
+        Assert.Equal("Chuyen khoan", item.Description);
+        Assert.Equal("cat_shopping", item.CategoryId);
+    }
+
     private static TransactionExtractService CreateService(
         Mock<ISmsTransactionParser> smsParser,
         Mock<IMerchantRuleService> rules,
