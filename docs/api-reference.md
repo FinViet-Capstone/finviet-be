@@ -277,13 +277,21 @@ The fixed 3-row `needs`/`wants`/`savings` lookup table (display name, color, ico
 | GET | `/` | — | `ApiResponse<BucketResponse[]>` |
 | PATCH | `/{id}` | `UpdateBucketRequest` | `ApiResponse<BucketResponse>` (404) |
 
-**BucketResponse**: `{ id, nameVi, nameEn, color?, icon?, sortOrder?, isLocked }`
-**UpdateBucketRequest**: `{ nameVi?, nameEn?, color?, icon?, sortOrder? }` — partial update, only
-non-null fields applied.
+**BucketResponse**: `{ id, nameVi, nameEn, color?, icon?, sortOrder?, isLocked, defaultPct? }`
+**UpdateBucketRequest**: `{ nameVi?, nameEn?, color?, icon?, sortOrder?, defaultPct? }` — partial
+update, only non-null fields applied. `defaultPct` (0-100, 400 otherwise — same inline range-check
+pattern as `PATCH /api/scoring-criteria/{code}`) is the system-wide default Needs/Wants/Savings
+allocation percentage (UC-15), seeded 50/30/20 by `V0009`.
 
 **Business logic**: `isLocked` (`savings=true`, `needs`/`wants=false`) is intentionally **not**
 enforced here — admin edits are allowed on every bucket including the locked one, per product
 direction (the admin frontend dropped its lock-based UI restriction; see `backend-gaps.md`).
+No atomic sum-to-100 validation across the 3 buckets — 3 independent PATCH calls give the server
+no single point to check the total against, same as `POST /api/profile/income-allocation`; the
+frontend validates the merged set before sending. `defaultPct` only affects **new** registrations
+(`RegisterCommandHandler`/`GoogleLoginCommandHandler` both read it when creating a `Customer` row)
+— changing it never retroactively touches existing customers, who may have already customized
+their own ratio via `POST /api/profile/income-allocation`.
 
 ---
 

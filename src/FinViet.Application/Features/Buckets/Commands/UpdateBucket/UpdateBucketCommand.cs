@@ -9,4 +9,5 @@ public record UpdateBucketCommand(
     string? NameEn,
     string? Color,
     string? Icon,
-    int? SortOrder) : IRequest<BucketResponse>;
+    int? SortOrder,
+    decimal? DefaultPct) : IRequest<BucketResponse>;

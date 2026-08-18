@@ -32,7 +32,8 @@ public class BucketsController : ControllerBase
         CancellationToken cancellationToken)
     {
         var result = await _mediator.Send(
-            new UpdateBucketCommand(id, request.NameVi, request.NameEn, request.Color, request.Icon, request.SortOrder),
+            new UpdateBucketCommand(
+                id, request.NameVi, request.NameEn, request.Color, request.Icon, request.SortOrder, request.DefaultPct),
             cancellationToken);
 
         return Ok(ApiResponse<BucketResponse>.Ok(result, "Bucket updated successfully"));

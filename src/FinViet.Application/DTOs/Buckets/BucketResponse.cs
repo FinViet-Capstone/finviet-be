@@ -9,4 +9,5 @@ public class BucketResponse
     public string? Icon { get; set; }
     public int? SortOrder { get; set; }
     public bool IsLocked { get; set; }
+    public decimal? DefaultPct { get; set; }
 }
