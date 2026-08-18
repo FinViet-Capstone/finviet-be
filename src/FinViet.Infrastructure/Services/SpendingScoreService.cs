@@ -50,7 +50,12 @@ public class SpendingScoreService : ISpendingScoreService
         var type = periodType.ToUpperInvariant();
         var isMonthly = type == "MONTHLY";
 
-        var spike = await ComputeSpikeAsync(customerId, periodEnd, cancellationToken);
+        // No expense activity inside the period → nothing to assess. Metrics still run (they
+        // fall back to neutral/None), but the result is flagged so the FE shows an empty state
+        // instead of presenting the neutral baseline as a real score.
+        var hasData = await HasExpenseInPeriodAsync(customerId, periodStart, periodEnd, cancellationToken);
+
+        var spike = await ComputeSpikeAsync(customerId, periodStart, periodEnd, cancellationToken);
         var budget = await ComputeBudgetAsync(customerId, periodStart, periodEnd, cancellationToken);
         decimal? savings = isMonthly
             ? await ComputeSavingsAsync(customerId, periodEnd, cancellationToken)
@@ -96,10 +101,13 @@ public class SpendingScoreService : ISpendingScoreService
             BudgetScore = budget,
             SavingsScore = savings,
             Weights = effectiveWeights,
-            ColorBadge = badge
+            ColorBadge = badge,
+            HasData = hasData
         };
 
-        if (includeComment)
+        // Skip the LLM comment when there's nothing to comment on — otherwise it narrates the
+        // neutral baseline ("mức trung bình") as if it were a real assessment.
+        if (includeComment && hasData)
             result.Comment = await TryGenerateCommentAsync(customerId, result, cancellationToken);
 
         if (persist)
@@ -108,8 +116,24 @@ public class SpendingScoreService : ISpendingScoreService
         return result;
     }
 
-    // ── Metric 1: Spike (Z-score over trailing 30 days) ──────────────────────────────
-    private async Task<decimal?> ComputeSpikeAsync(Guid customerId, DateOnly asOf, CancellationToken ct)
+    private async Task<bool> HasExpenseInPeriodAsync(
+        Guid customerId, DateOnly start, DateOnly end, CancellationToken ct)
+    {
+        return await _db.Transactions
+            .Join(_db.Wallets, t => t.WalletId, w => w.WalletId, (t, w) => new { t, w.CustomerId })
+            .AnyAsync(x => x.CustomerId == customerId
+                           && x.t.TransactionType == "expense"
+                           && x.t.TransactionDate != null
+                           && x.t.TransactionDate >= DateRange.StartUtc(start)
+                           && x.t.TransactionDate <= DateRange.EndUtc(end), ct);
+    }
+
+    // ── Metric 1: Spike (Z-score against a trailing-30-day baseline) ─────────────────
+    // The trailing 30 days provide the mean/std baseline only; spike DAYS are counted
+    // solely inside [periodStart, asOf], so last month's spikes don't penalize this
+    // week's/month's score.
+    private async Task<decimal?> ComputeSpikeAsync(
+        Guid customerId, DateOnly periodStart, DateOnly asOf, CancellationToken ct)
     {
         var windowStart = asOf.AddDays(-30);
 
@@ -143,11 +167,13 @@ public class SpendingScoreService : ISpendingScoreService
         if (std < 1e-6)
             return 100m; // perfectly flat spending → no spikes
 
-        // Count spike days and accumulate severity.
+        // Count spike days and accumulate severity — only days inside the scored period.
         var spikeDays = 0;
         double severitySum = 0;
-        foreach (var (_, amount) in dailyTotals)
+        foreach (var (day, amount) in dailyTotals)
         {
+            if (day < periodStart)
+                continue;
             var z = ((double)amount - mean) / std;
             if (z > SpikeZThreshold && amount > SpikeThresholdVnd)
             {
