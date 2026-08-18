@@ -21,7 +21,18 @@ internal static class BankStatementRowParser
     private static readonly string[] AmountAliases = { "so tien", "amount" };
     private static readonly string[] DebitAliases = { "ghi no", "no", "debit" };
     private static readonly string[] CreditAliases = { "ghi co", "co", "credit" };
-    private static readonly string[] CorrespondentAliases = { "doi ung", "correspondent", "beneficiary" };
+
+    // Different banks label the counterparty/beneficiary column very differently (unlike
+    // date/description/amount, which are fairly standardized across the exports this app has
+    // seen) — matched by substring below rather than exact equality, so e.g. "Tên đối tác giao
+    // dịch" or "Người thụ hưởng tại NH" still resolve via "doi tac"/"thu huong" without needing
+    // every bank's exact header phrase enumerated here.
+    private static readonly string[] CorrespondentAliases =
+    {
+        "doi ung", "correspondent", "beneficiary",
+        "doi tac", "thu huong", "nguoi nhan", "nguoi gui",
+        "doi tuong giao dich", "ten khach hang doi ung",
+    };
 
     private sealed class ColumnLayout
     {
@@ -74,7 +85,7 @@ internal static class BankStatementRowParser
             else if (amountIndex is null && AmountAliases.Contains(normalized)) amountIndex = i;
             else if (debitIndex is null && DebitAliases.Contains(normalized)) debitIndex = i;
             else if (creditIndex is null && CreditAliases.Contains(normalized)) creditIndex = i;
-            else if (correspondentIndex is null && CorrespondentAliases.Contains(normalized)) correspondentIndex = i;
+            else if (correspondentIndex is null && IsCorrespondentHeader(normalized)) correspondentIndex = i;
         }
 
         var hasAmount = amountIndex is not null || (debitIndex is not null && creditIndex is not null);
@@ -91,6 +102,9 @@ internal static class BankStatementRowParser
             CorrespondentIndex = correspondentIndex
         };
     }
+
+    private static bool IsCorrespondentHeader(string normalizedHeader)
+        => CorrespondentAliases.Any(alias => normalizedHeader.Contains(alias, StringComparison.Ordinal));
 
     private static string Normalize(string? value)
     {
@@ -149,16 +163,13 @@ internal static class BankStatementRowParser
             return;
         }
 
-        var note = string.IsNullOrWhiteSpace(correspondent)
-            ? description
-            : $"{description} | Doi ung: {correspondent}";
-
         result.Rows.Add(new ParsedTransactionDto
         {
             TransactionType = transactionType,
             Amount = amount,
             TransactionDate = transactionDate,
-            Note = TrimNote(note),
+            Note = TrimNote(description),
+            CorrespondentName = string.IsNullOrWhiteSpace(correspondent) ? null : correspondent.Trim(),
             RawText = string.Join(" | ", cells)
         });
     }
@@ -195,16 +206,14 @@ internal static class BankStatementRowParser
         }
 
         var transactionType = credit > 0 ? "INCOME" : "EXPENSE";
-        var note = string.IsNullOrWhiteSpace(correspondent)
-            ? description
-            : $"{description} | Doi ung: {correspondent}";
 
         result.Rows.Add(new ParsedTransactionDto
         {
             TransactionType = transactionType,
             Amount = amount,
             TransactionDate = transactionDate,
-            Note = TrimNote(note),
+            Note = TrimNote(description),
+            CorrespondentName = string.IsNullOrWhiteSpace(correspondent) ? null : correspondent.Trim(),
             RawText = string.Join(" | ", cells)
         });
     }

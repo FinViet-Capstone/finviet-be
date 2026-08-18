@@ -8,6 +8,13 @@ public class ParsedTransactionDto
     public decimal Amount { get; set; }
     public DateTime TransactionDate { get; set; }
     public string Note { get; set; } = string.Empty;
+
+    /// <summary>Counterparty/beneficiary name, when the source has a distinct column for it (a
+    /// recognized correspondent header, or the legacy fixed-position layout's column 13) — kept
+    /// separate from <see cref="Note"/> rather than appended into it, so callers can show it as
+    /// its own field instead of it being permanently baked into the description text.</summary>
+    public string? CorrespondentName { get; set; }
+
     public string RawText { get; set; } = string.Empty;
 }
 

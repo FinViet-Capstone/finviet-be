@@ -76,19 +76,30 @@ public class TransactionExtractService : ITransactionExtractService
                 Amount = row.Amount,
                 Type = row.TransactionType,
                 Description = row.Note,
-                Merchant = row.Note,
+                // Prefer the actual counterparty/beneficiary name when the source had a distinct
+                // column for it; otherwise fall back to the transaction description, same as before
+                // CorrespondentName existed.
+                Merchant = string.IsNullOrWhiteSpace(row.CorrespondentName) ? row.Note : row.CorrespondentName,
                 TransactionDate = row.TransactionDate
             };
             items.Add(item);
 
+            // Rule/AI matching should still see the correspondent name alongside the description —
+            // e.g. a generic "Chuyen khoan" description with correspondent "Circle K" needs both
+            // texts to categorize correctly — even though the two are now kept as separate display
+            // fields on the item above instead of pre-merged into Note.
+            var categorizationInput = string.IsNullOrWhiteSpace(row.CorrespondentName)
+                ? row.Note
+                : $"{row.Note} {row.CorrespondentName}";
+
             if (!string.Equals(item.Type, "EXPENSE", StringComparison.OrdinalIgnoreCase)
-                || string.IsNullOrWhiteSpace(row.Note))
+                || string.IsNullOrWhiteSpace(categorizationInput))
             {
                 continue;
             }
 
             var ruleMatch = rules.FirstOrDefault(r =>
-                row.Note!.Contains(r.MerchantKeyword, StringComparison.OrdinalIgnoreCase));
+                categorizationInput.Contains(r.MerchantKeyword, StringComparison.OrdinalIgnoreCase));
             if (ruleMatch is not null)
             {
                 item.CategoryId = ruleMatch.CategoryId;
@@ -98,7 +109,7 @@ public class TransactionExtractService : ITransactionExtractService
             }
 
             pendingAiIndexes.Add(items.Count - 1);
-            pendingAiInputs.Add(row.Note!);
+            pendingAiInputs.Add(categorizationInput);
         }
 
         if (pendingAiInputs.Count > 0)

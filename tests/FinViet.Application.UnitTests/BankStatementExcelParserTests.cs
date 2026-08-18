@@ -18,9 +18,47 @@ public class BankStatementExcelParserTests
         Assert.Equal("INCOME", row.TransactionType);
         Assert.Equal(150_000m, row.Amount);
         Assert.Equal(new DateTime(2026, 8, 15, 0, 0, 0, DateTimeKind.Utc), row.TransactionDate);
-        Assert.Equal("Coffee shop | Doi ung: ABC Corp", row.Note);
+        // Correspondent is kept as its own field rather than merged into Note, so a caller can
+        // show it separately (e.g. mobile's "Người nhận" field) instead of it being permanently
+        // baked into the description text.
+        Assert.Equal("Coffee shop", row.Note);
+        Assert.Equal("ABC Corp", row.CorrespondentName);
         Assert.Equal(1, result.TotalRowsScanned);
         Assert.Equal(0, result.SkippedDuringParse);
+    }
+
+    [Fact]
+    public void Parse_Csv_NoCorrespondentColumn_LeavesCorrespondentNameNull()
+    {
+        var csv = BuildCsv(
+            BuildRow(no: "2", date: "1/8/2026 09:30", debit: "1,250,000 VND", credit: "", description: "Grocery", correspondent: ""));
+        var parser = new BankStatementExcelParser();
+
+        var result = parser.Parse(ToStream(csv), ".csv");
+
+        var row = Assert.Single(result.Rows);
+        Assert.Equal("Grocery", row.Note);
+        Assert.Null(row.CorrespondentName);
+    }
+
+    [Theory]
+    [InlineData("Ten doi tac")]
+    [InlineData("Nguoi thu huong")]
+    [InlineData("Doi tuong giao dich")]
+    [InlineData("Ten doi tac giao dich")]
+    public void Parse_Csv_RecognizesCorrespondentColumnAcrossBankHeaderVariants(string correspondentHeader)
+    {
+        // Different banks phrase this column differently — matched by substring, not exact
+        // equality, so headers not literally in the alias list (e.g. "Ten doi tac giao dich")
+        // still resolve via the "doi tac" substring.
+        var csv = $"Ngay,Mo ta,So tien,{correspondentHeader}\n12/06/2026,Chuyen khoan,-45000,Circle K\n";
+        var parser = new BankStatementExcelParser();
+
+        var result = parser.Parse(ToStream(csv), ".csv");
+
+        var row = Assert.Single(result.Rows);
+        Assert.Equal("Chuyen khoan", row.Note);
+        Assert.Equal("Circle K", row.CorrespondentName);
     }
 
     [Fact]
