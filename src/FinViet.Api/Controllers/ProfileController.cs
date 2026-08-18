@@ -77,7 +77,14 @@ public class ProfileController : ControllerBase
         return Ok(ApiResponse<object>.Ok(result));
     }
 
-    /// <summary>Cập nhật giao diện (theme) và ngưỡng cảnh báo ngân sách.</summary>
+    /// <summary>
+    /// Cập nhật giao diện (theme) và ngưỡng cảnh báo ngân sách.
+    /// Accepts both PUT and PATCH: the mobile client (React Native) has a known,
+    /// long-standing issue where PATCH request bodies can be dropped by the native
+    /// networking layer on-device, so it calls this via PUT. PATCH is kept for any
+    /// other API consumer (Swagger, future admin tooling) that doesn't hit that bug.
+    /// </summary>
+    [HttpPut("settings")]
     [HttpPatch("settings")]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
     public async Task<IActionResult> UpdateProfileSettings(
@@ -100,7 +107,11 @@ public class ProfileController : ControllerBase
         return Ok(ApiResponse<object>.Ok(result));
     }
 
-    /// <summary>Cập nhật một phần cấu hình AI; các field bỏ trống được giữ nguyên.</summary>
+    /// <summary>
+    /// Cập nhật một phần cấu hình AI; các field bỏ trống được giữ nguyên. Accepts
+    /// PUT and PATCH — see UpdateProfileSettings above for why.
+    /// </summary>
+    [HttpPut("ai-preferences")]
     [HttpPatch("ai-preferences")]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
     public async Task<IActionResult> UpdateAiPreferences(

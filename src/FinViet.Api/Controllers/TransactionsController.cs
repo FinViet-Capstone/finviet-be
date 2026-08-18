@@ -111,6 +111,8 @@ public class TransactionsController : ControllerBase
         return Ok(ApiResponse<bool>.Ok(result));
     }
 
+    // Accepts PUT and PATCH — see ProfileController.UpdateProfileSettings for why.
+    [HttpPut("{id}/classify")]
     [HttpPatch("{id}/classify")]
     public async Task<ActionResult<TransactionResponseDto>> ClassifyTransaction(Guid id, [FromBody] ClassifyTransactionDto dto)
     {
