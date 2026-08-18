@@ -24,7 +24,8 @@ public class GetBucketsQueryHandler : IRequestHandler<GetBucketsQuery, IReadOnly
                 Color = b.Color,
                 Icon = b.Icon,
                 SortOrder = b.SortOrder,
-                IsLocked = b.IsLocked
+                IsLocked = b.IsLocked,
+                DefaultPct = b.DefaultPct
             })
             .ToListAsync(cancellationToken);
     }
