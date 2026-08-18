@@ -39,7 +39,14 @@ public class GetUsersQueryHandler : IRequestHandler<GetUsersQuery, PagedResult<U
                 FullName = c.FullName,
                 IsActive = c.IsActive,
                 IsEmailVerified = c.IsEmailVerified,
-                CreatedAt = c.CreatedAt
+                CreatedAt = c.CreatedAt,
+                TotalTransactions = _db.Transactions.Count(t => t.CustomerId == c.CustomerId),
+                TotalWallets = _db.Wallets.Count(w => w.CustomerId == c.CustomerId && !w.IsDeleted),
+                SubscriptionPlanCode = c.CustomerSubscriptions
+                    .Where(s => s.Status == "active")
+                    .OrderByDescending(s => s.CreatedAt)
+                    .Select(s => s.Plan!.Code)
+                    .FirstOrDefault() ?? "free"
             })
             .ToListAsync(cancellationToken);
 
