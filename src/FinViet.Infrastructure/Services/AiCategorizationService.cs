@@ -21,6 +21,8 @@ public class AiCategorizationService : IAiCategorizationService
     private const string SourceAuto = "ai_auto";
     private const string SourceSuggestion = "ai_suggestion";
     private const string SourceFallback = "fallback";
+    private const string FeatureClassificationBatch = "classification_batch";
+    private const int MaxConcurrentBatchClassifications = 6;
 
     private readonly FinVietDbContext _db;
     private readonly IAiModelClient _aiModel;
@@ -233,6 +235,74 @@ public class AiCategorizationService : IAiCategorizationService
         }
 
         return result;
+    }
+
+    public async Task<IReadOnlyList<AiClassificationResult>> PreviewManyAsync(
+        Guid customerId,
+        IReadOnlyList<string> inputs,
+        CancellationToken cancellationToken = default)
+    {
+        if (inputs.Count == 0)
+            return Array.Empty<AiClassificationResult>();
+
+        var preference = await PreferenceAsync(customerId, cancellationToken);
+        if (string.Equals(preference.Mode, ModeOff, StringComparison.Ordinal))
+            return inputs.Select(_ => new AiClassificationResult()).ToList();
+
+        var expenseCategories = await ExpenseCategoriesAsync(customerId, cancellationToken);
+        var categoryNames = expenseCategories.Keys.ToList();
+
+        var results = new AiClassificationResult[inputs.Count];
+        using var gate = new SemaphoreSlim(MaxConcurrentBatchClassifications);
+
+        var tasks = inputs.Select(async (input, index) =>
+        {
+            await gate.WaitAsync(cancellationToken);
+            try
+            {
+                results[index] = await ClassifyOneAsync(customerId, input, expenseCategories, categoryNames, cancellationToken);
+            }
+            finally
+            {
+                gate.Release();
+            }
+        });
+
+        await Task.WhenAll(tasks);
+        return results;
+    }
+
+    private async Task<AiClassificationResult> ClassifyOneAsync(
+        Guid customerId,
+        string input,
+        Dictionary<string, string> expenseCategories,
+        IReadOnlyList<string> categoryNames,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (!await TryAcquireAsync(customerId, FeatureClassificationBatch, cancellationToken))
+                return new AiClassificationResult();
+
+            var result = await _aiModel.ClassifyAsync(
+                input,
+                categoryNames,
+                cancellationToken,
+                new AiRequestContext(FeatureClassificationBatch, customerId));
+
+            if (result.CategoryName is not null
+                && expenseCategories.TryGetValue(result.CategoryName, out var categoryId))
+            {
+                result.CategoryId = categoryId;
+            }
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Batch category preview failed for one row; leaving it uncategorized.");
+            return new AiClassificationResult();
+        }
     }
 
     public async Task<bool> ReprocessAsync(

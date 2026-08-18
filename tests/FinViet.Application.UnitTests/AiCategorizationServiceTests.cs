@@ -7,6 +7,7 @@ using FinViet.Infrastructure.Persistence.Entities;
 using FinViet.Infrastructure.Services;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
+using System.Threading;
 
 namespace FinViet.Application.UnitTests;
 
@@ -221,6 +222,106 @@ public class AiCategorizationServiceTests
         Assert.NotNull(allowed);
         Assert.Contains("Ăn uống", allowed!);
         Assert.DoesNotContain("Danh mục riêng", allowed!);
+    }
+
+    [Fact]
+    public async Task PreviewManyAsync_EmptyInputs_ReturnsEmptyWithoutTouchingGeminiOrDb()
+    {
+        await using var db = TestDbContextFactory.Create();
+        var customerId = Guid.NewGuid();
+        var model = new Mock<IAiModelClient>(MockBehavior.Strict);
+        var service = CreateService(db, model, new Mock<IMerchantRuleService>(MockBehavior.Strict));
+
+        var results = await service.PreviewManyAsync(customerId, Array.Empty<string>());
+
+        Assert.Empty(results);
+        model.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task PreviewManyAsync_ModeOff_ReturnsEmptyResultPerInputWithoutCallingGemini()
+    {
+        await using var db = TestDbContextFactory.Create();
+        var customerId = Guid.NewGuid();
+        db.AiCustomerPreferences.Add(Preference(customerId, "off", 0.85m));
+        await db.SaveChangesAsync();
+        var model = new Mock<IAiModelClient>(MockBehavior.Strict);
+        var service = CreateService(db, model, new Mock<IMerchantRuleService>(MockBehavior.Strict));
+
+        var results = await service.PreviewManyAsync(customerId, new List<string> { "Highlands", "Circle K" });
+
+        Assert.Equal(2, results.Count);
+        Assert.All(results, r => Assert.Null(r.CategoryId));
+        model.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task PreviewManyAsync_ResolvesCategoryIdForEveryInput_PreservingOrder()
+    {
+        await using var db = TestDbContextFactory.Create();
+        var customerId = Guid.NewGuid();
+        db.Categories.AddRange(Category("cat_food", "Ăn uống"), Category("cat_shopping", "Mua sắm"));
+        await db.SaveChangesAsync();
+        var model = new Mock<IAiModelClient>();
+        model.Setup(x => x.ClassifyAsync("Highlands", It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>(), It.IsAny<AiRequestContext>()))
+            .ReturnsAsync(new AiClassificationResult { CategoryName = "Ăn uống", Confidence = 0.9m });
+        model.Setup(x => x.ClassifyAsync("Circle K", It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>(), It.IsAny<AiRequestContext>()))
+            .ReturnsAsync(new AiClassificationResult { CategoryName = "Mua sắm", Confidence = 0.8m });
+        var service = CreateService(db, model, new Mock<IMerchantRuleService>());
+
+        var results = await service.PreviewManyAsync(customerId, new List<string> { "Highlands", "Circle K" });
+
+        Assert.Equal(2, results.Count);
+        Assert.Equal("cat_food", results[0].CategoryId);
+        Assert.Equal("cat_shopping", results[1].CategoryId);
+    }
+
+    [Fact]
+    public async Task PreviewManyAsync_OneRowThrows_OtherRowsStillResolve()
+    {
+        await using var db = TestDbContextFactory.Create();
+        var customerId = Guid.NewGuid();
+        db.Categories.Add(Category("cat_food", "Ăn uống"));
+        await db.SaveChangesAsync();
+        var model = new Mock<IAiModelClient>();
+        model.Setup(x => x.ClassifyAsync("bad row", It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>(), It.IsAny<AiRequestContext>()))
+            .ThrowsAsync(new InvalidOperationException("provider down"));
+        model.Setup(x => x.ClassifyAsync("Highlands", It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>(), It.IsAny<AiRequestContext>()))
+            .ReturnsAsync(new AiClassificationResult { CategoryName = "Ăn uống", Confidence = 0.9m });
+        var service = CreateService(db, model, new Mock<IMerchantRuleService>());
+
+        var results = await service.PreviewManyAsync(customerId, new List<string> { "bad row", "Highlands" });
+
+        Assert.Equal(2, results.Count);
+        Assert.Null(results[0].CategoryId);
+        Assert.Equal("cat_food", results[1].CategoryId);
+    }
+
+    [Fact]
+    public async Task PreviewManyAsync_RateLimitedRow_DegradesIndependentlyWithoutCallingGemini()
+    {
+        // Which of the two concurrent rows wins the race to acquire the rate-limit slot is
+        // non-deterministic, so this asserts the aggregate outcome (exactly one resolved, one
+        // didn't) rather than pinning a specific input to a specific result.
+        await using var db = TestDbContextFactory.Create();
+        var customerId = Guid.NewGuid();
+        db.Categories.Add(Category("cat_food", "Ăn uống"));
+        await db.SaveChangesAsync();
+        var model = new Mock<IAiModelClient>();
+        model.Setup(x => x.ClassifyAsync(It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>(), It.IsAny<AiRequestContext>()))
+            .ReturnsAsync(new AiClassificationResult { CategoryName = "Ăn uống", Confidence = 0.9m });
+        var limiter = new Mock<IAiRateLimiter>();
+        var callCount = 0;
+        limiter.Setup(x => x.TryAcquireAsync(customerId, "classification_batch", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => Interlocked.Increment(ref callCount) == 1);
+        var service = CreateService(db, model, new Mock<IMerchantRuleService>(), limiter);
+
+        var results = await service.PreviewManyAsync(customerId, new List<string> { "row1", "row2" });
+
+        Assert.Equal(2, results.Count);
+        Assert.Single(results, r => r.CategoryId == "cat_food");
+        Assert.Single(results, r => r.CategoryId is null);
+        model.Verify(x => x.ClassifyAsync(It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>(), It.IsAny<AiRequestContext>()), Times.Once);
     }
 
     private static AiCategorizationService CreateService(

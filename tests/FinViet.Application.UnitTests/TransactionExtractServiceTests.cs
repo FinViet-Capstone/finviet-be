@@ -17,12 +17,18 @@ public class TransactionExtractServiceTests
         var smsParser = SmsParserFor(Row("EXPENSE", "Highlands Coffee"));
         var categorization = new Mock<IAiCategorizationService>(MockBehavior.Strict);
         categorization
-            .Setup(x => x.PreviewAsync(customerId, "Highlands Coffee", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new AiClassificationResult
+            .Setup(x => x.PreviewManyAsync(
+                customerId,
+                It.Is<IReadOnlyList<string>>(inputs => inputs.SequenceEqual(new[] { "Highlands Coffee" })),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<AiClassificationResult>
             {
-                CategoryId = "cat_food",
-                CategoryName = "Ăn uống",
-                Confidence = 0.9m
+                new()
+                {
+                    CategoryId = "cat_food",
+                    CategoryName = "Ăn uống",
+                    Confidence = 0.9m
+                }
             });
         var service = CreateService(smsParser, NoRule(), categorization);
 
@@ -63,7 +69,10 @@ public class TransactionExtractServiceTests
         var smsParser = SmsParserFor(Row("EXPENSE", "Highlands Coffee"));
         var categorization = new Mock<IAiCategorizationService>(MockBehavior.Strict);
         categorization
-            .Setup(x => x.PreviewAsync(customerId, "Highlands Coffee", It.IsAny<CancellationToken>()))
+            .Setup(x => x.PreviewManyAsync(
+                customerId,
+                It.IsAny<IReadOnlyList<string>>(),
+                It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("provider down"));
         var service = CreateService(smsParser, NoRule(), categorization);
 
@@ -90,6 +99,41 @@ public class TransactionExtractServiceTests
         var item = Assert.Single(result.Rows);
         Assert.Null(item.CategoryId);
         categorization.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task ExtractSmsAsync_MultipleRows_RuleMatchedRowsSkipTheBatchAiCallEntirely()
+    {
+        var customerId = Guid.NewGuid();
+        var smsParser = SmsParserFor(
+            Row("EXPENSE", "Grab ride"),
+            Row("EXPENSE", "Highlands Coffee"),
+            Row("EXPENSE", "Circle K"));
+        var rules = new Mock<IMerchantRuleService>();
+        rules.Setup(x => x.GetRulesAsync(customerId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<RuleResponse>
+            {
+                new() { RuleId = Guid.NewGuid(), MerchantKeyword = "Grab", CategoryId = "cat_transport", CategoryName = "Di chuyển" }
+            });
+        var categorization = new Mock<IAiCategorizationService>(MockBehavior.Strict);
+        categorization
+            .Setup(x => x.PreviewManyAsync(
+                customerId,
+                It.Is<IReadOnlyList<string>>(inputs => inputs.SequenceEqual(new[] { "Highlands Coffee", "Circle K" })),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<AiClassificationResult>
+            {
+                new() { CategoryId = "cat_food", CategoryName = "Ăn uống", Confidence = 0.9m },
+                new() { CategoryId = "cat_shopping", CategoryName = "Mua sắm", Confidence = 0.7m }
+            });
+        var service = CreateService(smsParser, rules, categorization);
+
+        var result = await service.ExtractSmsAsync(customerId, "any text");
+
+        Assert.Equal(3, result.Rows.Count);
+        Assert.Equal("cat_transport", result.Rows[0].CategoryId); // rule match, no AI call
+        Assert.Equal("cat_food", result.Rows[1].CategoryId);
+        Assert.Equal("cat_shopping", result.Rows[2].CategoryId);
     }
 
     [Fact]
