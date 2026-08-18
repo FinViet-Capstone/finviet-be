@@ -158,6 +158,35 @@ public class AiCategorizationServiceTests
     }
 
     [Fact]
+    public async Task PreviewAsync_ResolvesCategoryIdFromCategoryName()
+    {
+        await using var db = TestDbContextFactory.Create();
+        var customerId = Guid.NewGuid();
+        db.Categories.Add(Category("cat_food", "Ăn uống"));
+        await db.SaveChangesAsync();
+        var service = CreateService(db, Classifier("Ăn uống", 0.9m), new Mock<IMerchantRuleService>());
+
+        var result = await service.PreviewAsync(customerId, "Highlands Coffee");
+
+        Assert.Equal("cat_food", result.CategoryId);
+        Assert.Equal("Ăn uống", result.CategoryName);
+    }
+
+    [Fact]
+    public async Task PreviewAsync_UnresolvableCategoryName_LeavesCategoryIdNull()
+    {
+        await using var db = TestDbContextFactory.Create();
+        var customerId = Guid.NewGuid();
+        db.Categories.Add(Category("cat_food", "Ăn uống"));
+        await db.SaveChangesAsync();
+        var service = CreateService(db, Classifier("Not a real category", 0.9m), new Mock<IMerchantRuleService>());
+
+        var result = await service.PreviewAsync(customerId, "test");
+
+        Assert.Null(result.CategoryId);
+    }
+
+    [Fact]
     public async Task PreviewAsync_DoesNotExposeAnotherCustomersCustomCategory()
     {
         await using var db = TestDbContextFactory.Create();

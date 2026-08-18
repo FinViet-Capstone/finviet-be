@@ -217,11 +217,22 @@ public class AiCategorizationService : IAiCategorizationService
             return new AiClassificationResult();
 
         var expenseCategories = await ExpenseCategoriesAsync(customerId, cancellationToken);
-        return await _aiModel.ClassifyAsync(
+        var result = await _aiModel.ClassifyAsync(
             input,
             expenseCategories.Keys.ToList(),
             cancellationToken,
             new AiRequestContext("classification_preview", customerId));
+
+        // The provider only ever returns a name (it doesn't know our ids); resolve it here so
+        // callers (SMS/CSV/photo extraction) get a category id they can actually apply, not just
+        // a display name.
+        if (result.CategoryName is not null
+            && expenseCategories.TryGetValue(result.CategoryName, out var categoryId))
+        {
+            result.CategoryId = categoryId;
+        }
+
+        return result;
     }
 
     public async Task<bool> ReprocessAsync(

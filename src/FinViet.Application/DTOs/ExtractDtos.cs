@@ -18,8 +18,8 @@ public class ExtractedTransactionItem
     public string? Description { get; set; }
     public DateTime TransactionDate { get; set; }
 
-    /// <summary>Reserved for an AI-suggested category id; not populated by the preview
-    /// (the preview only resolves a name). Kept for response-shape compatibility.</summary>
+    /// <summary>AI-suggested (or rule-matched) category id, resolved from the model's chosen
+    /// category name against the customer's category set. Null when unresolved.</summary>
     public string? CategoryId { get; set; }
 
     /// <summary>AI-suggested category name (null when unresolved).</summary>
