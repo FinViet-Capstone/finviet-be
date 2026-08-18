@@ -1,4 +1,5 @@
 using FinViet.Application.DTOs;
+using FinViet.Application.DTOs.Rules;
 using FinViet.Application.Interfaces;
 using Microsoft.Extensions.Logging;
 
@@ -70,40 +71,61 @@ public class TransactionExtractService : ITransactionExtractService
                 TransactionDate = row.TransactionDate
             };
 
-            // Only suggest a category for expenses (parsers emit uppercase "EXPENSE").
-            if (string.Equals(row.TransactionType, "EXPENSE", StringComparison.OrdinalIgnoreCase)
-                && !string.IsNullOrWhiteSpace(row.Note))
-            {
-                // 1) Rule precedence: deterministic, no AI call.
-                var ruleMatch = rules.FirstOrDefault(r =>
-                    row.Note!.Contains(r.MerchantKeyword, StringComparison.OrdinalIgnoreCase));
-
-                if (ruleMatch is not null)
-                {
-                    item.CategoryId = ruleMatch.CategoryId;
-                    item.CategoryName = ruleMatch.CategoryName;
-                    item.Confidence = 1.0m;
-                }
-                else
-                {
-                    // 2) Fall back to AI categorization.
-                    try
-                    {
-                        var suggestion = await _categorization.PreviewAsync(customerId, row.Note, ct);
-                        item.CategoryName = suggestion.CategoryName;
-                        item.Confidence = suggestion.Confidence;
-                    }
-                    catch (Exception ex)
-                    {
-                        // AI down → leave the row uncategorized; the user resolves it on the review screen.
-                        _logger.LogWarning(ex, "Category preview failed during extract; returning row uncategorized.");
-                    }
-                }
-            }
+            await ApplyCategorizationAsync(customerId, item, row.Note, rules, ct);
 
             response.Rows.Add(item);
         }
 
         return response;
+    }
+
+    public async Task CategorizeItemAsync(Guid customerId, ExtractedTransactionItem item, CancellationToken cancellationToken = default)
+    {
+        var rules = await _ruleService.GetRulesAsync(customerId, cancellationToken);
+        await ApplyCategorizationAsync(customerId, item, item.Merchant ?? item.Description, rules, cancellationToken);
+    }
+
+    /// <summary>Rule-then-AI category suggestion shared by SMS/CSV's per-row loop and the
+    /// single-row photo path. Mutates <paramref name="item"/> in place; AI failures degrade
+    /// gracefully to a null suggestion (item still returned uncategorized).</summary>
+    private async Task ApplyCategorizationAsync(
+        Guid customerId,
+        ExtractedTransactionItem item,
+        string? categorizationInput,
+        IReadOnlyList<RuleResponse> rules,
+        CancellationToken ct)
+    {
+        // Only suggest a category for expenses (parsers/OCR emit uppercase "EXPENSE").
+        if (!string.Equals(item.Type, "EXPENSE", StringComparison.OrdinalIgnoreCase)
+            || string.IsNullOrWhiteSpace(categorizationInput))
+        {
+            return;
+        }
+
+        // 1) Rule precedence: deterministic, no AI call.
+        var ruleMatch = rules.FirstOrDefault(r =>
+            categorizationInput.Contains(r.MerchantKeyword, StringComparison.OrdinalIgnoreCase));
+
+        if (ruleMatch is not null)
+        {
+            item.CategoryId = ruleMatch.CategoryId;
+            item.CategoryName = ruleMatch.CategoryName;
+            item.Confidence = 1.0m;
+            return;
+        }
+
+        // 2) Fall back to AI categorization.
+        try
+        {
+            var suggestion = await _categorization.PreviewAsync(customerId, categorizationInput, ct);
+            item.CategoryId = suggestion.CategoryId;
+            item.CategoryName = suggestion.CategoryName;
+            item.Confidence = suggestion.Confidence;
+        }
+        catch (Exception ex)
+        {
+            // AI down → leave the row uncategorized; the user resolves it on the review screen.
+            _logger.LogWarning(ex, "Category preview failed during extract; returning row uncategorized.");
+        }
     }
 }
