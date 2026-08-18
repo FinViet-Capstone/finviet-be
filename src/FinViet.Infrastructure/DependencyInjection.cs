@@ -115,10 +115,15 @@ public static class DependencyInjection
         // Transaction extract (SMS/CSV → candidate rows + AI suggestions; no persistence)
         services.AddScoped<ITransactionExtractService, TransactionExtractService>();
 
-        // Receipt OCR (photo extraction). No provider chosen yet — placeholder throws 503 until
-        // Ocr:Provider/Ocr:ApiKey are configured and a real implementation is swapped in.
+        // Receipt OCR (photo extraction) — reuses the same Gemini API key/model already
+        // configured for score/report/chat below, no separate OCR vendor. UnconfiguredReceiptOcrService
+        // is kept around (unregistered) as the drop-in fallback if a dedicated OCR provider is
+        // wired in later.
         services.Configure<OcrOptions>(configuration.GetSection(OcrOptions.SectionName));
-        services.AddScoped<IReceiptOcrService, UnconfiguredReceiptOcrService>();
+        services.AddScoped<IReceiptOcrService>(sp => new GeminiReceiptOcrService(
+            sp.GetRequiredService<IGeminiSdkClient>(),
+            sp.GetRequiredService<IOptions<GeminiOptions>>(),
+            sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<GeminiReceiptOcrService>>()));
 
         // Transaction Import parsers (shared by the extract flow)
         services.AddScoped<IBankStatementParser, BankStatementExcelParser>();
