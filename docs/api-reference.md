@@ -716,7 +716,24 @@ auto-categorized transaction.
 | GET | `/` | query `CategoryCorrectionQueryDto` | `ApiResponse<PagedResult<CategoryCorrectionResponseDto>>` |
 
 **CategoryCorrectionQueryDto**: `{ page=1, pageSize=20, categoryId?, createdAtFrom?, createdAtTo? }` — `pageSize` clamped to `[1,100]` (falls back to 20 outside that range); `page < 1` falls back to 1. `createdAtFrom`/`createdAtTo` follow the same UTC start-of-day/exclusive-next-day convention as `GET /transactions`'s `from`/`to` (the frontend computes these from its 7/30/90-day preset — there's no server-side `days` param).
-**CategoryCorrectionResponseDto**: `{ logId, customerId?, transactionId?, adminId?, correctedCategoryId?, originalAiGuess?, createdAt? }`
+**CategoryCorrectionResponseDto**: `{ logId, customerId?, customerEmail?, transactionId?, transactionDescription?, amount?, adminId?, correctedCategoryId?, correctedCategoryName?, originalAiGuess?, createdAt? }` — `customerEmail`/`transactionDescription`/`amount`/`correctedCategoryName` are joined in via `.Include(Customer/Transaction/CorrectedCategory)` (all null-safe: any log with a missing/deleted link — `customerId`/`transactionId`/`correctedCategoryId` are all nullable FKs — just comes back with that field `null` instead of an error). `correctedCategoryName` prefers `Category.NameVi`, falling back to `Category.CategoryName`.
+
+---
+
+## Announcements — `api/admin/announcements` (role: Admin)
+
+Admin broadcast: fans a `notifications` row (`type = "announcement"`) out to every active
+(`isActive = true`) customer in one request, and records one history row per broadcast in
+`announcement_broadcasts` for the admin "Announcement history" screen.
+
+| Method | Path | Request | Response |
+|---|---|---|---|
+| POST | `/` | `CreateAnnouncementRequest` | `ApiResponse<AnnouncementResponse>` |
+| GET | `/` | query `AnnouncementQueryDto` | `ApiResponse<PagedResult<AnnouncementResponse>>` |
+
+**CreateAnnouncementRequest**: `{ title, message, targetSegment="all" }` — `title` required, max 200 chars; `message` required, max 500 chars; `targetSegment` currently only accepts `"all"` (400 otherwise) — no segment-targeting criteria (plan tier? recent activity?) has been decided yet.
+**AnnouncementQueryDto**: `{ page=1, pageSize=20 }` — same page/pageSize clamping as Category Corrections above.
+**AnnouncementResponse**: `{ id, title, targetLabel, recipientCount, sentAt }` — `recipientCount` is the active-customer count captured at send time, not recomputed later (the active-customer count can drift after the fact). Fan-out inserts are chunked (1000 rows/batch) inside one DB transaction with the history row, so a broadcast is all-or-nothing. No push notification is sent as part of a broadcast — only the in-app `notifications` row (existing per-customer push, via device tokens, is unrelated to this endpoint).
 
 ---
 

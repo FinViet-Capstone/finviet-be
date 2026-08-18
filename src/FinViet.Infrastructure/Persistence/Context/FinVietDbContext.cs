@@ -20,6 +20,8 @@ public partial class FinVietDbContext : DbContext
 
     public virtual DbSet<Admin> Admins { get; set; }
 
+    public virtual DbSet<AnnouncementBroadcast> AnnouncementBroadcasts { get; set; }
+
     public virtual DbSet<AiSpendingScore> AiSpendingScores { get; set; }
 
     public virtual DbSet<AiWeeklyReport> AiWeeklyReports { get; set; }
@@ -387,6 +389,41 @@ public partial class FinVietDbContext : DbContext
                 .HasForeignKey(d => d.PlanId)
                 .OnDelete(DeleteBehavior.Restrict)
                 .HasConstraintName("customer_subscriptions_plan_id_fkey");
+        });
+
+        modelBuilder.Entity<AnnouncementBroadcast>(entity =>
+        {
+            entity.HasKey(e => e.AnnouncementId).HasName("announcement_broadcasts_pkey");
+
+            entity.ToTable("announcement_broadcasts", tb =>
+                tb.HasCheckConstraint(
+                    "chk_announcement_broadcasts_target_segment",
+                    "target_segment IN ('all')"));
+
+            entity.HasIndex(e => e.SentAt, "idx_announcement_broadcasts_sent_at");
+
+            entity.Property(e => e.AnnouncementId)
+                .HasDefaultValueSql("gen_random_uuid()")
+                .HasColumnName("id");
+            entity.Property(e => e.AdminId).HasColumnName("admin_id");
+            entity.Property(e => e.Title).HasMaxLength(200).HasColumnName("title");
+            entity.Property(e => e.Message).HasMaxLength(500).HasColumnName("message");
+            entity.Property(e => e.TargetSegment)
+                .HasMaxLength(20)
+                .HasDefaultValue("all")
+                .HasColumnName("target_segment");
+            entity.Property(e => e.TargetLabel).HasMaxLength(100).HasColumnName("target_label");
+            entity.Property(e => e.RecipientCount)
+                .HasDefaultValue(0)
+                .HasColumnName("recipient_count");
+            entity.Property(e => e.SentAt)
+                .HasDefaultValueSql("now()")
+                .HasColumnName("sent_at");
+
+            entity.HasOne(d => d.Admin).WithMany(p => p.AnnouncementBroadcasts)
+                .HasForeignKey(d => d.AdminId)
+                .OnDelete(DeleteBehavior.Restrict)
+                .HasConstraintName("announcement_broadcasts_admin_id_fkey");
         });
 
         modelBuilder.Entity<Notification>(entity =>
