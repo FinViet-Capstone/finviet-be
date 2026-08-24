@@ -1,3 +1,4 @@
+using FinViet.Application.Common;
 using FinViet.Application.DTOs.Ai;
 using FinViet.Application.Exceptions;
 using FinViet.Application.Interfaces;
@@ -111,6 +112,47 @@ public class GeminiAiClientTests
         Assert.False(sdk.GenerationConfig?.ThinkingConfig?.IncludeThoughts);
         Assert.Null(sdk.GenerationConfig?.ThinkingConfig?.ThinkingBudget);
         Assert.Null(sdk.GenerationConfig?.ThinkingConfig?.ThinkingLevel);
+    }
+
+    [Fact]
+    public async Task ChatAsync_AdminPersona_ComposesBeforeFixedSafetyCore()
+    {
+        var sdk = new StubGeminiSdkClient { GenerateResponse = "Trả lời" };
+        var promptConfigs = new StubPromptConfigProvider();
+        promptConfigs.Overrides[AiPromptFeatures.Chat] =
+            new AiPromptRuntimeConfig("Bạn là Bee, cố vấn tài chính giọng hài hước.", 0.7, 900);
+        var client = CreateModelClient(sdk, Telemetry(), promptConfigs);
+
+        await client.ChatAsync("Số liệu backend", [], "Câu hỏi");
+
+        var instruction = GetSystemInstructionText(sdk.GenerationConfig);
+        Assert.StartsWith("Bạn là Bee, cố vấn tài chính giọng hài hước.", instruction);
+        // Editable persona can restyle the assistant but never strips the safety core.
+        Assert.Contains("read-only", instruction);
+        Assert.Contains("Không được tự nhận đã tạo, sửa, xóa", instruction);
+        Assert.True(instruction.IndexOf("read-only", StringComparison.Ordinal)
+            > instruction.IndexOf("Bee", StringComparison.Ordinal));
+        Assert.Equal(0.7, sdk.GenerationConfig?.Temperature);
+        Assert.Equal(900, sdk.GenerationConfig?.MaxOutputTokens);
+    }
+
+    [Fact]
+    public async Task ClassifyAsync_AdminPersona_UsedAsInstructionWithoutSafetyCore()
+    {
+        var sdk = new StubGeminiSdkClient
+        {
+            GenerateResponse = """{"category":"Ăn uống","confidence":0.9}"""
+        };
+        var promptConfigs = new StubPromptConfigProvider();
+        promptConfigs.Overrides[AiPromptFeatures.Classification] =
+            new AiPromptRuntimeConfig("Bộ phân loại tùy chỉnh.", 0.2, 256);
+        var client = CreateModelClient(sdk, Telemetry(), promptConfigs);
+
+        await client.ClassifyAsync("Highlands Coffee", ["Ăn uống"]);
+
+        Assert.Equal("Bộ phân loại tùy chỉnh.", GetSystemInstructionText(sdk.GenerationConfig));
+        Assert.Equal(0.2, sdk.GenerationConfig?.Temperature);
+        Assert.Equal(256, sdk.GenerationConfig?.MaxOutputTokens);
     }
 
     [Fact]
@@ -526,7 +568,8 @@ public class GeminiAiClientTests
 
     private static GeminiAiModelClient CreateModelClient(
         IGeminiSdkClient sdk,
-        Mock<IAiTelemetryRecorder> telemetry)
+        Mock<IAiTelemetryRecorder> telemetry,
+        IAiPromptConfigProvider? promptConfigs = null)
     {
         var options = Options.Create(new GeminiOptions
         {
@@ -542,8 +585,26 @@ public class GeminiAiClientTests
         return new GeminiAiModelClient(
             sdk,
             options,
+            promptConfigs ?? new StubPromptConfigProvider(),
             telemetry.Object,
             NullLogger<GeminiAiModelClient>.Instance);
+    }
+
+    /// <summary>Serves the built-in defaults unless a test overrides one feature's config.</summary>
+    private sealed class StubPromptConfigProvider : IAiPromptConfigProvider
+    {
+        public Dictionary<string, AiPromptRuntimeConfig> Overrides { get; } = [];
+
+        public Task<AiPromptRuntimeConfig> GetAsync(
+            string featureKey,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult(Overrides.TryGetValue(featureKey, out var config)
+                ? config
+                : AiPromptDefaults.For(featureKey));
+
+        public void Invalidate(string featureKey)
+        {
+        }
     }
 
     private static GeminiEmbeddingService CreateEmbeddingService(IGeminiSdkClient sdk)
