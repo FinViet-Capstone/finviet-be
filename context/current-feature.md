@@ -2,6 +2,67 @@
 
 <!-- Feature name and short description -->
 
+**Feature: Admin-configurable AI prompts (`ai_prompt_configs`)** (branch
+`feature/admin-ai-config`) — requested from advisor feedback: the admin web managing RAG documents
+alone is not enough; admins must be able to tune the AI itself (persona/job description, e.g. the
+text currently hard-coded as `FinancialSafetyPolicy` in `GeminiAiModelClient`) from the web, while
+money figures stay backend-computed and accurate. Design: per-feature rows (`chat`,
+`weekly_report`, `score_comment`, `classification`) holding an admin-editable
+`persona_instruction` + `temperature` + `max_output_tokens`, with a change-history table for
+audit/revert. **The safety core stays a fixed constant in code** (no-fabrication, no-OTP,
+read-only claims, prompt-injection rules) and is always prepended to the editable persona for
+chat/report/score — an admin can restyle the AI's personality but cannot remove its guardrails.
+Classification keeps its own editable instruction (persona only, structured-output schema
+unchanged). Runtime reads go through a new `IAiPromptConfigProvider` with a short in-memory cache,
+invalidated on admin update; a missing DB row falls back to the same defaults seeded by the
+migration, so behavior is unchanged until an admin edits something.
+
+## Status
+
+Completed (code) — `dotnet build FinViet.sln` clean (same 6 pre-existing nullable warnings, none
+new). `FinViet.Application.UnitTests` 287/287 pass (20 new: `AiPromptConfigTests` covering the
+update-command validator ranges/feature keys, the update handler writing the history snapshot +
+cache invalidation + 404 path, and two new `GeminiAiClientTests` proving an admin persona composes
+*before* the fixed safety core for chat and that classification uses the persona as its whole
+instruction). Live Swagger verification not run in this session (no local DB connection configured
+here) — worth one pass after deploy: GET/PUT `/api/ai/prompt-configs` as admin, then a chat call to
+see the persona change take effect within the 60s cache TTL. Not committed/pushed.
+
+## Goals
+
+- Migration `V0010__ai_prompt_configs.sql`: `ai_prompt_configs` (PK `feature_key`, check-constrained
+  to the four known features) + `ai_prompt_config_history` (snapshot per change, `changed_by` FK →
+  `admins`), seeded with per-feature personas split out of the old `FinancialSafetyPolicy` constant
+  plus the previous per-feature temperature/maxOutputTokens literals (semantically equivalent
+  wording — the old constant's identity/tone lines became the seeded persona, its guardrail lines
+  became the fixed safety core, so composed instructions are minorly reworded but rule-for-rule
+  identical).
+- Admin API on the existing `AdminAiController` (`api/ai`, Admin role):
+  `GET /api/ai/prompt-configs`, `PUT /api/ai/prompt-configs/{featureKey}`,
+  `GET /api/ai/prompt-configs/{featureKey}/history`.
+- `GeminiAiModelClient` composes system instruction = fixed safety core + persona from config, and
+  takes temperature/maxOutputTokens from config instead of inline literals.
+- FluentValidation on the update command (persona length, temperature 0–2, token range, known
+  feature keys); history row written in the same SaveChanges as the update.
+- Out of scope this pass (flagged follow-ups): admin "preview" endpoint to test a draft persona,
+  editing the per-feature task templates (the "150-200 từ" style instructions stay in code).
+
+## Notes
+
+- Money-figure accuracy was the advisor's second point: unchanged architectural stance — all
+  numbers are computed backend-side (`SpendingScoreService`, `FinancialContextService`, `decimal`)
+  and the AI only narrates them; the safety core's "không bịa số liệu" rule stays non-editable.
+- Implementation shape: `IAiPromptConfigProvider` (Application/Interfaces) →
+  `AiPromptConfigService` (Infrastructure/Services, `IDbContextFactory` + `IMemoryCache`, 60s TTL,
+  `Invalidate` called by the update handler); `AiPromptDefaults` mirrors the V0010 seeds as the
+  missing-row fallback so a pre-V0010 restored DB still generates. Endpoints live on the existing
+  `AdminAiController` (`api/ai/prompt-configs`), which gained `IMediator`. `docs/api-reference.md`
+  updated with the new section.
+- No `.env`, API key, production cutover, production-data change, commit, or push without explicit
+  permission.
+
+---
+
 **Feature: Custom-category id overflow + spending-score no-data gate** (branch
 `fix/custom-category-id-and-score-no-data`, cross-repo with `finviet-mobile`'s
 `fix/score-no-data-and-budget-pct`). Two mobile-reported bugs, both root-caused here:
