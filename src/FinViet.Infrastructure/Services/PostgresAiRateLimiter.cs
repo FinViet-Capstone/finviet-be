@@ -15,6 +15,7 @@ namespace FinViet.Infrastructure.Services;
 public sealed class PostgresAiRateLimiter : IAiRateLimiter
 {
     private const string BulkImportFeature = "classification_batch";
+    private const string PreviewFeature = "classification_preview";
 
     private readonly IDbContextFactory<FinVietDbContext> _dbFactory;
     private readonly AiLimitsOptions _limits;
@@ -37,7 +38,9 @@ public sealed class PostgresAiRateLimiter : IAiRateLimiter
 
         var (perMinute, perDay) = string.Equals(feature, BulkImportFeature, StringComparison.OrdinalIgnoreCase)
             ? (_limits.BulkImportPerMinute, _limits.BulkImportPerDay)
-            : (_limits.PerUserPerMinute, _limits.PerUserPerDay);
+            : string.Equals(feature, PreviewFeature, StringComparison.OrdinalIgnoreCase)
+                ? (_limits.PreviewPerMinute, _limits.PreviewPerDay)
+                : (_limits.PerUserPerMinute, _limits.PerUserPerDay);
 
         var now = DateTime.UtcNow;
         var minuteStart = new DateTime(

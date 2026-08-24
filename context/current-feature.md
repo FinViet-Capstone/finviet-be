@@ -2,6 +2,77 @@
 
 <!-- Feature name and short description -->
 
+**Feature: `classification_preview` rate-limit fix + AI usage report generator**
+(branch `fix/classification-preview-rate-limit`, cross-repo with `finviet-mobile`
+— started from the user asking what scalability metrics exist for the AI
+pipeline, which turned out to be none anywhere in either repo's code/docs).
+Live Beekeeper Studio queries against the deployed Render `ai_usage_events`
+table (populated on every real Gemini call by `AiTelemetryRecorder`, called from
+`GeminiAiModelClient.GenerateAsync`) surfaced real usage data instead: 1,688
+recorded calls, 2026-08-13 through 2026-08-19. One finding stood out —
+`classification_preview` (the single-row preview call behind photo extraction
+and the mobile "Gợi ý danh mục bằng AI" button) succeeded only 84/1587 times
+(5.3%); the other 1,503 were rejected by the rate limiter, not by the AI. Root
+cause: `PostgresAiRateLimiter` tracks windows per feature already
+(`ai_rate_limit_windows` is keyed on `(customer_id, feature, window_type,
+window_start)`), but only `classification_batch` had its own limit tier — every
+other feature, including both `classification` (SePay auto-sync, backend-paced)
+and `classification_preview` (human-tap-paced, bursty), shared the generic
+`PerUserPerMinute = 6`. Nearly all the throttling landed in one ~20-hour window
+that lines up with that mobile feature being tested.
+
+## Status
+
+Implemented and locally verified: `dotnet build FinViet.sln` clean (same 6
+pre-existing nullable warnings, none new); `FinViet.Application.UnitTests`
+287/287 pass, no regressions. The new opt-in report generator
+(`AiUsageReportTests.GenerateAiUsageReport`,
+`tests/FinViet.Infrastructure.IntegrationTests`, `Category=Report`) was run
+successfully against this environment's local Postgres to prove the mechanism
+works, but that local DB turned out to hold unrelated/sparse data (29 rows) —
+the real 1,688-row dataset lives on the deployed Render database, which
+Beekeeper Studio is connected to. A "before" report was hand-captured from the
+user's own Beekeeper query results instead, at
+`docs/benchmarks/ai-pipeline-usage-before-ratelimit-fix.md`. **Not
+committed/pushed, and not deployed** — the fix is currently local-only and
+won't change the real `classification_preview` success rate until it reaches
+Render (PR → `dev` review/merge, then a separate `dev` → `main` merge, which is
+what triggers `deploy-render.yml`).
+
+## Goals
+
+- `AiLimitsOptions` (`src/FinViet.Infrastructure/Services/AiLimitsOptions.cs`)
+  gains `PreviewPerMinute` (default 30) / `PreviewPerDay` (default 300),
+  mirroring the existing `BulkImportPerMinute`/`BulkImportPerDay` pattern.
+- `PostgresAiRateLimiter` (`src/FinViet.Infrastructure/Services/PostgresAiRateLimiter.cs`)
+  gains a `PreviewFeature = "classification_preview"` const and picks the new
+  tier for it, same `OrdinalIgnoreCase` branching style as the existing
+  `BulkImportFeature` check. `classification` (SePay auto-sync) is deliberately
+  left on the original 6/100 — it wasn't the reported problem.
+- New `AiUsageReportTests.cs` (`tests/FinViet.Infrastructure.IntegrationTests`):
+  a `[Trait("Category","Report")]`-gated, opt-in test that queries
+  `ai_usage_events` (raw Npgsql, no `FinVietDbContext` needed since it only
+  reads one table), formats a markdown table + a findings section flagging any
+  feature where non-success outcomes outnumber successes, and writes it to
+  `docs/benchmarks/ai-pipeline-usage-{timestamp}.md`. Connection string via
+  `FINVIET_REPORT_DB_CONNECTION` (defaults to local dev), optional
+  `FINVIET_REPORT_SINCE` window filter.
+
+## Notes
+
+- `score_comment` also showed a 100% failure rate (13/13) in the same
+  observation window (2026-08-14 17:49 → 2026-08-15 04:43) — a separate,
+  unaddressed finding, explicitly out of scope for this fix. Worth a follow-up
+  root-cause pass (possibly tied to the Gemini model-config churn around that
+  time, `c83a331`→`80d5e33`→`460fc9c`).
+- `rag_document_embedding` wasn't identified in the original code audit that
+  kicked this off — noted as a gap in that pass, not investigated further here.
+- No production DB migration, deployment, or credential change made in this
+  session — the fix and report tooling are both local, uncommitted, and
+  read-only (report) or config-only (fix, no schema change).
+
+---
+
 **Feature: Admin-configurable AI prompts (`ai_prompt_configs`)** (branch
 `feature/admin-ai-config`) — requested from advisor feedback: the admin web managing RAG documents
 alone is not enough; admins must be able to tune the AI itself (persona/job description, e.g. the
