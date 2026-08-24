@@ -15,4 +15,13 @@ public class AiLimitsOptions
     public int BulkImportPerMinute { get; set; } = 100;
 
     public int BulkImportPerDay { get; set; } = 1000;
+
+    /// <summary>Separate, higher allowance for interactive single-row category preview
+    /// (feature "classification_preview" — photo extraction and the mobile "suggest category"
+    /// button) — this is human-paced, bursty tapping, not the occasional automatic per-transaction
+    /// call the standard limits above are sized for, so it needs its own tier rather than sharing
+    /// the 6/minute standard cap.</summary>
+    public int PreviewPerMinute { get; set; } = 30;
+
+    public int PreviewPerDay { get; set; } = 300;
 }
