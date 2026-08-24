@@ -15,6 +15,8 @@ public partial class FinVietDbContext
     public virtual DbSet<EmailVerificationToken> EmailVerificationTokens { get; set; }
     public virtual DbSet<CustomerSetting> CustomerSettings { get; set; }
     public virtual DbSet<IncomeAllocationSetting> IncomeAllocationSettings { get; set; }
+    public virtual DbSet<AiPromptConfig> AiPromptConfigs { get; set; }
+    public virtual DbSet<AiPromptConfigHistory> AiPromptConfigHistories { get; set; }
 
     partial void OnModelCreatingPartial(ModelBuilder modelBuilder)
     {
@@ -277,6 +279,37 @@ public partial class FinVietDbContext
                 .HasForeignKey(e => e.CustomerId)
                 .OnDelete(DeleteBehavior.SetNull)
                 .HasConstraintName("ai_audit_events_customer_id_fkey");
+        });
+
+        modelBuilder.Entity<AiPromptConfig>(entity =>
+        {
+            entity.HasKey(e => e.FeatureKey).HasName("ai_prompt_configs_pkey");
+            entity.ToTable("ai_prompt_configs");
+
+            entity.Property(e => e.FeatureKey).HasMaxLength(40).HasColumnName("feature_key");
+            entity.Property(e => e.DisplayName).HasMaxLength(100).HasColumnName("display_name");
+            entity.Property(e => e.PersonaInstruction).HasColumnName("persona_instruction");
+            entity.Property(e => e.Temperature).HasPrecision(3, 2).HasColumnName("temperature");
+            entity.Property(e => e.MaxOutputTokens).HasColumnName("max_output_tokens");
+            entity.Property(e => e.UpdatedBy).HasColumnName("updated_by");
+            entity.Property(e => e.UpdatedAt).HasDefaultValueSql("now()").HasColumnName("updated_at");
+        });
+
+        modelBuilder.Entity<AiPromptConfigHistory>(entity =>
+        {
+            entity.HasKey(e => e.Id).HasName("ai_prompt_config_history_pkey");
+            entity.ToTable("ai_prompt_config_history");
+
+            entity.HasIndex(e => new { e.FeatureKey, e.ChangedAt },
+                "idx_ai_prompt_config_history_feature_changed_at");
+
+            entity.Property(e => e.Id).HasDefaultValueSql("gen_random_uuid()").HasColumnName("id");
+            entity.Property(e => e.FeatureKey).HasMaxLength(40).HasColumnName("feature_key");
+            entity.Property(e => e.PersonaInstruction).HasColumnName("persona_instruction");
+            entity.Property(e => e.Temperature).HasPrecision(3, 2).HasColumnName("temperature");
+            entity.Property(e => e.MaxOutputTokens).HasColumnName("max_output_tokens");
+            entity.Property(e => e.ChangedBy).HasColumnName("changed_by");
+            entity.Property(e => e.ChangedAt).HasDefaultValueSql("now()").HasColumnName("changed_at");
         });
 
         // ── RefreshToken entity ───────────────────────────────────

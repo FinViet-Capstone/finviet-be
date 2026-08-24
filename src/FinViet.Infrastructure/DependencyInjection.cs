@@ -202,9 +202,12 @@ public static class DependencyInjection
         services.AddScoped<IAiTelemetryRecorder, AiTelemetryRecorder>();
         services.AddSingleton<IDbContextFactory<FinVietDbContext>>(
             new FinVietDbContextFactory(dataSource));
+        // Admin-tunable persona/temperature/token settings (ai_prompt_configs) with a short cache.
+        services.AddScoped<IAiPromptConfigProvider, AiPromptConfigService>();
         services.AddScoped<IAiModelClient>(sp => new GeminiAiModelClient(
             sp.GetRequiredService<IGeminiSdkClient>(),
             sp.GetRequiredService<IOptions<GeminiOptions>>(),
+            sp.GetRequiredService<IAiPromptConfigProvider>(),
             sp.GetRequiredService<IAiTelemetryRecorder>(),
             sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<GeminiAiModelClient>>()));
 

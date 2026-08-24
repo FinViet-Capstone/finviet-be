@@ -613,6 +613,9 @@ Only computed when `deadline` is set. `monthsRemaining` = whole calendar months 
 | PATCH | `/chat/sessions/{sessionId:guid}` | Customer | `UpdateChatSessionRequest` | `ApiResponse<ChatSessionResponse>` |
 | DELETE | `/chat/sessions/{sessionId:guid}` | Customer | — | 204 |
 | POST | `/documents` | Admin | multipart: `file` (PDF, ≤20 MB) + `title?` | `ApiResponse<Guid>` (documentId) |
+| GET | `/prompt-configs` | Admin | — | `ApiResponse<AiPromptConfigDto[]>` |
+| PUT | `/prompt-configs/{featureKey}` | Admin | `UpdateAiPromptConfigRequest` | `ApiResponse<AiPromptConfigDto>` (404) |
+| GET | `/prompt-configs/{featureKey}/history` | Admin | — | `ApiResponse<AiPromptConfigHistoryDto[]>` (404) |
 
 **CategorizePreviewRequest**: `{ input: string }` — no length limit anywhere.
 **OverrideCategoryRequest**: `{ categoryId: string }` — no format validation.
@@ -692,6 +695,15 @@ Only computed when `deadline` is set. `monthsRemaining` = whole calendar months 
 
 ### GET `/documents` (Admin)
 **Business logic**: Lists every `RagDocument` (global PDFs and per-customer weekly-report narratives) newest first: `{ id, title, sourceType, uri?, createdAt, chunkCount }`. `uri` is a servable `/documents/{id}.pdf` path for `sourceType="pdf"`; for `sourceType="weekly_report"` it's a non-dereferenceable `report:{id}` idempotency marker, not a real link. No pagination — admin-curated, low document volume.
+
+### AI prompt configs (`/prompt-configs`, Admin)
+Admin-tunable prompt settings backing every Gemini generation call (`ai_prompt_configs`, seeded by `V0010`). Four fixed feature keys: `chat`, `weekly_report`, `score_comment`, `classification`.
+
+- **AiPromptConfigDto**: `{ featureKey, displayName, personaInstruction, temperature, maxOutputTokens, updatedBy?, updatedByUsername?, updatedAt }`
+- **UpdateAiPromptConfigRequest**: `{ personaInstruction: string (1–4000 chars), temperature: 0–2, maxOutputTokens: 16–8192 }` — FluentValidation; unknown `featureKey` → 400, missing config row → 404.
+- **AiPromptConfigHistoryDto**: `{ id, featureKey, personaInstruction, temperature, maxOutputTokens, changedBy?, changedByUsername?, changedAt }` — newest first, capped at 50 snapshots. Revert = re-submit an old snapshot via PUT.
+
+**Business logic**: `personaInstruction` is only the persona/tone half of the system instruction. The safety core (no fabricated figures, no OTP/credential requests, read-only claims, prompt-injection rules) is a fixed constant in `GeminiAiModelClient` and is always appended after the persona for chat/report/score — an admin can restyle the assistant but cannot remove its guardrails. Classification uses the persona as its whole instruction (its structured-output JSON schema is code-enforced and not editable). Updates write a history snapshot in the same SaveChanges and invalidate a 60-second in-memory cache, so the next generation call picks up the new values without a restart.
 
 ---
 
