@@ -11,10 +11,13 @@ public class AiLimitsOptions
 
     /// <summary>Separate, higher allowance for bulk SMS/CSV import categorization
     /// (feature "classification_batch") — a single large statement import can legitimately need
-    /// far more classification calls in one request than the per-transaction limits above allow.</summary>
-    public int BulkImportPerMinute { get; set; } = 100;
+    /// far more classification calls in one request than the per-transaction limits above allow.
+    /// A real bank statement import can easily exceed 100 rows in well under a minute (confirmed
+    /// live: a 138-row CSV would have rate-limited rows 101-138 under the old default), so this
+    /// needs real headroom over a realistic single import, not just "more than the standard tier."</summary>
+    public int BulkImportPerMinute { get; set; } = 500;
 
-    public int BulkImportPerDay { get; set; } = 1000;
+    public int BulkImportPerDay { get; set; } = 5000;
 
     /// <summary>Separate, higher allowance for interactive single-row category preview
     /// (feature "classification_preview" — photo extraction and the mobile "suggest category"
