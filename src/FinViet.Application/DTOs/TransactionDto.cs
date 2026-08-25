@@ -11,6 +11,12 @@ public class CreateTransactionDto
     public string? Description { get; set; }
     public string? Merchant { get; set; }
     public string? EntryMethod { get; set; }
+    /// <summary>Set only when the category came from AI/rule suggestion at import time
+    /// (e.g. "AI_BATCH", "AI_PHOTO", "RULE") — null for a manually chosen category. Used to
+    /// write a categorization_decision audit row so import decisions are traceable, matching
+    /// what already happens for the interactive suggest-category flow.</summary>
+    public string? AiSource { get; set; }
+    public decimal? AiConfidence { get; set; }
 }
 
 public class UpdateTransactionDto

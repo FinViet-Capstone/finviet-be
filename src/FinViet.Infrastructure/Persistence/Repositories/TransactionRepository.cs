@@ -213,6 +213,9 @@ public class TransactionRepository : ITransactionRepository
         string? note,
         string? idempotencyKey,
         string? entryMethod = null,
+        string? merchant = null,
+        string? aiSource = null,
+        decimal? aiConfidence = null,
         CancellationToken cancellationToken = default)
     {
         await using var databaseTransaction = await _context.Database.BeginTransactionAsync(cancellationToken);
@@ -224,7 +227,8 @@ public class TransactionRepository : ITransactionRepository
             transactionType,
             amount,
             transactionDate,
-            note
+            note,
+            merchant
         });
         var idempotency = await IdempotencyStore.ClaimAsync(
             _context,
@@ -258,10 +262,16 @@ public class TransactionRepository : ITransactionRepository
             TransactionType = normalizedType,
             EntryMethod = string.IsNullOrWhiteSpace(entryMethod) ? "manual" : entryMethod,
             Amount = amount,
-            TransactionDate = transactionDate.Kind == DateTimeKind.Unspecified 
-                ? DateTime.SpecifyKind(transactionDate, DateTimeKind.Utc) 
+            TransactionDate = transactionDate.Kind == DateTimeKind.Unspecified
+                ? DateTime.SpecifyKind(transactionDate, DateTimeKind.Utc)
                 : transactionDate.ToUniversalTime(),
             Description = note,
+            Merchant = merchant,
+            IsAiClassified = !string.IsNullOrWhiteSpace(aiSource) && !string.IsNullOrWhiteSpace(categoryId),
+            AiConfidence = aiConfidence,
+            AiCategoryGuess = string.IsNullOrWhiteSpace(aiSource) ? null : categoryId,
+            AiClassificationSource = aiSource,
+            AiClassifiedAt = string.IsNullOrWhiteSpace(aiSource) ? null : DateTime.UtcNow,
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow
         };
