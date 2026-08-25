@@ -2,6 +2,95 @@
 
 <!-- Feature name and short description -->
 
+**Feature: CSV import data loss, categorization failure, and money-path
+observability** (branch `fix/csv-import-pipeline`, cross-repo with
+`finviet-mobile`). Follow-up to the `classification_preview` rate-limit fix
+below: the user tested it live with a real 138-row Vietcombank CSV statement
+and reported three symptoms — all rows uncategorized, every saved transaction
+missing merchant/description even though the review screen showed them
+correctly, and the suggest-category button failing 100% with "AI không tìm
+được danh mục phù hợp." Three parallel read-only investigations plus live SQL
+against the deployed DB found the true root cause of the 138/138 failure was
+**not a code bug**: that customer had AI categorization explicitly switched off
+in Settings (`categorization_mode = 'off'`, set 2026-08-19, unrelated to
+anything shipped this week). But the investigation also confirmed four real,
+independent defects that would each have hit the moment AI was back on:
+`TransactionsController.CreateTransaction` silently discards `Merchant`/
+`Description` from every created transaction (a 4-layer gap — `CreateTransactionDto`
+has the fields, `CreateTransactionCommand` didn't); the bulk-import rate limit
+(100/min) is smaller than a routine CSV import, the same bug class just fixed
+for `classification_preview` below but left unfixed for `classification_batch`;
+unresolved-category-name failures write zero telemetry and — via a
+case-sensitive dictionary — a duplicate category name could crash the whole
+batch silently; and the app's own "AI is off" state was indistinguishable from
+"AI tried and failed" in the UI, which is what made this take a full forensic
+investigation instead of a one-line diagnosis.
+
+## Status
+
+Implemented and locally verified: `dotnet build FinViet.sln` clean (same 6
+pre-existing nullable warnings, none new); `FinViet.Application.UnitTests`
+291/291 pass (287 pre-existing + 4 new in `CreateTransactionHandlerTests.cs`).
+Mobile: `npm run type-check` clean, `npm run lint` 0 new (78 pre-existing
+warnings untouched), `npm test` 25/25 suites, 135/135 tests. **Not
+committed/pushed yet** — this is the state being committed now. One caveat
+found during implementation: `src/FinViet.Api/appsettings.json` is gitignored
+(confirmed via `git check-ignore`), so the `AiLimits` values added there are
+**local-only** and never reach Render via git — the functional fix is the
+`AiLimitsOptions.cs` code-default change (500/min, 5000/day), which does ship
+with the build; if Render has `AiLimits__BulkImportPerMinute`/`...Day` set as
+explicit environment variables, those would override the new code defaults and
+need updating directly in Render's dashboard (not verifiable from this
+environment).
+
+## Goals
+
+- `TransactionsController.cs`/`CreateTransactionCommand`/`CreateTransactionDto`/
+  `ITransactionRepository`/`TransactionRepository.CreateManualForCustomerAsync`:
+  thread `Merchant` through create, mirroring how `UpdateTransactionCommand`
+  already carries it.
+- `CreateTransactionHandler` also accepts optional `AiSource`/`AiConfidence` from
+  the client (set only when the category came from an unedited AI/rule
+  suggestion at import time) and — after the transaction is saved, so a real
+  `transactionId` exists — writes a `categorization_decision` audit row via the
+  existing `IAiTelemetryRecorder.RecordAuditAsync` (same `ai_audit_events` table
+  `RecordDecisionAsync` already uses for the interactive suggest flow, just
+  reached from `CreateTransactionHandler` instead of `AiCategorizationService`
+  since batch/preview classification runs before any transaction exists). A
+  rule match always wins over a stale client-supplied AI source.
+- `AiLimitsOptions`: `BulkImportPerMinute` 100→500, `BulkImportPerDay`
+  1000→5000 (see appsettings.json caveat above).
+- `AiCategorizationService.ExpenseCategoriesAsync` rebuilt to dedupe
+  case-insensitively instead of throwing on a same-name collision (logs a
+  warning and keeps the first instead of crashing the whole batch); mode-off,
+  rate-limited, and unresolved-category-name paths in both
+  `PreviewManyAsync`/`ClassifyOneAsync` (batch) and `PreviewAsync` (single/photo)
+  now log via `ILogger` instead of failing silently.
+- `GeminiAiModelClient.ParseClassification` (converted from `internal static`
+  to an instance method — no test called it statically) logs when the model
+  returns a category name outside the allowed list.
+- `ExceptionHandlingMiddleware`: `BusinessRuleException` now also reaches
+  Sentry (`SentryLevel.Warning`) — previously only *unmapped* exceptions did,
+  so every money-rule rejection (`insufficient_balance`,
+  `linked_wallet_read_only`, ...) was invisible to it.
+- `ILogger` injected into `CreateTransactionHandler`/`UpdateTransactionHandler`/
+  `DeleteTransactionHandler` (previously zero logging anywhere in the
+  Transactions feature) — logs outcome with customer/wallet/amount context.
+
+## Notes
+
+- The 138/138 CSV failure's root cause (AI mode off) needed no code fix — the
+  user flipped the setting back to "Chỉ gợi ý" in-app. Everything in this entry
+  is the four defects found *underneath* that red herring, each independently
+  confirmed against source and/or production data before being fixed.
+- Full diagnosis (including the eliminated hypotheses — b200d8a/admin-prompt-config,
+  duplicate category names for this specific incident) lives in this session's
+  plan file; not duplicated here in full.
+- No production DB migration, credential change, or deploy performed directly —
+  deployment happens via the normal PR → `dev` → `main` path once reviewed.
+
+---
+
 **Feature: `classification_preview` rate-limit fix + AI usage report generator**
 (branch `fix/classification-preview-rate-limit`, cross-repo with `finviet-mobile`
 — started from the user asking what scalability metrics exist for the AI
@@ -33,11 +122,17 @@ works, but that local DB turned out to hold unrelated/sparse data (29 rows) —
 the real 1,688-row dataset lives on the deployed Render database, which
 Beekeeper Studio is connected to. A "before" report was hand-captured from the
 user's own Beekeeper query results instead, at
-`docs/benchmarks/ai-pipeline-usage-before-ratelimit-fix.md`. **Not
-committed/pushed, and not deployed** — the fix is currently local-only and
-won't change the real `classification_preview` success rate until it reaches
-Render (PR → `dev` review/merge, then a separate `dev` → `main` merge, which is
-what triggers `deploy-render.yml`).
+`docs/benchmarks/ai-pipeline-usage-before-ratelimit-fix.md`.
+
+**Update 2026-08-25 — shipped and deployed**:
+[PR #77](https://github.com/FinViet-Capstone/finviet-be/pull/77) merged to
+`dev`, then merged `dev`→`main` (PR #78), which triggered `deploy-render.yml`
+successfully at 2026-08-24 19:06 UTC — confirmed live via `gh run list`.
+**However, the post-fix `classification_preview` success rate was never
+re-measured** — the very next real-world test (a 138-row CSV import) surfaced
+an unrelated problem (see the new entry below) before a clean re-test of this
+fix alone happened. Re-measuring this in isolation, or as part of the combined
+"after" report once the entry below also ships, remains open.
 
 ## Goals
 

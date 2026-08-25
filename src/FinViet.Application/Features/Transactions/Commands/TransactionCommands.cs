@@ -12,8 +12,11 @@ public class CreateTransactionCommand : IRequest<TransactionResponseDto>
     public decimal Amount { get; set; }
     public DateTime TransactionDate { get; set; }
     public string Note { get; set; }
+    public string? Merchant { get; set; }
     public string? IdempotencyKey { get; set; }
     public string? EntryMethod { get; set; }
+    public string? AiSource { get; set; }
+    public decimal? AiConfidence { get; set; }
 }
 
 public class UpdateTransactionCommand : IRequest<TransactionResponseDto>

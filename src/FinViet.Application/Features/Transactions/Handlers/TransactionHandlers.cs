@@ -1,9 +1,11 @@
 using FinViet.Application.Common.Exceptions;
 using FinViet.Application.DTOs;
+using FinViet.Application.DTOs.Ai;
 using FinViet.Application.DTOs.Rules;
 using FinViet.Application.Features.Transactions.Commands;
 using FinViet.Application.Interfaces;
 using MediatR;
+using Microsoft.Extensions.Logging;
 
 namespace FinViet.Application.Features.Transactions.Handlers;
 
@@ -104,17 +106,23 @@ public class CreateTransactionHandler : IRequestHandler<CreateTransactionCommand
     private readonly ICategoryService _categoryService;
     private readonly IMerchantRuleService _ruleService;
     private readonly IBudgetService _budgetService;
+    private readonly IAiTelemetryRecorder _aiTelemetry;
+    private readonly ILogger<CreateTransactionHandler> _logger;
 
     public CreateTransactionHandler(
         ITransactionRepository transactionRepository,
         ICategoryService categoryService,
         IMerchantRuleService ruleService,
-        IBudgetService budgetService)
+        IBudgetService budgetService,
+        IAiTelemetryRecorder aiTelemetry,
+        ILogger<CreateTransactionHandler> logger)
     {
         _transactionRepository = transactionRepository;
         _categoryService = categoryService;
         _ruleService = ruleService;
         _budgetService = budgetService;
+        _aiTelemetry = aiTelemetry;
+        _logger = logger;
     }
 
     public async Task<TransactionResponseDto> Handle(CreateTransactionCommand request, CancellationToken cancellationToken)
@@ -148,6 +156,11 @@ public class CreateTransactionHandler : IRequestHandler<CreateTransactionCommand
 
         await TransactionRules.ValidateCategoryAsync(_categoryService, categoryId, normalizedType, cancellationToken);
 
+        // A merchant rule matched above always wins over a client-supplied AI suggestion, since
+        // the rule replaced categoryId before this point — don't log a stale AI decision for it.
+        var effectiveAiSource = match is null ? request.AiSource : null;
+        var effectiveAiConfidence = match is null ? request.AiConfidence : null;
+
         var result = await _transactionRepository.CreateManualForCustomerAsync(
             request.CustomerId,
             request.WalletId,
@@ -158,10 +171,52 @@ public class CreateTransactionHandler : IRequestHandler<CreateTransactionCommand
             request.Note,
             request.IdempotencyKey,
             TransactionRules.NormalizeEntryMethod(request.EntryMethod),
+            request.Merchant,
+            effectiveAiSource,
+            effectiveAiConfidence,
             cancellationToken);
 
         if (match is not null)
             await _ruleService.IncrementAppliedAsync(match.RuleId, 1, cancellationToken);
+
+        // First durable categorization-decision record for any import path (CSV/SMS/photo) — the
+        // interactive suggest-category flow already writes this via AiCategorizationService, but
+        // batch/preview classification during extraction runs before a transaction exists to
+        // correlate against, so this is the first opportunity to log it.
+        if (!string.IsNullOrWhiteSpace(effectiveAiSource))
+        {
+            await _aiTelemetry.RecordAuditAsync(
+                new AiAuditRecord(
+                    "categorization_decision",
+                    "system",
+                    request.CustomerId,
+                    CorrelationId: result.TransactionId,
+                    Metadata: new Dictionary<string, object?>
+                    {
+                        ["source"] = effectiveAiSource,
+                        ["confidence"] = effectiveAiConfidence,
+                        ["applied"] = true,
+                        ["reason"] = null
+                    }),
+                cancellationToken);
+        }
+        else if (match is not null)
+        {
+            await _aiTelemetry.RecordAuditAsync(
+                new AiAuditRecord(
+                    "categorization_decision",
+                    "system",
+                    request.CustomerId,
+                    CorrelationId: result.TransactionId,
+                    Metadata: new Dictionary<string, object?>
+                    {
+                        ["source"] = "merchant_rule",
+                        ["confidence"] = null,
+                        ["applied"] = true,
+                        ["reason"] = null
+                    }),
+                cancellationToken);
+        }
 
         // Re-evaluate budgets for the affected month so a crossed threshold raises an alert
         // notification. Only expenses can push a category over budget. Swallows its own errors.
@@ -170,6 +225,15 @@ public class CreateTransactionHandler : IRequestHandler<CreateTransactionCommand
                 request.CustomerId,
                 DateOnly.FromDateTime(request.TransactionDate),
                 cancellationToken);
+
+        _logger.LogInformation(
+            "Created transaction {TransactionId} for customer {CustomerId}, wallet {WalletId}, amount {Amount}, entryMethod {EntryMethod}, category {CategoryId}.",
+            result.TransactionId,
+            request.CustomerId,
+            request.WalletId,
+            request.Amount,
+            request.EntryMethod,
+            categoryId);
 
         return result;
     }
@@ -181,17 +245,20 @@ public class UpdateTransactionHandler : IRequestHandler<UpdateTransactionCommand
     private readonly IWalletRepository _walletRepository;
     private readonly ICategoryService _categoryService;
     private readonly IBudgetService _budgetService;
+    private readonly ILogger<UpdateTransactionHandler> _logger;
 
     public UpdateTransactionHandler(
         ITransactionRepository transactionRepository,
         IWalletRepository walletRepository,
         ICategoryService categoryService,
-        IBudgetService budgetService)
+        IBudgetService budgetService,
+        ILogger<UpdateTransactionHandler> logger)
     {
         _transactionRepository = transactionRepository;
         _walletRepository = walletRepository;
         _categoryService = categoryService;
         _budgetService = budgetService;
+        _logger = logger;
     }
 
     public async Task<TransactionResponseDto> Handle(UpdateTransactionCommand request, CancellationToken cancellationToken)
@@ -245,6 +312,14 @@ public class UpdateTransactionHandler : IRequestHandler<UpdateTransactionCommand
                 DateOnly.FromDateTime(result.TransactionDate),
                 cancellationToken);
 
+        _logger.LogInformation(
+            "Updated transaction {TransactionId} for customer {CustomerId} (amountChanged={AmountChanged}, merchantChanged={MerchantChanged}, categoryChanged={CategoryChanged}).",
+            request.TransactionId,
+            request.CustomerId,
+            amountProvided,
+            merchantProvided,
+            categoryId is not null);
+
         return result;
     }
 }
@@ -252,9 +327,15 @@ public class UpdateTransactionHandler : IRequestHandler<UpdateTransactionCommand
 public class DeleteTransactionHandler : IRequestHandler<DeleteTransactionCommand, bool>
 {
     private readonly ITransactionRepository _transactionRepository;
+    private readonly ILogger<DeleteTransactionHandler> _logger;
 
-    public DeleteTransactionHandler(ITransactionRepository transactionRepository)
-        => _transactionRepository = transactionRepository;
+    public DeleteTransactionHandler(
+        ITransactionRepository transactionRepository,
+        ILogger<DeleteTransactionHandler> logger)
+    {
+        _transactionRepository = transactionRepository;
+        _logger = logger;
+    }
 
     public async Task<bool> Handle(DeleteTransactionCommand request, CancellationToken cancellationToken)
     {
@@ -264,6 +345,11 @@ public class DeleteTransactionHandler : IRequestHandler<DeleteTransactionCommand
             cancellationToken);
         if (!deleted)
             throw new NotFoundException("Transaction", request.TransactionId);
+
+        _logger.LogInformation(
+            "Deleted transaction {TransactionId} for customer {CustomerId}.",
+            request.TransactionId,
+            request.CustomerId);
 
         return true;
     }

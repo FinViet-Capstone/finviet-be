@@ -73,9 +73,12 @@ public class TransactionsController : ControllerBase
             TransactionType = dto.TransactionType,
             Amount = dto.Amount,
             TransactionDate = dto.TransactionDate,
-            Note = dto.Note ?? string.Empty,
+            Note = dto.Note ?? dto.Description ?? string.Empty,
+            Merchant = dto.Merchant,
             IdempotencyKey = idempotencyKey,
-            EntryMethod = dto.EntryMethod
+            EntryMethod = dto.EntryMethod,
+            AiSource = dto.AiSource,
+            AiConfidence = dto.AiConfidence
         };
 
         var result = await _mediator.Send(command);
