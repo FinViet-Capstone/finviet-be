@@ -216,7 +216,7 @@ public sealed class GeminiAiModelClient : IAiModelClient
             ? AiPromptDefaults.ClassifierPersona
             : persona.Trim();
 
-    internal static AiClassificationResult ParseClassification(
+    internal AiClassificationResult ParseClassification(
         string raw,
         IReadOnlyList<string> allowedCategories)
     {
@@ -245,6 +245,13 @@ public sealed class GeminiAiModelClient : IAiModelClient
 
             var matched = allowedCategories.FirstOrDefault(
                 allowed => string.Equals(allowed, category, StringComparison.OrdinalIgnoreCase));
+
+            if (matched is null && !string.IsNullOrWhiteSpace(category))
+            {
+                _logger.LogWarning(
+                    "Gemini classification returned category {Category}, which is not in the allowed list.",
+                    category);
+            }
 
             return new AiClassificationResult
             {

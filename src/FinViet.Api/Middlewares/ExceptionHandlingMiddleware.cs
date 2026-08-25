@@ -49,6 +49,15 @@ public class ExceptionHandlingMiddleware
                     "Handled exception while processing {Method} {Path}",
                     context.Request.Method,
                     context.Request.Path);
+
+                // BusinessRuleException covers money-rule rejections (insufficient_balance,
+                // linked_wallet_read_only, ...) that were previously invisible to Sentry —
+                // captured at Warning level so it's monitorable without being alerted on like an
+                // unhandled error.
+                if (ex is BusinessRuleException)
+                {
+                    SentrySdk.CaptureException(ex, scope => scope.Level = SentryLevel.Warning);
+                }
             }
             else
             {
