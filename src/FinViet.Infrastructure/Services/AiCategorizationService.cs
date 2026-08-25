@@ -213,10 +213,20 @@ public class AiCategorizationService : IAiCategorizationService
     {
         var preference = await PreferenceAsync(customerId, cancellationToken);
         if (string.Equals(preference.Mode, ModeOff, StringComparison.Ordinal))
+        {
+            _logger.LogWarning(
+                "Preview categorization skipped for customer {CustomerId}: AI categorization is turned off.",
+                customerId);
             return new AiClassificationResult();
+        }
 
         if (!await TryAcquireAsync(customerId, "classification_preview", cancellationToken))
+        {
+            _logger.LogWarning(
+                "Preview categorization rate-limited for customer {CustomerId}.",
+                customerId);
             return new AiClassificationResult();
+        }
 
         var expenseCategories = await ExpenseCategoriesAsync(customerId, cancellationToken);
         var result = await _aiModel.ClassifyAsync(
@@ -233,6 +243,13 @@ public class AiCategorizationService : IAiCategorizationService
         {
             result.CategoryId = categoryId;
         }
+        else if (result.CategoryName is not null)
+        {
+            _logger.LogWarning(
+                "Preview categorization for customer {CustomerId} returned category name {CategoryName}, which did not resolve to a known category id.",
+                customerId,
+                result.CategoryName);
+        }
 
         return result;
     }
@@ -247,7 +264,13 @@ public class AiCategorizationService : IAiCategorizationService
 
         var preference = await PreferenceAsync(customerId, cancellationToken);
         if (string.Equals(preference.Mode, ModeOff, StringComparison.Ordinal))
+        {
+            _logger.LogWarning(
+                "Batch categorization skipped for customer {CustomerId}: AI categorization is turned off ({Count} rows left uncategorized).",
+                customerId,
+                inputs.Count);
             return inputs.Select(_ => new AiClassificationResult()).ToList();
+        }
 
         var expenseCategories = await ExpenseCategoriesAsync(customerId, cancellationToken);
         var categoryNames = expenseCategories.Keys.ToList();
@@ -282,7 +305,12 @@ public class AiCategorizationService : IAiCategorizationService
         try
         {
             if (!await TryAcquireAsync(customerId, FeatureClassificationBatch, cancellationToken))
+            {
+                _logger.LogWarning(
+                    "Batch categorization rate-limited for customer {CustomerId}; row left uncategorized.",
+                    customerId);
                 return new AiClassificationResult();
+            }
 
             var result = await _aiModel.ClassifyAsync(
                 input,
@@ -294,6 +322,13 @@ public class AiCategorizationService : IAiCategorizationService
                 && expenseCategories.TryGetValue(result.CategoryName, out var categoryId))
             {
                 result.CategoryId = categoryId;
+            }
+            else if (result.CategoryName is not null)
+            {
+                _logger.LogWarning(
+                    "Batch categorization for customer {CustomerId} returned category name {CategoryName}, which did not resolve to a known category id; row left uncategorized.",
+                    customerId,
+                    result.CategoryName);
             }
 
             return result;
@@ -369,7 +404,8 @@ public class AiCategorizationService : IAiCategorizationService
             : (txn.Description ?? string.Empty).Trim();
 
     private async Task<Dictionary<string, string>> ExpenseCategoriesAsync(Guid customerId, CancellationToken ct)
-        => await _db.Categories
+    {
+        var categories = await _db.Categories
             .AsNoTracking()
             .Where(c => c.Type == "expense"
                         && c.CategoryName != UncategorizedName
@@ -379,7 +415,29 @@ public class AiCategorizationService : IAiCategorizationService
                                 cc.CustomerId == customerId
                                 && cc.CategoryId == c.CategoryId
                                 && cc.IsActive)))
-            .ToDictionaryAsync(c => c.CategoryName, c => c.CategoryId, ct);
+            .Select(c => new { c.CategoryName, c.CategoryId })
+            .ToListAsync(ct);
+
+        // Dedupe on a case-insensitive key before building the dictionary — a custom category
+        // sharing a name (any casing) with another one would otherwise throw on Add and silently
+        // disable categorization for the whole batch (caught upstream as one opaque warning).
+        // First match wins; matches the case-insensitive comparer used for the name→id lookup.
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var c in categories)
+        {
+            if (!result.ContainsKey(c.CategoryName))
+                result[c.CategoryName] = c.CategoryId;
+            else
+                _logger.LogWarning(
+                    "Duplicate expense category name {CategoryName} for customer {CustomerId} (ids {ExistingId} vs {DuplicateId}); keeping the first.",
+                    c.CategoryName,
+                    customerId,
+                    result[c.CategoryName],
+                    c.CategoryId);
+        }
+
+        return result;
+    }
 
     private async Task<bool> IsVisibleCategoryAsync(Guid customerId, string categoryId, CancellationToken ct)
     {
