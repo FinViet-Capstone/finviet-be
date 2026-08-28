@@ -33,4 +33,23 @@ public interface IIncomeAllocationService
         decimal wantsPct,
         decimal savingsPct,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Compares what the customer's active saving goals need each month against what their own
+    /// Savings bucket actually allocates, and proposes a rebalanced split when the goals outrun
+    /// it. Read-only — nothing is written. <paramref name="month"/> (<c>yyyy-MM</c>) defaults to
+    /// the current month; throws a 400 validation error if it isn't valid <c>yyyy-MM</c>.
+    /// </summary>
+    Task<SavingsPlanRecommendationDto> GetSavingsPlanRecommendationAsync(
+        Guid customerId, string? month = null, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Recomputes the recommendation server-side and, when it is actionable, schedules the
+    /// proposed split for next month through <see cref="ScheduleNextMonthAsync"/>. Throws a
+    /// <c>BusinessRuleException</c> (422) carrying the recommendation's status as its code when
+    /// there is nothing to apply, so the client never has to trust a stale proposal it is
+    /// holding.
+    /// </summary>
+    Task<IncomeAllocationEntryDto> ApplySavingsPlanRecommendationAsync(
+        Guid customerId, CancellationToken cancellationToken = default);
 }

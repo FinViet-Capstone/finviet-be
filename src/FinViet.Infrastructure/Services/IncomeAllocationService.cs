@@ -112,6 +112,188 @@ public class IncomeAllocationService : IIncomeAllocationService
         return ToDto(entry);
     }
 
+    public async Task<SavingsPlanRecommendationDto> GetSavingsPlanRecommendationAsync(
+        Guid customerId, string? month = null, CancellationToken cancellationToken = default)
+    {
+        var monthKey = string.IsNullOrWhiteSpace(month)
+            ? MonthKey(DateTime.UtcNow)
+            : NormalizeMonth(month);
+
+        // Throws NotFound for an unknown customer, so no separate existence check is needed.
+        var current = await GetEffectiveAsync(customerId, monthKey, cancellationToken);
+
+        var goals = await _db.SavingGoals
+            .AsNoTracking()
+            .Where(g => g.CustomerId == customerId && !g.IsDeleted && !g.IsCompleted)
+            .Select(g => new { g.TargetAmount, g.CurrentAmount, g.Deadline })
+            .ToListAsync(cancellationToken);
+
+        // DateTime.UtcNow (not ICT) to match SavingGoalService.ToResponse exactly — shifting the
+        // reference day here would make this aggregate disagree with the per-goal numbers the
+        // goal list already shows, which is the specific incoherence this feature exists to end.
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+
+        var requiredPerGoal = new List<decimal>();
+        var goalsWithoutDeadline = 0;
+
+        foreach (var goal in goals)
+        {
+            var remaining = Math.Max(0m, goal.TargetAmount - (goal.CurrentAmount ?? 0m));
+
+            // Fully funded but not yet flagged completed (the flag is only written on the
+            // contribute/withdraw paths) — nothing left to fund, so it shouldn't inflate the total.
+            if (remaining <= 0m)
+                continue;
+
+            if (!goal.Deadline.HasValue)
+            {
+                goalsWithoutDeadline++;
+                continue;
+            }
+
+            requiredPerGoal.Add(
+                SavingGoalService.ComputeMonthlyPace(remaining, goal.Deadline.Value, today)
+                    .MonthlySavingNeeded);
+        }
+
+        return BuildRecommendation(monthKey, current, requiredPerGoal, goalsWithoutDeadline);
+    }
+
+    public async Task<IncomeAllocationEntryDto> ApplySavingsPlanRecommendationAsync(
+        Guid customerId, CancellationToken cancellationToken = default)
+    {
+        // Recomputed here rather than accepted from the caller: a proposal the client is holding
+        // may have been invalidated by a goal edit or contribution since it was fetched, and
+        // applying a stale split would quietly misallocate real money.
+        var recommendation = await GetSavingsPlanRecommendationAsync(customerId, null, cancellationToken);
+
+        if (recommendation.Status != RecommendationStatus.Adjustable || recommendation.Proposed is null)
+        {
+            throw new BusinessRuleException(
+                "There is no savings-plan adjustment to apply right now.",
+                recommendation.Status);
+        }
+
+        return await ScheduleNextMonthAsync(
+            customerId,
+            recommendation.Proposed.MonthlyIncome,
+            recommendation.Proposed.NeedsPct,
+            recommendation.Proposed.WantsPct,
+            recommendation.Proposed.SavingsPct,
+            cancellationToken);
+    }
+
+    /// <summary>Status values for <see cref="SavingsPlanRecommendationDto.Status"/>.</summary>
+    internal static class RecommendationStatus
+    {
+        public const string OnTrack = "on_track";
+        public const string Adjustable = "adjustable";
+        public const string Infeasible = "infeasible";
+        public const string NoGoals = "no_goals";
+        public const string NoIncome = "no_income";
+        public const string InvalidAllocation = "invalid_allocation";
+    }
+
+    /// <summary>
+    /// The smallest share of income the Wants bucket is allowed to be squeezed to. Rebalancing
+    /// takes only from Wants: automatically advising someone to cut essentials (Needs) to chase a
+    /// savings target is bad guidance, so when Wants alone can't cover the gap the answer is
+    /// "infeasible" plus the numbers, not a smaller Needs bucket.
+    /// </summary>
+    internal const decimal WantsFloorPct = 5m;
+
+    /// <summary>
+    /// Pure/no I/O so the whole decision table is unit-testable without a database.
+    /// <paramref name="requiredPerGoal"/> holds the per-goal monthly figure for active, unmet,
+    /// deadlined goals only.
+    /// </summary>
+    internal static SavingsPlanRecommendationDto BuildRecommendation(
+        string month,
+        IncomeAllocationEntryDto current,
+        IReadOnlyList<decimal> requiredPerGoal,
+        int goalsWithoutDeadline)
+    {
+        var income = current.MonthlyIncome;
+        var required = Math.Round(requiredPerGoal.Sum(), 2);
+        var savingsCap = Math.Round(income * current.SavingsPct / 100m, 2);
+
+        var result = new SavingsPlanRecommendationDto
+        {
+            Month = month,
+            MonthlyIncome = income,
+            RequiredMonthlySavings = required,
+            CurrentSavingsCap = savingsCap,
+            GoalsConsidered = requiredPerGoal.Count,
+            GoalsWithoutDeadline = goalsWithoutDeadline,
+            Current = current,
+            Shortfall = 0m
+        };
+
+        if (requiredPerGoal.Count == 0)
+        {
+            result.Status = RecommendationStatus.NoGoals;
+            return result;
+        }
+
+        if (income <= 0m)
+        {
+            // Every bucket cap is a percentage of income, so with no income on record there is no
+            // split that funds anything — the fix is to set an income, not to move percentages.
+            result.Status = RecommendationStatus.NoIncome;
+            result.Shortfall = required;
+            return result;
+        }
+
+        var shortfall = Math.Max(0m, required - savingsCap);
+        result.Shortfall = shortfall;
+
+        if (shortfall <= 0m)
+        {
+            result.Status = RecommendationStatus.OnTrack;
+            return result;
+        }
+
+        // Guard rather than silently normalize: a split that doesn't total 100 would produce a
+        // proposal ScheduleNextMonthAsync's validator rejects, so surface it instead of emitting
+        // an unappliable recommendation.
+        if (current.NeedsPct + current.WantsPct + current.SavingsPct != 100m)
+        {
+            result.Status = RecommendationStatus.InvalidAllocation;
+            return result;
+        }
+
+        var neededSavingsPct = Math.Round(required / income * 100m, 2);
+        var maxSavingsPct = current.SavingsPct + Math.Max(0m, current.WantsPct - WantsFloorPct);
+
+        if (neededSavingsPct > maxSavingsPct)
+        {
+            result.Status = RecommendationStatus.Infeasible;
+            result.MaxFundableMonthlySavings = Math.Round(income * maxSavingsPct / 100m, 2);
+            return result;
+        }
+
+        // Needs is carried over untouched and Wants absorbs the whole move, derived by
+        // subtraction so the three always total exactly 100 despite the rounding above.
+        var proposedNeedsPct = current.NeedsPct;
+        var proposedSavingsPct = neededSavingsPct;
+        var proposedWantsPct = 100m - proposedNeedsPct - proposedSavingsPct;
+
+        result.Status = RecommendationStatus.Adjustable;
+        result.Proposed = new IncomeAllocationEntryDto
+        {
+            EffectiveMonth = MonthKey(DateTime.UtcNow.AddMonths(1)),
+            MonthlyIncome = income,
+            NeedsPct = proposedNeedsPct,
+            WantsPct = proposedWantsPct,
+            SavingsPct = proposedSavingsPct
+        };
+        result.ProposedNeedsCap = Math.Round(income * proposedNeedsPct / 100m, 2);
+        result.ProposedWantsCap = Math.Round(income * proposedWantsPct / 100m, 2);
+        result.ProposedSavingsCap = Math.Round(income * proposedSavingsPct / 100m, 2);
+
+        return result;
+    }
+
     // ICT (UTC+7), matching BudgetService.ResolveMonthWindow's convention for "current month".
     internal static string MonthKey(DateTime utcNow)
     {
