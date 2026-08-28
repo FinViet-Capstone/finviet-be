@@ -1,5 +1,6 @@
 using FinViet.Api.Common;
 using FinViet.Application.Common;
+using FinViet.Application.Features.Profile.Commands.ApplySavingsPlanRecommendation;
 using FinViet.Application.Features.Profile.Commands.ScheduleIncomeAllocationChange;
 using FinViet.Application.Features.Profile.Commands.UpdateAiPreferences;
 using FinViet.Application.Features.Profile.Commands.UpdateProfile;
@@ -7,6 +8,7 @@ using FinViet.Application.Features.Profile.Commands.UpdateProfileSettings;
 using FinViet.Application.Features.Profile.Commands.UploadAvatar;
 using FinViet.Application.Features.Profile.Queries.GetAiPreferences;
 using FinViet.Application.Features.Profile.Queries.GetIncomeAllocation;
+using FinViet.Application.Features.Profile.Queries.GetSavingsPlanRecommendation;
 using FinViet.Application.Features.Profile.Queries.GetProfile;
 using FinViet.Domain.Enums;
 using MediatR;
@@ -74,6 +76,35 @@ public class ProfileController : ControllerBase
             new ScheduleIncomeAllocationChangeCommand(
                 customerId, request.MonthlyIncome, request.NeedsPct, request.WantsPct, request.SavingsPct), ct);
 
+        return Ok(ApiResponse<object>.Ok(result));
+    }
+
+    /// <summary>
+    /// Đối chiếu số tiền các mục tiêu tiết kiệm cần mỗi tháng với hạn mức hũ Tiết kiệm hiện tại,
+    /// và đề xuất tỉ lệ phân bổ mới kèm mức chi tiêu tương ứng khi mục tiêu vượt quá hạn mức.
+    /// Chỉ đọc — không ghi gì cho tới khi người dùng gọi endpoint apply bên dưới.
+    /// </summary>
+    [HttpGet("income-allocation/recommendation")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetSavingsPlanRecommendation(
+        [FromQuery] string? month, CancellationToken ct)
+    {
+        var customerId = User.GetCustomerId();
+        var result     = await _mediator.Send(new GetSavingsPlanRecommendationQuery(customerId, month), ct);
+        return Ok(ApiResponse<object>.Ok(result));
+    }
+
+    /// <summary>
+    /// Áp dụng đề xuất trên: tính lại ở phía server rồi đặt lịch tỉ lệ mới cho tháng sau.
+    /// Trả 422 kèm mã trạng thái của đề xuất khi hiện không có gì để áp dụng.
+    /// </summary>
+    [HttpPost("income-allocation/recommendation/apply")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status422UnprocessableEntity)]
+    public async Task<IActionResult> ApplySavingsPlanRecommendation(CancellationToken ct)
+    {
+        var customerId = User.GetCustomerId();
+        var result     = await _mediator.Send(new ApplySavingsPlanRecommendationCommand(customerId), ct);
         return Ok(ApiResponse<object>.Ok(result));
     }
 

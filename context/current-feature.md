@@ -2,6 +2,83 @@
 
 <!-- Feature name and short description -->
 
+**Feature: automatic balance between saving goals and suggested spending**
+(branch `feature/savings-goal-spending-balance`). Closes the thesis-council
+finding of 19-08-2026: *"Cần có sự cân đối tự động giữa việc mục tiêu tiết kiệm
+được đề ra và hệ thống tự scale và đề xuất mức chi tiêu phù hợp."* Both halves
+of the comparison already existed and neither side ever compared them — the
+backend returns `MonthlySavingNeeded` per goal, and `BudgetService` derives the
+Savings bucket cap from the customer's split, but nothing put the two numbers
+next to each other. The mobile app added a client-side warning on 17-08 (its
+own source comment says "neither the mobile mock nor the real backend compares
+these two numbers on its own"), which the council saw and still raised: a
+warning that tells the user to go fix it by hand is not the system scaling
+anything. This adds the server-side comparison plus a proposed rebalance the
+customer can apply in one call.
+
+## Status
+
+Implemented and locally verified: `dotnet build FinViet.sln` succeeded, 0
+errors and the same 6 pre-existing nullable warnings (none new);
+`FinViet.Application.UnitTests` 309/309 pass (291 pre-existing + 18 new across
+`SavingsPlanRecommendationTests.cs` and `SavingsPlanHandlerWiringTests.cs`).
+**Not committed/pushed yet.** Not exercised end-to-end against a live
+database: this environment's local Postgres fails startup migration with `type
+"app_language" already exists` (journal drifted from schema, pre-existing and
+unrelated — this feature adds no migration), so `dotnet run` can't reach
+Swagger here. The runtime risk that gap leaves is MediatR handler discovery,
+since `Program.cs` scans the Infrastructure assembly only and a misplaced
+handler compiles fine then fails on first call; `SavingsPlanHandlerWiringTests`
+asserts both handlers are present in that assembly specifically to cover it.
+Still worth one manual Swagger pass on a working database before merge.
+
+## Goals
+
+- `GET /api/profile/income-allocation/recommendation?month=` — compares what
+  active goals need per month against the Savings bucket cap for that month,
+  and proposes a rebalanced split when they outrun it. Read-only.
+- `POST /api/profile/income-allocation/recommendation/apply` — recomputes
+  server-side and schedules the proposed split through the existing
+  `ScheduleNextMonthAsync`, so it lands as next month's draft like every other
+  allocation change and the current month stays locked. Recomputing rather than
+  accepting the client's proposal means a stale split (a goal edited or
+  contributed to since the GET) can't be written.
+- `SavingsPlanRecommendationDto.Status` drives the client copy:
+  `on_track` / `adjustable` / `infeasible` / `no_goals` / `no_income` /
+  `invalid_allocation`. `apply` throws `BusinessRuleException` (422) carrying
+  that status as its `Code` when there is nothing to apply.
+- `SavingGoalService.ComputeMonthlyPace` extracted from `ToResponse` and shared
+  with `IncomeAllocationService`, so the per-goal figure the goal list shows and
+  the aggregate this recommendation is built from are the same arithmetic. Two
+  copies of that formula drifting apart would have the app warn about a
+  shortfall its own goal list contradicts.
+
+## Notes
+
+- **Rebalancing only ever takes from Wants, never Needs** (`WantsFloorPct = 5`).
+  Automatically advising someone to cut essentials to chase a savings target is
+  bad financial guidance, so when Wants alone can't close the gap the answer is
+  `infeasible` plus `MaxFundableMonthlySavings` — let the customer decide
+  whether to extend a deadline, lower a target, or raise income. This is a
+  deliberate product call, not a limitation to "fix" later.
+- Goals with no deadline are excluded from the required total (no deadline, no
+  monthly figure to derive) but counted in `GoalsWithoutDeadline` so the client
+  can say so rather than silently ignoring them.
+- `Proposed` percentages: Savings is rounded to 2dp, then Wants is derived by
+  subtraction (`100 - Needs - Savings`) so the three always total exactly 100.
+  `ScheduleIncomeAllocationChangeCommandValidator` demands an exact 100, so
+  deriving Wants any other way would emit proposals that fail on apply.
+- The reference day for months-remaining is `DateTime.UtcNow`, matching
+  `SavingGoalService.ToResponse` rather than the ICT convention `MonthKey` and
+  `BudgetService.ResolveMonthWindow` use. Deliberate: shifting it here would
+  make this aggregate disagree with the per-goal numbers already on screen,
+  which is exactly the incoherence the council complained about. Worth
+  unifying across both later, as its own change.
+- Mobile follow-up (not in this change): `app/(tabs)/budgets/goals/index.tsx`
+  computes `computeGoalAffordability` client-side. It can now read this
+  endpoint instead and offer an "apply" button, which is what actually makes
+  the behaviour automatic from the user's side.
+
 **Feature: CSV import data loss, categorization failure, and money-path
 observability** (branch `fix/csv-import-pipeline`, cross-repo with
 `finviet-mobile`). Follow-up to the `classification_preview` rate-limit fix
