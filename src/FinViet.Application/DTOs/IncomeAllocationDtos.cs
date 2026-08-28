@@ -78,4 +78,22 @@ public class SavingsPlanRecommendationDto
     /// <c>Status</c> is <c>infeasible</c>, so the client can show how far short the goals are.
     /// </summary>
     public decimal? MaxFundableMonthlySavings { get; set; }
+
+    /// <summary>Total still to be saved across the goals counted above.</summary>
+    public decimal TotalRemainingAmount { get; set; }
+
+    /// <summary>
+    /// Months the counted goals would need if the plan set aside its absolute maximum every
+    /// month — i.e. the shortest deadline that could ever work. Only set when <c>Status</c> is
+    /// <c>infeasible</c> (and the ceiling is above zero), which is exactly when the customer
+    /// needs to know how far to push the deadline.
+    /// </summary>
+    public int? MinimumMonthsToFund { get; set; }
+
+    /// <summary>
+    /// The largest target that would fit the existing deadline. Only set when <c>Status</c> is
+    /// <c>infeasible</c> <em>and</em> exactly one goal was counted — with several goals there is
+    /// no single target to lower, and inventing a split across them would be a guess.
+    /// </summary>
+    public decimal? MaximumFundableTargetAmount { get; set; }
 }

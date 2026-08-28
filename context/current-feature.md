@@ -2,6 +2,56 @@
 
 <!-- Feature name and short description -->
 
+**Feature: make the `infeasible` savings-plan verdict actionable**
+(branch `automated-scale`). Follow-up to the entry below, from live testing.
+`infeasible` was a dead end: it reported the monthly ceiling and then offered
+"giãn thời hạn, hạ mục tiêu, hoặc tăng thu nhập" with no number attached — even
+though the plan already knows the ceiling and therefore *can* compute both. In
+testing against a real account (income 5M split 50/30/20, a 32M goal with 5M
+saved and 2 months left) the verdict was hit four times in a row, and answering
+"then what deadline would work?" required running the algorithm by hand each
+time. That is precisely the "hệ thống tự scale và đề xuất" half the council
+asked for, and `infeasible` was only doing the "phát hiện" half.
+
+## Status
+
+Implemented and locally verified: `dotnet build FinViet.sln` succeeded, 0
+errors and the same 6 pre-existing nullable warnings (none new);
+`FinViet.Application.UnitTests` 314/314 pass (309 + 5 new).
+**Not committed/pushed yet.** Same live-database caveat as the entry below.
+
+## Goals
+
+- `SavingsPlanRecommendationDto` gains `TotalRemainingAmount` (always),
+  `MinimumMonthsToFund` and `MaximumFundableTargetAmount` (both `infeasible`
+  only).
+- `MinimumMonthsToFund` = `ceil(totalRemaining / ceiling)` — the shortest
+  deadline that could ever work. **Rounded up, never down**: handing back a
+  deadline that still doesn't fund the goals is worse than no suggestion.
+- `MaximumFundableTargetAmount` = `ceiling × monthsRemaining + alreadySaved`,
+  set **only when exactly one goal was counted**. With several goals there is no
+  single target to lower, and splitting the ceiling between them would be an
+  invented answer rather than a derived one.
+- `BuildRecommendation` now takes `IReadOnlyList<GoalFundingNeed>` instead of
+  bare monthly decimals, since the two new figures need each goal's remaining
+  amount, months left, and target — not just its monthly share.
+
+## Notes
+
+- Both new fields stay null when the ceiling is 0 (Savings at 0% and Wants
+  already at the floor). No number of months funds anything then, and dividing
+  by the ceiling would produce infinity rather than advice. The mobile banner
+  falls back to the old generic sentence in exactly that case.
+- Worked example from the live account, locked by tests: 27M remaining ÷ 2.25M
+  ceiling = 12 months minimum; keeping the 2-month deadline, the most that fits
+  is 2.25M × 2 + 5M already saved = a 9.5M target.
+- Deliberately *not* added: a per-goal breakdown of who should give up what when
+  several goals are infeasible together. That is a real product question about
+  goal priority, not arithmetic, and guessing at it would be worse than the
+  aggregate answer.
+
+---
+
 **Feature: automatic balance between saving goals and suggested spending**
 (branch `feature/savings-goal-spending-balance`). Closes the thesis-council
 finding of 19-08-2026: *"Cần có sự cân đối tự động giữa việc mục tiêu tiết kiệm
