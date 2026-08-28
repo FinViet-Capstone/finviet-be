@@ -494,6 +494,33 @@ public class SavingGoalService : ISavingGoalService
         }
     }
 
+    /// <summary>
+    /// Whole months left until <paramref name="deadline"/>, and the amount to set aside in each of
+    /// them to close <paramref name="remaining"/>. A deadline inside the current month (0 months
+    /// left) needs the whole remainder at once rather than a division by zero.
+    /// </summary>
+    /// <remarks>
+    /// Pure/no I/O, and shared with <see cref="IncomeAllocationService"/>: the per-goal figure the
+    /// app shows and the aggregate the savings-plan recommendation is built from have to be the
+    /// same arithmetic, or the app would warn about a shortfall its own goal list contradicts.
+    /// </remarks>
+    internal static (int MonthsRemaining, decimal MonthlySavingNeeded) ComputeMonthlyPace(
+        decimal remaining, DateOnly deadline, DateOnly today)
+    {
+        var months = (deadline.Year - today.Year) * 12 + (deadline.Month - today.Month);
+        if (deadline.Day < today.Day)
+            months--;
+        months = Math.Max(0, months);
+
+        var monthly = remaining <= 0m
+            ? 0m
+            : months >= 1
+                ? Math.Round(remaining / months, 2)
+                : remaining;
+
+        return (months, monthly);
+    }
+
     private static SavingGoalResponse ToResponse(SavingGoal goal)
     {
         var target = goal.TargetAmount;
@@ -508,13 +535,9 @@ public class SavingGoalService : ISavingGoalService
         {
             var today = DateOnly.FromDateTime(DateTime.UtcNow);
             daysRemaining = Math.Max(0, goal.Deadline.Value.DayNumber - today.DayNumber);
-            var months = (goal.Deadline.Value.Year - today.Year) * 12 + (goal.Deadline.Value.Month - today.Month);
-            if (goal.Deadline.Value.Day < today.Day)
-                months--;
-            monthsRemaining = Math.Max(0, months);
-            monthlySavingNeeded = remaining <= 0 ? 0m : monthsRemaining >= 1
-                ? Math.Round(remaining / monthsRemaining.Value, 2)
-                : remaining;
+            var pace = ComputeMonthlyPace(remaining, goal.Deadline.Value, today);
+            monthsRemaining = pace.MonthsRemaining;
+            monthlySavingNeeded = pace.MonthlySavingNeeded;
         }
 
         return new SavingGoalResponse
