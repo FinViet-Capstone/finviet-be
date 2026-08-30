@@ -133,7 +133,7 @@ public class IncomeAllocationService : IIncomeAllocationService
         // goal list already shows, which is the specific incoherence this feature exists to end.
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
 
-        var requiredPerGoal = new List<decimal>();
+        var needs = new List<GoalFundingNeed>();
         var goalsWithoutDeadline = 0;
 
         foreach (var goal in goals)
@@ -151,12 +151,25 @@ public class IncomeAllocationService : IIncomeAllocationService
                 continue;
             }
 
-            requiredPerGoal.Add(
-                SavingGoalService.ComputeMonthlyPace(remaining, goal.Deadline.Value, today)
-                    .MonthlySavingNeeded);
+            var pace = SavingGoalService.ComputeMonthlyPace(remaining, goal.Deadline.Value, today);
+            needs.Add(new GoalFundingNeed(
+                pace.MonthlySavingNeeded, remaining, pace.MonthsRemaining, goal.TargetAmount));
         }
 
-        return BuildRecommendation(monthKey, current, requiredPerGoal, goalsWithoutDeadline);
+        var result = BuildRecommendation(monthKey, current, needs, goalsWithoutDeadline);
+
+        // Applying is an upsert on next month's row, so it overwrites whatever is scheduled
+        // there. Surfaced (rather than blocked) so the client can warn first — silently
+        // discarding a split the customer set themselves is the actual defect here.
+        var nextMonth = MonthKey(DateTime.UtcNow.AddMonths(1));
+        var pendingRow = await _db.IncomeAllocationSettings
+            .AsNoTracking()
+            .FirstOrDefaultAsync(
+                x => x.CustomerId == customerId && x.EffectiveMonth == nextMonth,
+                cancellationToken);
+        result.PendingBeforeApply = pendingRow is null ? null : ToDto(pendingRow);
+
+        return result;
     }
 
     public async Task<IncomeAllocationEntryDto> ApplySavingsPlanRecommendationAsync(
@@ -202,19 +215,22 @@ public class IncomeAllocationService : IIncomeAllocationService
     /// </summary>
     internal const decimal WantsFloorPct = 5m;
 
+    /// <summary>One active, unmet, deadlined goal, reduced to what the recommendation needs of it.</summary>
+    internal readonly record struct GoalFundingNeed(
+        decimal MonthlyNeeded, decimal Remaining, int MonthsRemaining, decimal TargetAmount);
+
     /// <summary>
     /// Pure/no I/O so the whole decision table is unit-testable without a database.
-    /// <paramref name="requiredPerGoal"/> holds the per-goal monthly figure for active, unmet,
-    /// deadlined goals only.
+    /// <paramref name="needs"/> holds active, unmet, deadlined goals only.
     /// </summary>
     internal static SavingsPlanRecommendationDto BuildRecommendation(
         string month,
         IncomeAllocationEntryDto current,
-        IReadOnlyList<decimal> requiredPerGoal,
+        IReadOnlyList<GoalFundingNeed> needs,
         int goalsWithoutDeadline)
     {
         var income = current.MonthlyIncome;
-        var required = Math.Round(requiredPerGoal.Sum(), 2);
+        var required = Math.Round(needs.Sum(n => n.MonthlyNeeded), 2);
         var savingsCap = Math.Round(income * current.SavingsPct / 100m, 2);
 
         var result = new SavingsPlanRecommendationDto
@@ -223,13 +239,14 @@ public class IncomeAllocationService : IIncomeAllocationService
             MonthlyIncome = income,
             RequiredMonthlySavings = required,
             CurrentSavingsCap = savingsCap,
-            GoalsConsidered = requiredPerGoal.Count,
+            GoalsConsidered = needs.Count,
             GoalsWithoutDeadline = goalsWithoutDeadline,
+            TotalRemainingAmount = Math.Round(needs.Sum(n => n.Remaining), 2),
             Current = current,
             Shortfall = 0m
         };
 
-        if (requiredPerGoal.Count == 0)
+        if (needs.Count == 0)
         {
             result.Status = RecommendationStatus.NoGoals;
             return result;
@@ -267,8 +284,28 @@ public class IncomeAllocationService : IIncomeAllocationService
 
         if (neededSavingsPct > maxSavingsPct)
         {
+            var ceiling = Math.Round(income * maxSavingsPct / 100m, 2);
             result.Status = RecommendationStatus.Infeasible;
-            result.MaxFundableMonthlySavings = Math.Round(income * maxSavingsPct / 100m, 2);
+            result.MaxFundableMonthlySavings = ceiling;
+
+            // The ceiling alone only tells the customer they can't get there. These two say how
+            // far to move the deadline, or how far to lower the target — the plan already knows
+            // both, and withholding them is what leaves "infeasible" a dead end.
+            if (ceiling > 0m)
+            {
+                result.MinimumMonthsToFund = (int)Math.Ceiling(result.TotalRemainingAmount / ceiling);
+
+                // Only meaningful for a single goal: with several there is no one target to
+                // lower, and splitting the ceiling across them would be an invented answer.
+                if (needs.Count == 1)
+                {
+                    var only = needs[0];
+                    var alreadySaved = only.TargetAmount - only.Remaining;
+                    result.MaximumFundableTargetAmount =
+                        Math.Round(ceiling * only.MonthsRemaining + alreadySaved, 2);
+                }
+            }
+
             return result;
         }
 
