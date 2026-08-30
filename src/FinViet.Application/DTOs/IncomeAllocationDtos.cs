@@ -96,4 +96,12 @@ public class SavingsPlanRecommendationDto
     /// no single target to lower, and inventing a split across them would be a guess.
     /// </summary>
     public decimal? MaximumFundableTargetAmount { get; set; }
+
+    /// <summary>
+    /// The split already scheduled for next month, if the customer has one. Applying the
+    /// recommendation <em>replaces</em> it (the schedule is an upsert keyed on next month), so a
+    /// client that shows an apply button needs this to warn before silently discarding a split
+    /// the customer set themselves. Null when nothing is scheduled yet.
+    /// </summary>
+    public IncomeAllocationEntryDto? PendingBeforeApply { get; set; }
 }
