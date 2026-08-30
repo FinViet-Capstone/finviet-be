@@ -1,8 +1,16 @@
 name: Deploy to Render
 
+# Triggers on `dev` because that is the branch the Render service builds — `dev` is the release
+# branch here, not `main`.
+#
+# This used to trigger on `main`, which made deploys silently ship the wrong code: the Render API
+# call below deploys whatever branch the *service* is configured for, so merging into `main` ran
+# the pipeline green while Render rebuilt `dev` and released code that was never in the merge.
+# That is exactly how PR #83's changes sat unreleased for two days while CI reported success.
+# Keep this branch list in sync with the Render service's branch setting.
 on:
   push:
-    branches: [main]
+    branches: [dev]
   workflow_dispatch: {}
 
 jobs:
@@ -93,7 +101,25 @@ jobs:
 
             case "$status" in
               live)
-                echo "Deploy succeeded."
+                # Render deploys its own configured branch, not necessarily the commit this run
+                # tested. When those differ, the pipeline goes green while shipping something
+                # else entirely — the failure mode that hid PR #83 for two days. Surface the
+                # deployed commit either way, and flag a mismatch loudly enough to notice.
+                deployed_sha=$(echo "$body" | jq -r '.commit.id // "unknown"')
+                echo "Deploy succeeded. Render released commit: $deployed_sha"
+                {
+                  echo "### Render deploy"
+                  echo ""
+                  echo "- Workflow commit: \`${GITHUB_SHA}\`"
+                  echo "- Deployed commit: \`${deployed_sha}\`"
+                } >> "$GITHUB_STEP_SUMMARY"
+
+                if [ "$deployed_sha" != "unknown" ] && [ "$deployed_sha" != "$GITHUB_SHA" ]; then
+                  echo "::warning title=Deployed commit differs from tested commit::Render released $deployed_sha but this run built and tested $GITHUB_SHA. Check that the Render service's branch matches this workflow's trigger branch."
+                  echo "" >> "$GITHUB_STEP_SUMMARY"
+                  echo "> **Mismatch** — Render released a different commit than this run tested." >> "$GITHUB_STEP_SUMMARY"
+                  echo "> Check the Render service's branch setting against this workflow's \`on.push.branches\`." >> "$GITHUB_STEP_SUMMARY"
+                fi
                 exit 0
                 ;;
               build_failed|update_failed|canceled|deactivated)

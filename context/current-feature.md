@@ -2,6 +2,44 @@
 
 <!-- Feature name and short description -->
 
+**Feature: close the savings-plan gaps found in device testing**
+(branch `fix/savings-plan-limitations`). An external review ran the full
+four-step scenario on an Android emulator against production and confirmed the
+core requirement works — but found the apply button silently overwrites a split
+the customer already scheduled for next month. In that test a hand-set
+61/23,4/15,6 draft was replaced by 50/26,47/23,53 with no prompt.
+
+## Status
+
+Implemented and locally verified: `dotnet build FinViet.sln` succeeded, 0
+errors and the same 6 pre-existing nullable warnings;
+`FinViet.Application.UnitTests` 314/314 pass. **Not committed/pushed yet.**
+
+## Goals
+
+- `SavingsPlanRecommendationDto.PendingBeforeApply` — the split already
+  scheduled for next month, so a client can warn before applying replaces it.
+  Surfaced rather than blocked: overwriting is the correct behaviour for
+  re-applying, the defect was doing it silently.
+
+## Notes
+
+- **Deployment finding, more important than the code here.** The review
+  reported production not returning `MinimumMonthsToFund` /
+  `MaximumFundableTargetAmount` / `TotalRemainingAmount`. That was correct, and
+  the cause is branch routing, not code: PR #81 (the endpoints) merged into
+  `dev`, PR #83 (these three fields) merged into `main`. Render deploys from
+  **`dev`**, so production has had the routes but not the fields since 28-08.
+  My earlier verification was insufficient — probing the endpoints for 401
+  proved PR #81 shipped and I wrongly read that as PR #83 shipping too. Any
+  savings-plan work has to reach `dev` to be real.
+- No new validation on apply: a client that ignores `PendingBeforeApply` still
+  overwrites, exactly as before. Blocking it server-side would break the
+  legitimate re-apply case, and the DTO now gives every client what it needs to
+  ask first.
+
+---
+
 **Feature: make the `infeasible` savings-plan verdict actionable**
 (branch `automated-scale`). Follow-up to the entry below, from live testing.
 `infeasible` was a dead end: it reported the monthly ceiling and then offered

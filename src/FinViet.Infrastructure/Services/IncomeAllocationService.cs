@@ -156,7 +156,20 @@ public class IncomeAllocationService : IIncomeAllocationService
                 pace.MonthlySavingNeeded, remaining, pace.MonthsRemaining, goal.TargetAmount));
         }
 
-        return BuildRecommendation(monthKey, current, needs, goalsWithoutDeadline);
+        var result = BuildRecommendation(monthKey, current, needs, goalsWithoutDeadline);
+
+        // Applying is an upsert on next month's row, so it overwrites whatever is scheduled
+        // there. Surfaced (rather than blocked) so the client can warn first — silently
+        // discarding a split the customer set themselves is the actual defect here.
+        var nextMonth = MonthKey(DateTime.UtcNow.AddMonths(1));
+        var pendingRow = await _db.IncomeAllocationSettings
+            .AsNoTracking()
+            .FirstOrDefaultAsync(
+                x => x.CustomerId == customerId && x.EffectiveMonth == nextMonth,
+                cancellationToken);
+        result.PendingBeforeApply = pendingRow is null ? null : ToDto(pendingRow);
+
+        return result;
     }
 
     public async Task<IncomeAllocationEntryDto> ApplySavingsPlanRecommendationAsync(
