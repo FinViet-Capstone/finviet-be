@@ -27,6 +27,12 @@ public partial class Transaction
 
     public Guid? TransferPairId { get; set; }
 
+    /// <summary>
+    /// Shared by the sibling rows produced from one split, so the relationship stays
+    /// inspectable after the original row is replaced. Null on unsplit transactions.
+    /// </summary>
+    public Guid? SplitGroupId { get; set; }
+
     public string? ExternalId { get; set; }
 
     public DateTime CreatedAt { get; set; }

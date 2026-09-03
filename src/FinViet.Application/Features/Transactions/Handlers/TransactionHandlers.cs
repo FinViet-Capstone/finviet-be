@@ -355,6 +355,40 @@ public class DeleteTransactionHandler : IRequestHandler<DeleteTransactionCommand
     }
 }
 
+public class SplitTransactionHandler
+    : IRequestHandler<SplitTransactionCommand, IReadOnlyList<TransactionResponseDto>>
+{
+    private readonly ITransactionRepository _transactionRepository;
+    private readonly ILogger<SplitTransactionHandler> _logger;
+
+    public SplitTransactionHandler(
+        ITransactionRepository transactionRepository,
+        ILogger<SplitTransactionHandler> logger)
+    {
+        _transactionRepository = transactionRepository;
+        _logger = logger;
+    }
+
+    public async Task<IReadOnlyList<TransactionResponseDto>> Handle(
+        SplitTransactionCommand request, CancellationToken cancellationToken)
+    {
+        var parts = await _transactionRepository.SplitForCustomerAsync(
+            request.CustomerId,
+            request.TransactionId,
+            request.Parts,
+            request.IdempotencyKey,
+            cancellationToken);
+
+        _logger.LogInformation(
+            "Split transaction {TransactionId} into {PartCount} parts for customer {CustomerId}.",
+            request.TransactionId,
+            parts.Count,
+            request.CustomerId);
+
+        return parts;
+    }
+}
+
 public class ClassifyTransactionHandler : IRequestHandler<ClassifyTransactionCommand, TransactionResponseDto>
 {
     private readonly ITransactionRepository _transactionRepository;

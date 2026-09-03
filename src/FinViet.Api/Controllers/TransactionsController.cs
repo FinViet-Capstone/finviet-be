@@ -102,6 +102,28 @@ public class TransactionsController : ControllerBase
         return Ok(ApiResponse<TransactionResponseDto>.Ok(result));
     }
 
+    /// <summary>
+    /// Tách một giao dịch thành nhiều phần theo danh mục. Tổng các phần phải bằng đúng số tiền
+    /// gốc, nên số dư ví không đổi. Giao dịch gốc được thay bằng các phần; chúng dùng chung một
+    /// splitGroupId để client biết chúng đến từ một khoản.
+    /// </summary>
+    [HttpPost("{id}/split")]
+    public async Task<ActionResult<IReadOnlyList<TransactionResponseDto>>> SplitTransaction(
+        Guid id,
+        [FromBody] SplitTransactionDto dto,
+        [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey)
+    {
+        var command = new SplitTransactionCommand
+        {
+            CustomerId = GetCustomerId(),
+            TransactionId = id,
+            Parts = dto.Parts ?? new List<SplitPartRequest>(),
+            IdempotencyKey = idempotencyKey
+        };
+        var result = await _mediator.Send(command);
+        return Ok(result);
+    }
+
     [HttpDelete("{id}")]
     public async Task<ActionResult<bool>> DeleteTransaction(Guid id)
     {

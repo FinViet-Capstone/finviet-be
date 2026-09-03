@@ -50,6 +50,29 @@ public class TransactionResponseDto
     public string? Merchant { get; set; }
     public Guid? TransferPairId { get; set; }
     public string? ExternalId { get; set; }
+
+    /// <summary>
+    /// Shared by every transaction produced from one split, so a client can group them and
+    /// show that they came from a single payment. Null on transactions that were never split.
+    /// </summary>
+    public Guid? SplitGroupId { get; set; }
+
     public DateTime CreatedAt { get; set; }
     public DateTime? UpdatedAt { get; set; }
+}
+
+/// <summary>Request body for <c>POST /api/Transactions/{id}/split</c>.</summary>
+public class SplitTransactionDto
+{
+    public List<SplitPartRequest>? Parts { get; set; }
+}
+
+/// <summary>One part of a split — the category it belongs to and how much of the original it takes.</summary>
+public class SplitPartRequest
+{
+    public string? CategoryId { get; set; }
+    public decimal Amount { get; set; }
+
+    /// <summary>Optional per-part note. Falls back to the original transaction's note when omitted.</summary>
+    public string? Note { get; set; }
 }

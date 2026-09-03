@@ -724,6 +724,7 @@ public partial class FinVietDbContext : DbContext
             entity.HasIndex(e => e.WalletId, "idx_tx_wallet");
             entity.HasIndex(e => e.CategoryId, "idx_tx_category");
             entity.HasIndex(e => e.TransferPairId, "idx_tx_pair").HasFilter("transfer_pair_id IS NOT NULL");
+            entity.HasIndex(e => e.SplitGroupId, "idx_tx_split_group").HasFilter("split_group_id IS NOT NULL");
             entity.HasIndex(e => e.ExternalId, "uq_tx_external").IsUnique().HasFilter("external_id IS NOT NULL");
 
             entity.Property(e => e.TransactionId)
@@ -756,6 +757,7 @@ public partial class FinVietDbContext : DbContext
                 .IsRequired()
                 .HasColumnName("wallet_id");
             entity.Property(e => e.TransferPairId).HasColumnName("transfer_pair_id");
+            entity.Property(e => e.SplitGroupId).HasColumnName("split_group_id");
             entity.Property(e => e.ExternalId).HasMaxLength(120).HasColumnName("external_id");
             entity.Property(e => e.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP").HasColumnName("created_at");
             entity.Property(e => e.UpdatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP").HasColumnName("updated_at");
