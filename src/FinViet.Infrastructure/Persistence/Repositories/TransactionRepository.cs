@@ -514,6 +514,151 @@ public class TransactionRepository : ITransactionRepository
             _ => throw new BusinessRuleException($"Unsupported transaction type '{transactionType}'.", "transaction_type_invalid")
         };
 
+    /// <summary>
+    /// Every rule that decides whether a split may proceed. Pure/no I/O so the whole table is
+    /// unit-testable — these checks are what keep the wallet balance correct, and a hole in
+    /// one of them moves real money rather than just showing a wrong number.
+    /// </summary>
+    internal static void ValidateSplit(
+        string entryMethod,
+        Guid? transferPairId,
+        string? categoryId,
+        decimal transactionAmount,
+        string? walletType,
+        IReadOnlyList<SplitPartRequest> parts)
+    {
+        // Same rule as delete: sync owns these rows, and replacing one would be undone (or
+        // duplicated) by the next synchronization.
+        if (string.Equals(entryMethod, "sepay_sync", StringComparison.OrdinalIgnoreCase))
+            throw new BusinessRuleException(
+                "Provider-synced transactions cannot be split.",
+                "synced_transaction_locked");
+
+        // A transfer is two rows that must stay a matched pair; splitting one leg would leave
+        // the other pointing at a row that no longer exists.
+        if (transferPairId.HasValue)
+            throw new BusinessRuleException(
+                "Transfer legs cannot be split.",
+                "transfer_cannot_be_split");
+
+        // Goal contributions/withdrawals are the ledger behind a saving goal's balance;
+        // re-categorising parts of one would desync the goal from its transactions.
+        if (string.Equals(categoryId, "cat_savings_goal", StringComparison.OrdinalIgnoreCase))
+            throw new BusinessRuleException(
+                "Saving-goal transactions cannot be split.",
+                "goal_transaction_cannot_be_split");
+
+        if (string.Equals(walletType, "sepay_linked", StringComparison.OrdinalIgnoreCase))
+            throw new BusinessRuleException(
+                "Bank-linked wallets are read-only. Transactions are created by synchronization.",
+                "linked_wallet_read_only");
+
+        if (parts.Count < 2)
+            throw new BusinessRuleException(
+                "A split needs at least two parts.",
+                "split_needs_two_parts");
+
+        if (parts.Any(p => p.Amount <= 0m))
+            throw new BusinessRuleException(
+                "Every part of a split must be greater than zero.",
+                "split_part_not_positive");
+
+        // Exact equality, not a tolerance: the amounts are decimal all the way from the
+        // request, and any drift here would silently move the wallet balance.
+        var partsTotal = parts.Sum(p => p.Amount);
+        if (partsTotal != transactionAmount)
+            throw new BusinessRuleException(
+                $"Split parts total {partsTotal:N2} but the transaction is {transactionAmount:N2}.",
+                "split_total_mismatch");
+    }
+
+    /// <summary>
+    /// Splits one transaction into <paramref name="parts"/> across categories, replacing the
+    /// original row with sibling rows that share a new split group id.
+    /// </summary>
+    /// <remarks>
+    /// Replacement rather than nesting: keeping a parent row alongside its children would
+    /// double-count in every aggregation that groups by <c>category_id</c> (bucket spend,
+    /// budget spent, spending score, weekly report). Because the parts must sum to the
+    /// original amount and keep its type and wallet, the signed total is unchanged — so the
+    /// wallet balance is deliberately <em>not</em> touched here. The wallet is still locked,
+    /// to serialise this against a concurrent transaction on the same wallet.
+    /// </remarks>
+    public async Task<IReadOnlyList<TransactionResponseDto>> SplitForCustomerAsync(
+        Guid customerId,
+        Guid transactionId,
+        IReadOnlyList<SplitPartRequest> parts,
+        string? idempotencyKey,
+        CancellationToken cancellationToken = default)
+    {
+        await using var databaseTransaction = await _context.Database.BeginTransactionAsync(cancellationToken);
+
+        var requestHash = IdempotencyStore.ComputeRequestHash(new
+        {
+            transactionId,
+            parts = parts.Select(p => new { p.CategoryId, p.Amount, p.Note }).ToList()
+        });
+        var idempotency = await IdempotencyStore.ClaimAsync(
+            _context, customerId, "transaction-split", idempotencyKey, requestHash, cancellationToken);
+        if (idempotency.IsReplay)
+        {
+            await databaseTransaction.CommitAsync(cancellationToken);
+            return IdempotencyStore.ReadReplay<List<TransactionResponseDto>>(idempotency);
+        }
+
+        var target = await _context.Transactions
+            .FirstOrDefaultAsync(t => t.TransactionId == transactionId && t.CustomerId == customerId, cancellationToken)
+            ?? throw new NotFoundException("Transaction", transactionId);
+
+        var wallet = (await LockWalletsAsync(new[] { target.WalletId }, cancellationToken)).SingleOrDefault();
+        if (wallet is null || wallet.CustomerId != customerId || wallet.IsDeleted)
+            throw new NotFoundException("Wallet", target.WalletId);
+
+        ValidateSplit(
+            target.EntryMethod,
+            target.TransferPairId,
+            target.CategoryId,
+            target.Amount,
+            wallet.WalletType,
+            parts);
+
+        var splitGroupId = Guid.NewGuid();
+        var now = DateTime.UtcNow;
+        var children = parts.Select(part => new Transaction
+        {
+            TransactionId = Guid.NewGuid(),
+            CustomerId = customerId,
+            WalletId = target.WalletId,
+            CategoryId = part.CategoryId,
+            TransactionType = target.TransactionType,
+            EntryMethod = target.EntryMethod,
+            Amount = part.Amount,
+            TransactionDate = target.TransactionDate,
+            Description = string.IsNullOrWhiteSpace(part.Note) ? target.Description : part.Note.Trim(),
+            Merchant = target.Merchant,
+            // ExternalId deliberately not carried over: it is unique per row
+            // (uq_tx_external), so it cannot be copied onto several siblings, and picking
+            // one arbitrarily would make re-sync match a row whose amount no longer
+            // corresponds to the bank record.
+            ExternalId = null,
+            SplitGroupId = splitGroupId,
+            IsAiClassified = false,
+            CreatedAt = now,
+            UpdatedAt = now
+        }).ToList();
+
+        _context.Transactions.Remove(target);
+        _context.Transactions.AddRange(children);
+        await _context.SaveChangesAsync(cancellationToken);
+
+        var response = children.Select(MapToDto).ToList();
+        await IdempotencyStore.CompleteAsync(
+            _context, customerId, "transaction-split", idempotencyKey!, response, cancellationToken);
+        await databaseTransaction.CommitAsync(cancellationToken);
+
+        return response;
+    }
+
     private static TransactionResponseDto MapToDto(Transaction transaction) => new()
     {
         TransactionId = transaction.TransactionId,
@@ -530,6 +675,7 @@ public class TransactionRepository : ITransactionRepository
         Merchant = transaction.Merchant,
         TransferPairId = transaction.TransferPairId,
         ExternalId = transaction.ExternalId,
+        SplitGroupId = transaction.SplitGroupId,
         CreatedAt = transaction.CreatedAt == default ? transaction.TransactionDate ?? DateTime.UtcNow : transaction.CreatedAt,
         UpdatedAt = transaction.UpdatedAt
     };

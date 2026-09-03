@@ -2,6 +2,60 @@
 
 <!-- Feature name and short description -->
 
+**Feature: split one transaction across several categories (F09)**
+(branch `feature/split-transaction`). Council review 1 (30-05-2026) asked the
+team to *"phân tích và định nghĩa rõ việc phân chia một khoản thu/chi phát
+sinh"*, and an external functional audit on 31-08 confirmed nothing in the
+schema could express it: a transaction carries exactly one `category_id` and
+one amount, and `transfer_pair_id` is for wallet transfers, not splits.
+
+## Status
+
+Implemented and locally verified: `dotnet build FinViet.sln` succeeded, 0
+errors; `FinViet.Application.UnitTests` **329/329 pass** (314 + 15 new).
+The migration was executed against this environment's real Postgres inside a
+transaction and rolled back — the column is created as nullable `uuid` and
+leaves no trace. **Not committed/pushed yet.** No mobile UI yet.
+
+## Goals
+
+- `POST /api/Transactions/{id}/split` taking `{ parts: [{ categoryId, amount,
+  note? }] }` and an optional `Idempotency-Key`, returning the created parts.
+- `V0011__transaction_split_group.sql` adds nullable `split_group_id` plus a
+  partial index, mirroring the existing `idx_tx_pair` / `uq_tx_external`
+  convention.
+- `TransactionRepository.ValidateSplit` holds every rule and is `internal
+  static`/pure, so the whole decision table is unit-testable without a
+  database — matching `IncomeAllocationService.BuildRecommendation`.
+
+## Notes
+
+- **Replacement, not nesting.** Splitting deletes the original row and writes N
+  siblings. Keeping a parent alongside its children would double-count in every
+  aggregation that groups by `category_id` — bucket spend, budget spent,
+  spending score, weekly report — none of which needed changing this way.
+- **The wallet balance is deliberately never touched.** The parts must sum to
+  the original amount and keep its type and wallet, so the signed total is
+  unchanged. The wallet is still locked (`FOR UPDATE`) to serialise against a
+  concurrent write on the same wallet. This is why the total is compared with
+  exact decimal equality rather than a tolerance: any drift here moves real
+  money instead of just displaying a wrong number.
+- **Four kinds of transaction refuse to split**, each for a concrete reason:
+  provider-synced rows (sync owns them and would undo or duplicate the split),
+  transfer legs (the paired leg would dangle), saving-goal transactions (they
+  are the ledger behind a goal's balance), and anything in a bank-linked wallet
+  (already read-only). Blocking rules are checked before the amount rules so
+  the error says *why it can never be split*, rather than sending the user off
+  to fix amounts on something they cannot split at all.
+- `external_id` is not carried onto the parts: it is unique per row
+  (`uq_tx_external`), so it cannot be copied onto siblings, and picking one
+  arbitrarily would make a re-sync match a row whose amount no longer
+  corresponds to the bank record.
+- Mobile UI is not built. The endpoint is complete and testable via Swagger;
+  wiring a split screen is the next piece of work.
+
+---
+
 **Feature: close the savings-plan gaps found in device testing**
 (branch `fix/savings-plan-limitations`). An external review ran the full
 four-step scenario on an Android emulator against production and confirmed the
