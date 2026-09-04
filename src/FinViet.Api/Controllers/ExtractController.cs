@@ -41,7 +41,16 @@ public class ExtractController : ControllerBase
     private const long MaxPhotoFileBytes = 8 * 1024 * 1024; // 8 MB
     private const int MaxSmsTextLength = 20_000;
     private static readonly string[] AllowedCsvExtensions = { ".csv", ".xlsx", ".xls" };
-    private static readonly string[] AllowedPhotoExtensions = { ".jpg", ".jpeg", ".png", ".heic" };
+    private static readonly IReadOnlyDictionary<string, string> AllowedPhotoTypes =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            [".jpg"] = "image/jpeg",
+            [".jpeg"] = "image/jpeg",
+            [".png"] = "image/png",
+            [".heic"] = "image/heic",
+            [".heif"] = "image/heif",
+            [".webp"] = "image/webp",
+        };
 
     // POST /api/extract/sms — parse pasted SMS text → candidate rows + AI category suggestions
     [HttpPost("sms")]
@@ -128,12 +137,14 @@ public class ExtractController : ControllerBase
                 $"Ảnh quá lớn (tối đa {MaxPhotoFileBytes / (1024 * 1024)} MB)."));
 
         var extension = Path.GetExtension(request.File.FileName).ToLowerInvariant();
-        if (!AllowedPhotoExtensions.Contains(extension))
+        if (!AllowedPhotoTypes.TryGetValue(extension, out var contentType))
             return BadRequest(ApiResponse<ExtractResponse>.Fail(
-                $"Định dạng ảnh không hợp lệ. Chỉ chấp nhận: {string.Join(", ", AllowedPhotoExtensions)}."));
+                $"Định dạng ảnh không hợp lệ. Chỉ chấp nhận: {string.Join(", ", AllowedPhotoTypes.Keys)}."));
 
         await using var stream = request.File.OpenReadStream();
-        var row = await _ocr.ExtractAsync(stream, request.File.ContentType, cancellationToken);
+        // Device uploads and generic clients can send application/octet-stream for a valid image.
+        // The extension is already allow-listed, so pass its canonical Gemini-supported MIME.
+        var row = await _ocr.ExtractAsync(stream, contentType, cancellationToken);
 
         if (row != null)
             await _extract.CategorizeItemAsync(GetCustomerId(), row, cancellationToken);

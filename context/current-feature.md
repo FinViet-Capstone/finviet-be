@@ -2,6 +2,40 @@
 
 <!-- Feature name and short description -->
 
+**Feature: Receipt OCR reliability and honest confidence** (branch
+`fix/receipt-ocr-reliability`, cross-repo with `finviet-mobile`). A live test against Render on
+2026-09-04 proved that a clear Vietnamese receipt is extracted correctly when the multipart MIME
+is `image/jpeg` (87,000 VND, MINIMART, 2018-03-12), but the same image silently becomes "not
+recognized" when the client-supplied MIME is missing/incorrect. The successful request took 15.5s,
+close enough to the mobile client's shared 20s timeout to make OCR unreliable during a Render cold
+start. The API also exposed category confidence only, causing mobile to invent high confidence for
+the AI-read amount/date/merchant.
+
+## Status
+
+Implemented and locally verified. The focused OCR parser suite passes 8/8; the full
+`FinViet.Application.UnitTests` suite passes 331/331; `dotnet build FinViet.sln --no-restore
+--maxcpucount:1` succeeds with 0 warnings/0 errors. A direct Gemini call with the new prompt and
+the same public receipt returned the correct 87,000 VND, MINIMART, 2018-03-12 and confidence 1.0
+for all three fields. Not committed or pushed.
+
+## Goals
+
+- Derive the Gemini image MIME from the already-validated file extension instead of trusting the
+  multipart `Content-Type` supplied by a device/client.
+- Return OCR field-level confidence for amount, merchant and transaction date; clamp it server-side
+  and keep missing dates explicitly uncertain even when the DTO needs a usable fallback date.
+- Strengthen the structured-output prompt around rotated receipts and Vietnamese total/payment
+  labels while preserving preview-only behavior and deterministic validation.
+- Mobile consumes the real OCR confidences and gives this slow AI endpoint a 120s timeout.
+
+## Notes
+
+- The endpoint remains preview-only; no transaction is persisted until the customer confirms.
+- Live before-fix fixture is a public MINIMART receipt used only for verification, not committed.
+
+---
+
 **Feature: split one transaction across several categories (F09)**
 (branch `feature/split-transaction`). Council review 1 (30-05-2026) asked the
 team to *"phân tích và định nghĩa rõ việc phân chia một khoản thu/chi phát
