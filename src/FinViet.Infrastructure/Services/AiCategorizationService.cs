@@ -23,6 +23,15 @@ public class AiCategorizationService : IAiCategorizationService
     private const string SourceFallback = "fallback";
     private const string FeatureClassificationBatch = "classification_batch";
     private const int MaxConcurrentBatchClassifications = 6;
+    private const int MaxConcurrentPreviewClassifications = 4;
+
+    // PreviewAsync is called once per HTTP request (photo, and SMS/CSV's per-row path before
+    // batching), so unlike PreviewManyAsync's request-scoped gate, this one must be shared across
+    // requests/instances of this AddScoped service — a mobile photo batch fires several
+    // /extract/photo requests concurrently, and without this gate their simultaneous Gemini calls
+    // mostly failed and were silently swallowed by ApplyCategorizationAsync's catch-all, leaving
+    // all but one photo in a batch uncategorized.
+    private static readonly SemaphoreSlim PreviewGate = new(MaxConcurrentPreviewClassifications);
 
     private readonly FinVietDbContext _db;
     private readonly IAiModelClient _aiModel;
@@ -229,11 +238,21 @@ public class AiCategorizationService : IAiCategorizationService
         }
 
         var expenseCategories = await ExpenseCategoriesAsync(customerId, cancellationToken);
-        var result = await _aiModel.ClassifyAsync(
-            input,
-            expenseCategories.Keys.ToList(),
-            cancellationToken,
-            new AiRequestContext("classification_preview", customerId));
+
+        AiClassificationResult result;
+        await PreviewGate.WaitAsync(cancellationToken);
+        try
+        {
+            result = await _aiModel.ClassifyAsync(
+                input,
+                expenseCategories.Keys.ToList(),
+                cancellationToken,
+                new AiRequestContext("classification_preview", customerId));
+        }
+        finally
+        {
+            PreviewGate.Release();
+        }
 
         // The provider only ever returns a name (it doesn't know our ids); resolve it here so
         // callers (SMS/CSV/photo extraction) get a category id they can actually apply, not just
