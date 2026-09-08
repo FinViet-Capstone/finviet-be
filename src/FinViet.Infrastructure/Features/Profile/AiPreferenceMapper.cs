@@ -9,13 +9,13 @@ internal static class AiPreferenceMapper
         preference.CategorizationMode,
         preference.AutoCategorizationThreshold,
         preference.DefaultHistoryEnabled,
-        preference.WeeklyReportEnabled,
+        preference.WeeklyReportEnabled && preference.ShareTransactions,
         preference.ShareBalances,
         preference.ShareTransactions,
         preference.ShareBudgets,
         preference.ShareGoals,
         preference.ShareReports,
-        preference.RagEnabled);
+        preference.RagEnabled && preference.ShareTransactions);
 
     internal static AiPreferenceDto Default() => new(
         "suggest_only",

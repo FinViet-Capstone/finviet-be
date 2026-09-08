@@ -334,10 +334,12 @@ public class AiChatService : IAiChatService
         string question,
         CancellationToken cancellationToken)
     {
-        var ragAllowed = await _db.AiCustomerPreferences.AsNoTracking()
+        var preference = await _db.AiCustomerPreferences.AsNoTracking()
             .Where(p => p.CustomerId == customerId)
-            .Select(p => (bool?)p.RagEnabled)
-            .FirstOrDefaultAsync(cancellationToken) ?? true;
+            .Select(p => new { p.RagEnabled, p.ShareTransactions })
+            .FirstOrDefaultAsync(cancellationToken);
+        var ragAllowed = preference is null
+                         || (preference.RagEnabled && preference.ShareTransactions);
         if (!ragAllowed)
         {
             await RecordRagAuditAsync(customerId, "rag_skipped", "customer_disabled", cancellationToken);

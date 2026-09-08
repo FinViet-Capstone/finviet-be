@@ -52,6 +52,14 @@ public class WeeklyReportService : IWeeklyReportService
         if (existing is not null)
             return await ToResponseAsync(existing, cancellationToken);
 
+        var transactionSharingEnabled = await _db.AiCustomerPreferences.AsNoTracking()
+            .Where(p => p.CustomerId == customerId)
+            .Select(p => (bool?)p.ShareTransactions)
+            .FirstOrDefaultAsync(cancellationToken) ?? true;
+        if (!transactionSharingEnabled)
+            throw new ValidationException(
+                "Weekly reports require transaction data sharing to be enabled.");
+
         // 1. Compute + snapshot the weekly score (persist true).
         var score = await _scoreService.ComputeAsync(
             customerId, "WEEKLY", weekStart, weekEnd, persist: true, includeComment: true, cancellationToken);
