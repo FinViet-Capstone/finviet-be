@@ -6,6 +6,7 @@ using FinViet.Infrastructure.Persistence.Context;
 using FinViet.Infrastructure.Persistence.Entities;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
+using ValidationException = FinViet.Application.Exceptions.ValidationException;
 
 namespace FinViet.Infrastructure.Features.Profile.Commands.UpdateAiPreferences;
 
@@ -51,8 +52,6 @@ public class UpdateAiPreferencesCommandHandler
             preference.AutoCategorizationThreshold = request.AutoCategorizationThreshold.Value;
         if (request.DefaultHistoryEnabled.HasValue)
             preference.DefaultHistoryEnabled = request.DefaultHistoryEnabled.Value;
-        if (request.WeeklyReportEnabled.HasValue)
-            preference.WeeklyReportEnabled = request.WeeklyReportEnabled.Value;
         if (request.ShareBalances.HasValue)
             preference.ShareBalances = request.ShareBalances.Value;
         if (request.ShareTransactions.HasValue)
@@ -63,8 +62,26 @@ public class UpdateAiPreferencesCommandHandler
             preference.ShareGoals = request.ShareGoals.Value;
         if (request.ShareReports.HasValue)
             preference.ShareReports = request.ShareReports.Value;
+
+        if (request.WeeklyReportEnabled is true && !preference.ShareTransactions)
+            throw new ValidationException("Weekly reports require transaction data sharing to be enabled.");
+        if (request.RagEnabled is true && !preference.ShareTransactions)
+            throw new ValidationException("RAG personalization requires transaction data sharing to be enabled.");
+
+        if (request.WeeklyReportEnabled.HasValue)
+            preference.WeeklyReportEnabled = request.WeeklyReportEnabled.Value;
         if (request.RagEnabled.HasValue)
             preference.RagEnabled = request.RagEnabled.Value;
+
+        var weeklyReportAutomaticallyDisabled = false;
+        var ragAutomaticallyDisabled = false;
+        if (!preference.ShareTransactions)
+        {
+            weeklyReportAutomaticallyDisabled = preference.WeeklyReportEnabled;
+            ragAutomaticallyDisabled = preference.RagEnabled;
+            preference.WeeklyReportEnabled = false;
+            preference.RagEnabled = false;
+        }
 
         preference.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync(cancellationToken);
@@ -73,14 +90,20 @@ public class UpdateAiPreferencesCommandHandler
                 "ai_preference_updated",
                 "customer",
                 request.CustomerId,
-                Metadata: ChangedFields(request)),
+                Metadata: ChangedFields(
+                    request,
+                    weeklyReportAutomaticallyDisabled,
+                    ragAutomaticallyDisabled)),
             cancellationToken);
         return AiPreferenceMapper.Map(preference);
     }
 
-    private static IReadOnlyDictionary<string, object?> ChangedFields(UpdateAiPreferencesCommand request)
+    private static IReadOnlyDictionary<string, object?> ChangedFields(
+        UpdateAiPreferencesCommand request,
+        bool weeklyReportAutomaticallyDisabled,
+        bool ragAutomaticallyDisabled)
     {
-        var changed = new List<string>();
+        var changed = new HashSet<string>(StringComparer.Ordinal);
         if (request.CategorizationMode is not null) changed.Add("categorizationMode");
         if (request.AutoCategorizationThreshold.HasValue) changed.Add("autoCategorizationThreshold");
         if (request.DefaultHistoryEnabled.HasValue) changed.Add("defaultHistoryEnabled");
@@ -91,6 +114,8 @@ public class UpdateAiPreferencesCommandHandler
         if (request.ShareGoals.HasValue) changed.Add("shareGoals");
         if (request.ShareReports.HasValue) changed.Add("shareReports");
         if (request.RagEnabled.HasValue) changed.Add("ragEnabled");
-        return new Dictionary<string, object?> { ["changedFields"] = changed };
+        if (weeklyReportAutomaticallyDisabled) changed.Add("weeklyReportEnabled");
+        if (ragAutomaticallyDisabled) changed.Add("ragEnabled");
+        return new Dictionary<string, object?> { ["changedFields"] = changed.Order().ToArray() };
     }
 }

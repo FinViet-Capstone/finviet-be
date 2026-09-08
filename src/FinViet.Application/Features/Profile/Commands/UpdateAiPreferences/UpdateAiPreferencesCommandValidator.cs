@@ -17,5 +17,13 @@ public class UpdateAiPreferencesCommandValidator : AbstractValidator<UpdateAiPre
             .GreaterThan(0m)
             .LessThanOrEqualTo(1m)
             .When(x => x.AutoCategorizationThreshold.HasValue);
+
+        RuleFor(x => x.WeeklyReportEnabled)
+            .Must((command, enabled) => enabled is not true || command.ShareTransactions is not false)
+            .WithMessage("weeklyReportEnabled requires shareTransactions to be enabled when both are updated together.");
+
+        RuleFor(x => x.RagEnabled)
+            .Must((command, enabled) => enabled is not true || command.ShareTransactions is not false)
+            .WithMessage("ragEnabled requires shareTransactions to be enabled when both are updated together.");
     }
 }
