@@ -15,8 +15,10 @@ using FinViet.Infrastructure.Features.Profile.Commands.UpdateAiPreferences;
 using FinViet.Infrastructure.Features.Profile.Commands.UpdateProfile;
 using FinViet.Infrastructure.Features.Profile.Commands.UploadAvatar;
 using FinViet.Infrastructure.Features.Profile.Queries.GetProfile;
+using FinViet.Infrastructure.Persistence.Entities;
 using Microsoft.EntityFrameworkCore;
 using Moq;
+using ValidationException = FinViet.Application.Exceptions.ValidationException;
 
 namespace FinViet.Application.UnitTests;
 
@@ -171,6 +173,89 @@ public sealed class ProfileAndAccountHandlerTests
         Assert.Contains("shareBalances", metadataJson);
         Assert.DoesNotContain("high_confidence_auto", metadataJson);
         Assert.DoesNotContain("false", metadataJson, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void UpdateAiPreferencesValidator_RejectsExplicitPrivacyConflicts()
+    {
+        var validator = new UpdateAiPreferencesCommandValidator();
+
+        var result = validator.Validate(new UpdateAiPreferencesCommand(
+            Guid.NewGuid(),
+            WeeklyReportEnabled: true,
+            ShareTransactions: false,
+            RagEnabled: true));
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, error => error.PropertyName == "WeeklyReportEnabled");
+        Assert.Contains(result.Errors, error => error.PropertyName == "RagEnabled");
+    }
+
+    [Fact]
+    public async Task UpdateAiPreferences_DisablingTransactionSharing_DisablesDependentFeatures()
+    {
+        await using var db = TestDbContextFactory.Create();
+        var customer = TestData.Customer();
+        var preference = new AiCustomerPreference
+        {
+            CustomerId = customer.CustomerId,
+            ShareTransactions = true,
+            WeeklyReportEnabled = true,
+            RagEnabled = true,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
+        db.Customers.Add(customer);
+        db.AiCustomerPreferences.Add(preference);
+        await db.SaveChangesAsync();
+        var telemetry = new Mock<IAiTelemetryRecorder>(MockBehavior.Strict);
+        AiAuditRecord? audit = null;
+        telemetry.Setup(x => x.RecordAuditAsync(
+                It.IsAny<AiAuditRecord>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<AiAuditRecord, CancellationToken>((record, _) => audit = record)
+            .Returns(Task.CompletedTask);
+        var handler = new UpdateAiPreferencesCommandHandler(db, telemetry.Object);
+
+        var result = await handler.Handle(
+            new UpdateAiPreferencesCommand(customer.CustomerId, ShareTransactions: false),
+            CancellationToken.None);
+
+        Assert.False(result.ShareTransactions);
+        Assert.False(result.WeeklyReportEnabled);
+        Assert.False(result.RagEnabled);
+        Assert.False(preference.WeeklyReportEnabled);
+        Assert.False(preference.RagEnabled);
+        var metadataJson = System.Text.Json.JsonSerializer.Serialize(audit?.Metadata);
+        Assert.Contains("shareTransactions", metadataJson);
+        Assert.Contains("weeklyReportEnabled", metadataJson);
+        Assert.Contains("ragEnabled", metadataJson);
+    }
+
+    [Fact]
+    public async Task UpdateAiPreferences_EnablingDependentFeatureWithoutTransactions_Throws()
+    {
+        await using var db = TestDbContextFactory.Create();
+        var customer = TestData.Customer();
+        db.Customers.Add(customer);
+        db.AiCustomerPreferences.Add(new AiCustomerPreference
+        {
+            CustomerId = customer.CustomerId,
+            ShareTransactions = false,
+            WeeklyReportEnabled = false,
+            RagEnabled = false,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync();
+        var telemetry = new Mock<IAiTelemetryRecorder>(MockBehavior.Strict);
+        var handler = new UpdateAiPreferencesCommandHandler(db, telemetry.Object);
+
+        var exception = await Assert.ThrowsAsync<ValidationException>(() => handler.Handle(
+            new UpdateAiPreferencesCommand(customer.CustomerId, WeeklyReportEnabled: true),
+            CancellationToken.None));
+
+        Assert.Contains("transaction data sharing", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     // TC-ACC-U01
