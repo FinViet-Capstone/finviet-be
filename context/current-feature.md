@@ -1525,3 +1525,33 @@ for the full verification trail, including two real bugs found and fixed there),
   `dotnet build` 0 errors (6 pre-existing nullable warnings, unchanged); full
   `FinViet.Application.UnitTests` 238/238 (235 pre-existing + 3 new), no regressions. No live
   Postgres integration-test run (none configured in this environment). Not committed/pushed yet.
+- 2026-09-09 — Admin account unlock (`PUT /api/account/activate/{customerId}`, Role: Admin), the
+  missing counterpart to `deactivate`. `ActivateAccountCommand` (Application) +
+  `ActivateAccountCommandHandler` (Infrastructure) follow the existing Deactivate pair exactly.
+  Two deliberate asymmetries against deactivate: the lookup filters `DeletedAt == null`, so a
+  customer who self-deleted (`DELETE /api/account` sets both `IsActive=false` and `DeletedAt`)
+  cannot be revived by an admin — only an admin lock is reversible; and revoked refresh tokens are
+  **not** restored, so a reactivated user signs in again with their password. Admin web
+  (`Project-Capstone Web`): `setUserActive` in `src/services/real/users.ts` no longer throws
+  "chưa có API mở khóa" for `isActive: true` — it picks `activate`/`deactivate` by the requested
+  state; the Users screen's existing "Mở khóa" button/confirm modal needed no change. 2 new unit
+  tests (`TC-ACC-U04/U05`: reactivation leaves revoked tokens revoked; soft-deleted → 404) and 1
+  new integration test (`TC-ADM-03`: unknown id → 404). `KnownGapsTests` skip reason narrowed —
+  list/activate/deactivate are done, only a dedicated admin reset-password endpoint is still
+  missing. `docs/api-reference.md` Account section and the web repo's
+  `context/backend-gaps.md` ("No account-reactivation endpoint" → Resolved) updated.
+  `dotnet build FinViet.sln` 0 errors (6 pre-existing nullable warnings in
+  `TransactionRepository.cs`, unchanged); `FinViet.Application.UnitTests` 336/336 and
+  `FinViet.Domain.UnitTests` pass; web `eslint` and `tsc --noEmit` clean. The real-server
+  integration suite self-skips all 70 tests, so `TC-ADM-03` and the end-to-end lock→unlock→login
+  path are **unverified against a live server**: the local API refuses to boot against
+  `FinViet_update` with `42710: type "app_language" already exists` — that database carries the
+  schema but no `public.schema_versions` journal, so DbUp replays `V0001` from scratch. This is a
+  pre-existing local-bootstrap condition unrelated to this change; clearing it needs the
+  backup-confirmed `--adopt-database-baseline` run from `docs/database-bootstrap.md`, which was not
+  performed. Committed on `feature/admin-account-activate`, branched from `origin/dev` (the
+  previous work-in-progress sat on `codex/privacy-preference-dependencies`, already merged to
+  `dev` via PR #92); not pushed. The admin-web half is a separate commit on
+  `Project-Capstone Web` branch `feature/admin-account-unlock`, branched from that repo's `main`
+  — its `origin/dev` is 3 commits behind `main`, so branching from `dev` there would have
+  dropped the scoring-weights fix.

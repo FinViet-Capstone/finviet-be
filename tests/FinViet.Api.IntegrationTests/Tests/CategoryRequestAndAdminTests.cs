@@ -75,4 +75,15 @@ public class CategoryRequestAndAdminTests : ApiTestBase
             "/api/account/deactivate/00000000-0000-0000-0000-000000000000", token: Admin);
         Assert.Equal(404, r.Code);
     }
+
+    // TC-ADM-03 — activate a non-existent customer → 404
+    [SkippableFact]
+    public async Task AdminActivate_UnknownCustomer_Returns404()
+    {
+        RequireServer();
+        Skip.If(string.IsNullOrEmpty(Admin), "Admin token unavailable.");
+        var r = await Fx.SendAsync(HttpMethod.Put,
+            "/api/account/activate/00000000-0000-0000-0000-000000000000", token: Admin);
+        Assert.Equal(404, r.Code);
+    }
 }

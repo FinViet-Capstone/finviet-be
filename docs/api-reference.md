@@ -166,11 +166,13 @@ Never includes `passwordHash`.
 |---|---|---|---|---|
 | DELETE | `/` | Customer | — | `ApiResponse<string>` |
 | PUT | `/deactivate/{customerId:guid}` | Admin | — | `ApiResponse<string>` (404 if customer not found) |
+| PUT | `/activate/{customerId:guid}` | Admin | — | `ApiResponse<string>` (404 if customer not found or soft-deleted) |
 
-**Validation**: none on either endpoint (no body).
+**Validation**: none on any of these endpoints (no body).
 **Business logic**:
 - `DELETE /` (self soft-delete): loads active customer by JWT id → 404 if missing/inactive; sets `IsActive=false` **and** `DeletedAt=UtcNow`; revokes all active refresh tokens.
 - `PUT /deactivate/{customerId}` (admin): loads target regardless of current active state → 404 if missing; sets `IsActive=false` (does **not** set `DeletedAt` — distinguishes admin deactivation from self-delete); revokes all of the target's active refresh tokens.
+- `PUT /activate/{customerId}` (admin): loads target **excluding** soft-deleted rows (`DeletedAt == null`) → 404 if missing or self-deleted; sets `IsActive=true`. Does **not** un-revoke refresh tokens — the reactivated user has to sign in again.
 
 ---
 

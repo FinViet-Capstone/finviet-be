@@ -1,5 +1,6 @@
 using FinViet.Api.Common;
 using FinViet.Application.Common;
+using FinViet.Application.Features.Account.Commands.ActivateAccount;
 using FinViet.Application.Features.Account.Commands.DeactivateAccount;
 using FinViet.Application.Features.Account.Commands.DeleteAccount;
 using MediatR;
@@ -37,6 +38,17 @@ public class AccountController : ControllerBase
     public async Task<IActionResult> DeactivateAccount(Guid customerId, CancellationToken ct)
     {
         var result = await _mediator.Send(new DeactivateAccountCommand(customerId), ct);
+        return Ok(ApiResponse<string>.Ok(result));
+    }
+
+    /// <summary>Admin mở lại tài khoản customer đã bị vô hiệu hóa. (Role: Admin)</summary>
+    [HttpPut("activate/{customerId:guid}")]
+    [Authorize(Roles = "Admin")]
+    [ProducesResponseType(typeof(ApiResponse<string>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> ActivateAccount(Guid customerId, CancellationToken ct)
+    {
+        var result = await _mediator.Send(new ActivateAccountCommand(customerId), ct);
         return Ok(ApiResponse<string>.Ok(result));
     }
 }
