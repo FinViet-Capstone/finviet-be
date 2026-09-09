@@ -5,6 +5,25 @@ namespace FinViet.Application.UnitTests;
 
 public class TransactionRulesTests
 {
+    [Theory]
+    [InlineData(null, null)]
+    [InlineData("  ", null)]
+    [InlineData("AI_BATCH", "ai_suggestion")]
+    [InlineData(" RULE ", "merchant_rule")]
+    [InlineData("manual", "manual")]
+    [InlineData("merchant_rule", "merchant_rule")]
+    [InlineData("AI_AUTO", "ai_auto")]
+    [InlineData("ai_suggestion", "ai_suggestion")]
+    [InlineData("fallback", "fallback")]
+    public void NormalizeAiSource_ReturnsDatabaseCompatibleValue(string? input, string? expected)
+        => Assert.Equal(expected, TransactionRules.NormalizeAiSource(input));
+
+    [Theory]
+    [InlineData("csv_import")]
+    [InlineData("unknown")]
+    public void NormalizeAiSource_UnknownValue_ThrowsBadRequest(string input)
+        => Assert.Throws<BadRequestException>(() => TransactionRules.NormalizeAiSource(input));
+
     // TC-TXN-U01
     [Fact]
     public void EnsureEditableFieldsAllowed_SepayLinkedWallet_AmountProvided_ThrowsSyncedFieldsLocked()
