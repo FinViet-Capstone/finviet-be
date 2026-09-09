@@ -12,6 +12,39 @@ namespace FinViet.Application.UnitTests;
 
 public class CreateTransactionHandlerTests
 {
+    [Theory]
+    [InlineData("AI_BATCH", "ai_suggestion")]
+    [InlineData("RULE", "merchant_rule")]
+    public async Task Handle_CsvLegacySource_PersistsCanonicalSource(string source, string expected)
+    {
+        var repo = RepoReturning(new TransactionResponseDto { TransactionId = Guid.NewGuid() });
+        var handler = CreateHandler(repo, new Mock<IMerchantRuleService>(), new Mock<IAiTelemetryRecorder>());
+        await handler.Handle(new CreateTransactionCommand
+        {
+            CustomerId = Guid.NewGuid(), WalletId = Guid.NewGuid(), CategoryId = "cat_food",
+            TransactionType = "expense", Amount = 50_000m, TransactionDate = DateTime.UtcNow,
+            Note = "Ca phe Highlands", EntryMethod = "csv_import", AiSource = source,
+        }, CancellationToken.None);
+
+        repo.Verify(r => r.CreateManualForCustomerAsync(
+            It.IsAny<Guid>(), It.IsAny<Guid>(), "cat_food", "expense", 50_000m,
+            It.IsAny<DateTime>(), "Ca phe Highlands", It.IsAny<string?>(), "csv_import",
+            It.IsAny<string?>(), expected, It.IsAny<decimal?>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Handle_InvalidAiSource_RejectsBeforeRepositoryWrite()
+    {
+        var repo = RepoReturning(new TransactionResponseDto());
+        var handler = CreateHandler(repo, new Mock<IMerchantRuleService>(), new Mock<IAiTelemetryRecorder>());
+        await Assert.ThrowsAsync<FinViet.Application.Common.Exceptions.BadRequestException>(() =>
+            handler.Handle(new CreateTransactionCommand
+            {
+                TransactionType = "expense", Amount = 50_000m, AiSource = "unknown",
+            }, CancellationToken.None));
+        repo.VerifyNoOtherCalls();
+    }
+
     private static CreateTransactionHandler CreateHandler(
         Mock<ITransactionRepository> repo,
         Mock<IMerchantRuleService> rules,
@@ -106,7 +139,7 @@ public class CreateTransactionHandlerTests
                 a.EventType == "categorization_decision"
                 && a.CorrelationId == transactionId
                 && a.CustomerId == customerId
-                && (string?)a.Metadata!["source"] == "AI_BATCH"
+                && (string?)a.Metadata!["source"] == "ai_suggestion"
                 && (decimal?)a.Metadata["confidence"] == 0.92m),
             It.IsAny<CancellationToken>()), Times.Once);
     }

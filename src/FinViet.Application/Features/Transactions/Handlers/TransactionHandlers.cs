@@ -36,6 +36,22 @@ internal static class TransactionRules
             _ => "manual"
         };
 
+    // Keep persisted values aligned with ck_transactions_ai_source. Older mobile clients
+    // label reviewed batch suggestions AI_BATCH and client merchant rules RULE.
+    public static string? NormalizeAiSource(string? source)
+        => (source ?? string.Empty).Trim().ToLowerInvariant() switch
+        {
+            "" => null,
+            "ai_batch" => "ai_suggestion",
+            "rule" => "merchant_rule",
+            "manual" => "manual",
+            "merchant_rule" => "merchant_rule",
+            "ai_auto" => "ai_auto",
+            "ai_suggestion" => "ai_suggestion",
+            "fallback" => "fallback",
+            _ => throw new BadRequestException("Invalid aiSource. Allowed values: manual, merchant_rule, ai_auto, ai_suggestion, fallback (legacy AI_BATCH and RULE are also supported).")
+        };
+
     public static string ValidateManualInput(string transactionType, decimal amount)
     {
         var normalized = Normalize(transactionType);
@@ -128,6 +144,7 @@ public class CreateTransactionHandler : IRequestHandler<CreateTransactionCommand
     public async Task<TransactionResponseDto> Handle(CreateTransactionCommand request, CancellationToken cancellationToken)
     {
         var normalizedType = TransactionRules.ValidateManualInput(request.TransactionType, request.Amount);
+        var normalizedAiSource = TransactionRules.NormalizeAiSource(request.AiSource);
 
         // Auto-apply a merchant rule when the caller did not choose a category (manual entry keeps
         // the user's choice; uncategorized expenses get the matching rule's category — §2b). A rule
@@ -158,7 +175,7 @@ public class CreateTransactionHandler : IRequestHandler<CreateTransactionCommand
 
         // A merchant rule matched above always wins over a client-supplied AI suggestion, since
         // the rule replaced categoryId before this point — don't log a stale AI decision for it.
-        var effectiveAiSource = match is null ? request.AiSource : null;
+        var effectiveAiSource = match is null ? normalizedAiSource : null;
         var effectiveAiConfidence = match is null ? request.AiConfidence : null;
 
         var result = await _transactionRepository.CreateManualForCustomerAsync(
