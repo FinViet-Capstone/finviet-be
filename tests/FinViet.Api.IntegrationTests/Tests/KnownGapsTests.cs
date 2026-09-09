@@ -25,8 +25,9 @@ public class KnownGapsTests
     public void Admin_AnnouncementBroadcast_Endpoint() { }
 
     // Admin Dashboard — "User account management: view registered users,
-    // activate/deactivate accounts, reset passwords". Only deactivate(id) exists.
-    [Fact(Skip = "PARTIAL (Capstone Admin req): list-users, re-activate, and admin reset-password endpoints are missing (only deactivate exists).")]
+    // activate/deactivate accounts, reset passwords". Listing and both account-state
+    // transitions are implemented; only a dedicated admin reset-password endpoint is missing.
+    [Fact(Skip = "PARTIAL (Capstone Admin req): dedicated admin reset-password endpoint is missing; list/activate/deactivate are implemented.")]
     public void Admin_UserManagement_ListActivateReset() { }
 
     // Mobile — "Notification center: push reminders for budget alerts, weekly report

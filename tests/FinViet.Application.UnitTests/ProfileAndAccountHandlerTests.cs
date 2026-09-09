@@ -1,5 +1,6 @@
 using FinViet.Application.Common.Exceptions;
 using FinViet.Application.Features.Account.Commands.DeactivateAccount;
+using FinViet.Application.Features.Account.Commands.ActivateAccount;
 using FinViet.Application.Features.Account.Commands.DeleteAccount;
 using FinViet.Application.DTOs.Ai;
 using FinViet.Application.Features.Profile.Commands.UpdateAiPreferences;
@@ -10,6 +11,7 @@ using FinViet.Application.Interfaces;
 using FinViet.Application.UnitTests.Infrastructure;
 using FinViet.Domain.Enums;
 using FinViet.Infrastructure.Features.Account.Commands.DeactivateAccount;
+using FinViet.Infrastructure.Features.Account.Commands.ActivateAccount;
 using FinViet.Infrastructure.Features.Account.Commands.DeleteAccount;
 using FinViet.Infrastructure.Features.Profile.Commands.UpdateAiPreferences;
 using FinViet.Infrastructure.Features.Profile.Commands.UpdateProfile;
@@ -307,6 +309,39 @@ public sealed class ProfileAndAccountHandlerTests
 
         await Assert.ThrowsAsync<NotFoundException>(() => new DeactivateAccountCommandHandler(db)
             .Handle(new DeactivateAccountCommand(Guid.NewGuid()), CancellationToken.None));
+    }
+
+    // TC-ACC-U04
+    [Fact]
+    public async Task ActivateAccount_DeactivatedCustomer_ReactivatesWithoutRestoringRevokedTokens()
+    {
+        await using var db = TestDbContextFactory.Create();
+        var customer = TestData.Customer(isActive: false);
+        var revokedToken = TestData.RefreshToken(customer, isRevoked: true);
+        db.Customers.Add(customer);
+        db.RefreshTokens.Add(revokedToken);
+        await db.SaveChangesAsync();
+
+        await new ActivateAccountCommandHandler(db)
+            .Handle(new ActivateAccountCommand(customer.CustomerId), CancellationToken.None);
+
+        Assert.True(customer.IsActive);
+        Assert.Null(customer.DeletedAt);
+        Assert.True(revokedToken.IsRevoked);
+    }
+
+    // TC-ACC-U05
+    [Fact]
+    public async Task ActivateAccount_SoftDeletedCustomer_ThrowsNotFoundException()
+    {
+        await using var db = TestDbContextFactory.Create();
+        var customer = TestData.Customer(isActive: false);
+        customer.DeletedAt = DateTime.UtcNow;
+        db.Customers.Add(customer);
+        await db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<NotFoundException>(() => new ActivateAccountCommandHandler(db)
+            .Handle(new ActivateAccountCommand(customer.CustomerId), CancellationToken.None));
     }
 
 }
