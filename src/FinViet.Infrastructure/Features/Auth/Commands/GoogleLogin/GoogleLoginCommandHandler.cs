@@ -28,20 +28,26 @@ public class GoogleLoginCommandHandler : IRequestHandler<GoogleLoginCommand, Aut
 
     public async Task<AuthResponseDto> Handle(GoogleLoginCommand request, CancellationToken cancellationToken)
     {
+        if (string.IsNullOrWhiteSpace(request.IdToken))
+            throw new BadRequestException("Firebase ID token is required.");
+
         var firebaseUser = await _firebase.VerifyIdTokenAsync(request.IdToken);
 
         if (firebaseUser is null)
             throw new UnauthorizedException("Invalid or expired Google ID token.");
 
-        if (string.IsNullOrEmpty(firebaseUser.Email))
+        if (string.IsNullOrWhiteSpace(firebaseUser.Uid) ||
+            string.IsNullOrWhiteSpace(firebaseUser.Email) || !firebaseUser.EmailVerified)
             throw new BadRequestException("Google account must have a verified email.");
+
+        var email = firebaseUser.Email.Trim().ToLowerInvariant();
 
         var customer = await _db.Customers
             .Include(c => c.Setting)
             .FirstOrDefaultAsync(c => c.GoogleId == firebaseUser.Uid, cancellationToken)
             ?? await _db.Customers
             .Include(c => c.Setting)
-            .FirstOrDefaultAsync(c => c.Email == firebaseUser.Email.ToLower(), cancellationToken);
+            .FirstOrDefaultAsync(c => c.Email == email, cancellationToken);
 
         if (customer is null)
         {
@@ -57,7 +63,7 @@ public class GoogleLoginCommandHandler : IRequestHandler<GoogleLoginCommand, Aut
             {
                 CustomerId      = Guid.NewGuid(),
                 FullName        = firebaseUser.DisplayName ?? firebaseUser.Email,
-                Email           = firebaseUser.Email.ToLower(),
+                Email           = email,
                 PasswordHash    = BCrypt.Net.BCrypt.HashPassword(Guid.NewGuid().ToString()),
                 GoogleId        = firebaseUser.Uid,
                 AvatarUrl       = firebaseUser.PhotoUrl,
@@ -76,8 +82,18 @@ public class GoogleLoginCommandHandler : IRequestHandler<GoogleLoginCommand, Aut
             if (!customer.IsActive)
                 throw new ForbiddenException("This account has been deactivated.");
 
+            if (customer.GoogleId is not null && customer.GoogleId != firebaseUser.Uid)
+                throw new ConflictException("This account is already linked to another Google identity.");
+
             if (customer.GoogleId is null)
                 customer.GoogleId = firebaseUser.Uid;
+
+            // Only mark the stored email verified when it matches the verified identity.
+            if (string.Equals(customer.Email, email, StringComparison.OrdinalIgnoreCase))
+            {
+                customer.IsEmailVerified = true;
+                customer.EmailVerifiedAt ??= DateTime.UtcNow;
+            }
         }
 
         await _db.SaveChangesAsync(cancellationToken);
