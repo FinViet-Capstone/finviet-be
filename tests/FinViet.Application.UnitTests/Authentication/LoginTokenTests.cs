@@ -89,6 +89,89 @@ public class LoginTokenTests
     }
 
     // TC-AUTH-U16
+    [Theory]
+    [InlineData(null, true)]
+    [InlineData(" ", true)]
+    [InlineData("customer@example.com", false)]
+    public async Task GoogleLogin_UnverifiedOrMissingEmail_DoesNotLinkOrIssueTokens(string? email, bool verified)
+    {
+        await using var db = TestDbContextFactory.Create();
+        var customer = TestData.Customer();
+        db.Customers.Add(customer);
+        await db.SaveChangesAsync();
+        var firebase = new Mock<IFirebaseAuthService>();
+        firebase.Setup(x => x.VerifyIdTokenAsync("google"))
+            .ReturnsAsync(new FirebaseUserInfo("uid", email, "Name", null, verified));
+        var handler = new GoogleLoginCommandHandler(db, firebase.Object,
+            new LoginCommandHandler(db, Jwt().Object, Configuration()));
+
+        await Assert.ThrowsAsync<BadRequestException>(() => handler.Handle(new GoogleLoginCommand("google"), default));
+        Assert.Null(customer.GoogleId);
+        Assert.Empty(db.RefreshTokens);
+    }
+
+    [Fact]
+    public async Task GoogleLogin_BlankToken_DoesNotCallFirebase()
+    {
+        await using var db = TestDbContextFactory.Create();
+        var firebase = new Mock<IFirebaseAuthService>(MockBehavior.Strict);
+        var handler = new GoogleLoginCommandHandler(db, firebase.Object,
+            new LoginCommandHandler(db, Jwt().Object, Configuration()));
+        await Assert.ThrowsAsync<BadRequestException>(() => handler.Handle(new GoogleLoginCommand(" "), default));
+        firebase.VerifyNoOtherCalls();
+    }
+
+    [Theory]
+    [InlineData(false, null)]
+    [InlineData(true, "different-uid")]
+    public async Task GoogleLogin_InactiveOrConflictingIdentity_DoesNotIssueTokens(bool active, string? googleId)
+    {
+        await using var db = TestDbContextFactory.Create();
+        var customer = TestData.Customer(isActive: active);
+        customer.GoogleId = googleId;
+        db.Customers.Add(customer);
+        await db.SaveChangesAsync();
+        var firebase = new Mock<IFirebaseAuthService>();
+        firebase.Setup(x => x.VerifyIdTokenAsync("google"))
+            .ReturnsAsync(new FirebaseUserInfo("uid", customer.Email, "Name", null, true));
+        var handler = new GoogleLoginCommandHandler(db, firebase.Object,
+            new LoginCommandHandler(db, Jwt().Object, Configuration()));
+        if (active)
+            await Assert.ThrowsAsync<ConflictException>(() => handler.Handle(new GoogleLoginCommand("google"), default));
+        else
+            await Assert.ThrowsAsync<ForbiddenException>(() => handler.Handle(new GoogleLoginCommand("google"), default));
+        Assert.Empty(db.RefreshTokens);
+        Assert.Equal(googleId, customer.GoogleId);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GoogleLogin_VerifiedIdentity_CreatesOrVerifiesCustomer(bool existing)
+    {
+        await using var db = TestDbContextFactory.Create();
+        if (existing)
+        {
+            db.Customers.Add(TestData.Customer(isEmailVerified: false));
+            await db.SaveChangesAsync();
+        }
+        var firebase = new Mock<IFirebaseAuthService>();
+        firebase.Setup(x => x.VerifyIdTokenAsync("google"))
+            .ReturnsAsync(new FirebaseUserInfo("uid", "CUSTOMER@EXAMPLE.COM", "Name", null, true));
+        var result = await new GoogleLoginCommandHandler(db, firebase.Object,
+            new LoginCommandHandler(db, Jwt().Object, Configuration()))
+            .Handle(new GoogleLoginCommand("google"), default);
+
+        var customer = Assert.Single(db.Customers);
+        Assert.Equal("uid", customer.GoogleId);
+        Assert.True(customer.IsEmailVerified);
+        Assert.NotNull(customer.EmailVerifiedAt);
+        Assert.Equal("customer@example.com", customer.Email);
+        Assert.Equal(customer.CustomerId, result.Profile.CustomerId);
+        Assert.Single(db.RefreshTokens);
+    }
+
+    // TC-AUTH-U16
     [Fact]
     public async Task RefreshToken_ValidToken_RotatesAndRevokesOriginal()
     {
