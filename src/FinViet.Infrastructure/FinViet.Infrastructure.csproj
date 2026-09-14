@@ -34,6 +34,9 @@
     <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="7.5.2" />
     <PackageReference Include="SendGrid" Version="9.29.3" />
     <PackageReference Include="FirebaseAdmin" Version="3.1.0" />
+    <!-- FirebaseAdmin's own serializer; declared explicitly because FirebaseAuthService
+         reads token claims with it rather than relying on it transitively. -->
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
     <PackageReference Include="Microsoft.AspNetCore.Http.Abstractions" Version="2.2.0" />
     <PackageReference Include="Microsoft.AspNetCore.DataProtection.Abstractions" Version="8.0.11" />
     <PackageReference Include="Microsoft.Extensions.Options" Version="8.0.2" />

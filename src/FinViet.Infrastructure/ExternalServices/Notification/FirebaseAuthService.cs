@@ -1,3 +1,4 @@
+using System.Text.Json;
 using FinViet.Application.Interfaces;
 using FinViet.Application.Common.Exceptions;
 using FirebaseAdmin;
@@ -5,6 +6,7 @@ using FirebaseAdmin.Auth;
 using Google.Apis.Auth.OAuth2;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using Newtonsoft.Json;
 
 namespace FinViet.Infrastructure.ExternalServices;
 
@@ -77,10 +79,12 @@ public class FirebaseAuthService : IFirebaseAuthService
 
             // A valid Firebase password/anonymous token is not a Google sign-in.
             if (!decoded.Claims.TryGetValue("firebase", out var firebase) ||
-                !System.Text.Json.JsonSerializer.SerializeToElement(firebase)
-                    .TryGetProperty("sign_in_provider", out var provider) ||
-                provider.GetString() != "google.com")
+                ReadSignInProvider(firebase) is not "google.com")
+            {
+                _logger.LogWarning(
+                    "Firebase token rejected: sign_in_provider is not google.com.");
                 return null;
+            }
 
             decoded.Claims.TryGetValue("email",          out var email);
             decoded.Claims.TryGetValue("name",           out var name);
@@ -97,6 +101,33 @@ public class FirebaseAuthService : IFirebaseAuthService
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Firebase ID token verification failed.");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Reads <c>sign_in_provider</c> out of the token's nested <c>firebase</c> claim.
+    /// </summary>
+    /// <remarks>
+    /// FirebaseAdmin materialises nested claims with Newtonsoft, so this value is a
+    /// <c>JObject</c>. Handing one straight to System.Text.Json does not fail loudly —
+    /// it walks JToken's enumerable shape and renders every leaf as <c>[]</c>, so the
+    /// provider reads back as an array and <c>GetString()</c> throws, rejecting every
+    /// genuine Google sign-in as an invalid token. Serialising with the same library
+    /// that produced the claim keeps the check correct.
+    /// </remarks>
+    internal static string? ReadSignInProvider(object firebaseClaim)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(JsonConvert.SerializeObject(firebaseClaim));
+            return doc.RootElement.TryGetProperty("sign_in_provider", out var provider)
+                   && provider.ValueKind == JsonValueKind.String
+                ? provider.GetString()
+                : null;
+        }
+        catch
+        {
             return null;
         }
     }
