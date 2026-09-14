@@ -1,4 +1,5 @@
 using FinViet.Application.Interfaces;
+using FinViet.Application.Common.Exceptions;
 using FirebaseAdmin;
 using FirebaseAdmin.Auth;
 using Google.Apis.Auth.OAuth2;
@@ -32,7 +33,7 @@ public class FirebaseAuthService : IFirebaseAuthService
                 FirebaseApp.Create(new AppOptions
                 {
                     Credential = GoogleCredential.FromFile(credentialPath),
-                    ProjectId  = projectId ?? "finviet"
+                    ProjectId  = string.IsNullOrWhiteSpace(projectId) ? null : projectId
                 });
                 _enabled = true;
             }
@@ -41,7 +42,7 @@ public class FirebaseAuthService : IFirebaseAuthService
                 FirebaseApp.Create(new AppOptions
                 {
                     Credential = GoogleCredential.GetApplicationDefault(),
-                    ProjectId  = projectId ?? "finviet"
+                    ProjectId  = string.IsNullOrWhiteSpace(projectId) ? null : projectId
                 });
                 _enabled = true;
             }
@@ -65,12 +66,21 @@ public class FirebaseAuthService : IFirebaseAuthService
         if (!_enabled)
         {
             _logger.LogWarning("Firebase token verification skipped — service is not configured.");
-            return null;
+            throw new IntegrationUnavailableException(
+                "Đăng nhập Google chưa được cấu hình trên máy chủ. Vui lòng liên hệ quản trị viên.",
+                "google_auth_not_configured");
         }
 
         try
         {
             var decoded = await FirebaseAuth.DefaultInstance.VerifyIdTokenAsync(idToken);
+
+            // A valid Firebase password/anonymous token is not a Google sign-in.
+            if (!decoded.Claims.TryGetValue("firebase", out var firebase) ||
+                !System.Text.Json.JsonSerializer.SerializeToElement(firebase)
+                    .TryGetProperty("sign_in_provider", out var provider) ||
+                provider.GetString() != "google.com")
+                return null;
 
             decoded.Claims.TryGetValue("email",          out var email);
             decoded.Claims.TryGetValue("name",           out var name);
