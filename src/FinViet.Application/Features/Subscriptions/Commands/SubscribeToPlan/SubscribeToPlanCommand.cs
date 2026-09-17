@@ -8,5 +8,6 @@ public record SubscribeToPlanCommand(
     Guid PlanId,
     string ReturnUrl,
     string IpAddress,
-    string? IdempotencyKey
+    string? IdempotencyKey,
+    string? BankCode = null
 ) : IRequest<SubscribeToPlanResultDto>;

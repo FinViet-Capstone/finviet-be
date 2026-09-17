@@ -26,7 +26,9 @@ internal sealed record VNPayPaymentRequest(
     string TxnRef,
     string OrderInfo,
     string IpAddress,
-    string? ReturnUrlOverride = null);
+    string? ReturnUrlOverride = null,
+    string? BankCode = null,
+    DateTimeOffset? ExpiresAt = null);
 
 internal sealed record VNPayChargeResult(
     bool Success,

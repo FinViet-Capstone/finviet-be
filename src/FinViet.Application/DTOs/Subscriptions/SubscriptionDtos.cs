@@ -1,8 +1,13 @@
 namespace FinViet.Application.DTOs.Subscriptions;
 
+public sealed record SubscriptionPaymentDto(Guid PaymentId, string Status, decimal Amount, Guid? SubscriptionId);
+
 public sealed class SubscribeToPlanResultDto
 {
     public string RedirectUrl { get; init; } = null!;
+    public Guid PaymentId { get; init; }
+    public decimal Amount { get; init; }
+    public DateTimeOffset ExpiresAt { get; init; }
 }
 
 /// <summary>

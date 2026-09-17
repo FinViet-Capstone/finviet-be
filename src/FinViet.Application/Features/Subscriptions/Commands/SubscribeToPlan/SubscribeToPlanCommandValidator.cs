@@ -7,6 +7,9 @@ public class SubscribeToPlanCommandValidator : AbstractValidator<SubscribeToPlan
     public SubscribeToPlanCommandValidator()
     {
         RuleFor(x => x.PlanId).NotEmpty();
+        RuleFor(x => x.BankCode)
+            .Must(code => code is null or "VNPAYQR" or "VNBANK" or "INTCARD")
+            .WithMessage("BankCode must be VNPAYQR, VNBANK or INTCARD, or omitted to choose at VNPay.");
 
         RuleFor(x => x.ReturnUrl)
             .NotEmpty().WithMessage("ReturnUrl is required.")
