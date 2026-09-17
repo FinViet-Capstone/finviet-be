@@ -1,4 +1,5 @@
 using System.Net.Http.Json;
+using System.Globalization;
 using System.Text.Json;
 using FinViet.Application.Common.Exceptions;
 using Microsoft.Extensions.Logging;
@@ -23,7 +24,9 @@ internal sealed class VNPayClient : IVNPayClient
     {
         EnsureConfigured();
 
-        var createDate = DateTime.UtcNow.AddHours(7).ToString("yyyyMMddHHmmss"); // Asia/Ho_Chi_Minh
+        var now = DateTimeOffset.UtcNow;
+        var createDate = now.ToOffset(TimeSpan.FromHours(7)).ToString("yyyyMMddHHmmss", CultureInfo.InvariantCulture);
+        var expiresAt = request.ExpiresAt ?? now.AddMinutes(15);
         var vnpParams = new Dictionary<string, string>
         {
             ["vnp_Version"] = _options.Version,
@@ -38,7 +41,10 @@ internal sealed class VNPayClient : IVNPayClient
             ["vnp_ReturnUrl"] = request.ReturnUrlOverride ?? _options.ReturnUrl,
             ["vnp_IpAddr"] = request.IpAddress,
             ["vnp_CreateDate"] = createDate,
+            ["vnp_ExpireDate"] = expiresAt.ToOffset(TimeSpan.FromHours(7)).ToString("yyyyMMddHHmmss", CultureInfo.InvariantCulture),
         };
+        if (!string.IsNullOrEmpty(request.BankCode))
+            vnpParams["vnp_BankCode"] = request.BankCode;
 
         var query = VNPayHashHelper.BuildSignedQueryString(vnpParams, _options.HashSecret);
         return $"{_options.PaymentUrl}?{query}";
