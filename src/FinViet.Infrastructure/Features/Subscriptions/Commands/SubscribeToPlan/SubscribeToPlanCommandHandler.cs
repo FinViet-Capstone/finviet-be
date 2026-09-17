@@ -31,18 +31,10 @@ internal class SubscribeToPlanCommandHandler : IRequestHandler<SubscribeToPlanCo
             .FirstOrDefaultAsync(p => p.PlanId == request.PlanId, cancellationToken)
             ?? throw new NotFoundException("SubscriptionPlan", request.PlanId);
 
-        if (!plan.IsActive)
-            throw new BusinessRuleException("This plan is no longer offered.", "plan_discontinued");
-
-        var hasActiveSubscription = await _db.CustomerSubscriptions
-            .AsNoTracking()
-            .AnyAsync(s => s.CustomerId == request.CustomerId && s.Status == Active, cancellationToken);
-        if (hasActiveSubscription)
-            throw new BusinessRuleException("You already have an active subscription.", "already_subscribed");
-
         await using var transaction = await _db.Database.BeginTransactionAsync(cancellationToken);
 
-        var requestHash = IdempotencyStore.ComputeRequestHash(request);
+        // Switching from Wi-Fi to mobile data must not turn a network retry into a new purchase.
+        var requestHash = IdempotencyStore.ComputeRequestHash(request with { IpAddress = string.Empty });
         var claim = await IdempotencyStore.ClaimAsync(
             _db, request.CustomerId, Operation, request.IdempotencyKey, requestHash, cancellationToken);
 
@@ -52,6 +44,15 @@ internal class SubscribeToPlanCommandHandler : IRequestHandler<SubscribeToPlanCo
             await transaction.CommitAsync(cancellationToken);
             return replay;
         }
+
+        if (!plan.IsActive)
+            throw new BusinessRuleException("This plan is no longer offered.", "plan_discontinued");
+
+        var hasActiveSubscription = await _db.CustomerSubscriptions
+            .AsNoTracking()
+            .AnyAsync(s => s.CustomerId == request.CustomerId && s.Status == Active, cancellationToken);
+        if (hasActiveSubscription)
+            throw new BusinessRuleException("You already have an active subscription.", "already_subscribed");
 
         var txnRef = $"SUB{Guid.NewGuid():N}"[..34];
         var now = DateTime.UtcNow;
@@ -72,14 +73,23 @@ internal class SubscribeToPlanCommandHandler : IRequestHandler<SubscribeToPlanCo
         _db.Payments.Add(payment);
         await _db.SaveChangesAsync(cancellationToken);
 
+        var expiresAt = new DateTimeOffset(now, TimeSpan.Zero).AddMinutes(15);
         var redirectUrl = _vnpay.BuildPaymentUrl(new VNPayPaymentRequest(
             AmountVnd: plan.Price,
             TxnRef: txnRef,
-            OrderInfo: $"FinViet Premium - {plan.Name}",
+            OrderInfo: $"FinViet Premium {txnRef}",
             IpAddress: request.IpAddress,
-            ReturnUrlOverride: request.ReturnUrl));
+            ReturnUrlOverride: request.ReturnUrl,
+            BankCode: request.BankCode,
+            ExpiresAt: expiresAt));
 
-        var response = new SubscribeToPlanResultDto { RedirectUrl = redirectUrl };
+        var response = new SubscribeToPlanResultDto
+        {
+            RedirectUrl = redirectUrl,
+            PaymentId = payment.PaymentId,
+            Amount = payment.Amount,
+            ExpiresAt = expiresAt,
+        };
 
         await IdempotencyStore.CompleteAsync(
             _db, request.CustomerId, Operation, request.IdempotencyKey!, response, cancellationToken);

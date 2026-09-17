@@ -3,6 +3,9 @@ using FinViet.Application.Common;
 using FinViet.Application.Features.Subscriptions.Commands.ProcessVNPayIpn;
 using FinViet.Application.Features.Subscriptions.Commands.SubscribeToPlan;
 using FinViet.Application.Features.Subscriptions.Queries.GetVNPayReturnStatus;
+using FinViet.Application.Features.Subscriptions.Queries.GetSubscriptionPayment;
+using FinViet.Application.Features.SubscriptionPlans.Queries.ListSubscriptionPlans;
+using FinViet.Application.Features.Subscriptions.Queries.GetCurrentSubscription;
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -18,6 +21,28 @@ public sealed class SubscriptionsController : ControllerBase
 
     public SubscriptionsController(IMediator mediator) => _mediator = mediator;
 
+    [HttpGet("current")]
+    public async Task<ActionResult<ApiResponse<object>>> Current(CancellationToken cancellationToken)
+    {
+        var result = await _mediator.Send(new GetCurrentSubscriptionQuery(User.GetCustomerId()), cancellationToken);
+        return Ok(ApiResponse<object>.Ok(result!));
+    }
+
+    [HttpGet("plans")]
+    public async Task<ActionResult<ApiResponse<object>>> Plans(CancellationToken cancellationToken)
+    {
+        var result = await _mediator.Send(new ListSubscriptionPlansQuery(false), cancellationToken);
+        return Ok(ApiResponse<object>.Ok(result));
+    }
+
+    /// <summary>Poll after scanning QR; only the payment owner may read its IPN-confirmed status.</summary>
+    [HttpGet("payments/{paymentId:guid}")]
+    public async Task<ActionResult<ApiResponse<object>>> Payment(Guid paymentId, CancellationToken cancellationToken)
+    {
+        var result = await _mediator.Send(new GetSubscriptionPaymentQuery(User.GetCustomerId(), paymentId), cancellationToken);
+        return Ok(ApiResponse<object>.Ok(result));
+    }
+
     /// <summary>Starts a premium subscription purchase; returns a VNPay redirect URL.</summary>
     [HttpPost("subscribe")]
     public async Task<ActionResult<ApiResponse<object>>> Subscribe(
@@ -31,7 +56,8 @@ public sealed class SubscriptionsController : ControllerBase
                 request.PlanId,
                 request.ReturnUrl,
                 HttpContext.Connection.RemoteIpAddress?.ToString() ?? "0.0.0.0",
-                idempotencyKey),
+                idempotencyKey,
+                request.BankCode),
             cancellationToken);
 
         return Ok(ApiResponse<object>.Ok(result));
@@ -66,4 +92,4 @@ public sealed class SubscriptionsController : ControllerBase
         query.ToDictionary(kv => kv.Key, kv => kv.Value.ToString());
 }
 
-public record SubscribeRequest(Guid PlanId, string ReturnUrl);
+public record SubscribeRequest(Guid PlanId, string ReturnUrl, string? BankCode = null);
