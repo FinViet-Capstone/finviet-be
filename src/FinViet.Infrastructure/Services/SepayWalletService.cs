@@ -445,8 +445,25 @@ internal sealed class SepayWalletService : ISepayWalletService
         if (account is null)
             throw new ValidationException("Không tìm thấy số tài khoản demo trong SePay Sandbox.");
 
-        var transactions = await FetchAllSandboxTransactionsAsync(
-            apiToken, account.Id, fromDate: null, cancellationToken);
+        List<SepayV2Transaction> transactions;
+        try
+        {
+            transactions = await FetchAllSandboxTransactionsAsync(
+                apiToken, account.Id, fromDate: null, cancellationToken);
+        }
+        catch (ExternalServiceException ex)
+        {
+            // The account endpoint has already authenticated the token and returned an active
+            // Test Mode account. A temporary or response-shape failure while importing history
+            // must not discard that valid link; later manual syncs and webhooks can still add
+            // transactions.
+            _logger.LogWarning(
+                ex,
+                "SePay Sandbox initial transaction sync failed for account {AccountNumber} ({Code}); linking with zero imported transactions.",
+                account.AccountNumber,
+                ex.Code);
+            transactions = [];
+        }
         var now = DateTime.UtcNow;
         var apiTokenProtected = _tokenProtector.Protect(apiToken);
         var createdExpenseIds = new List<Guid>();
