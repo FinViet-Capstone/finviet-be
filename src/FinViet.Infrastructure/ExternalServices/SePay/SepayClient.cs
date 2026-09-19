@@ -379,8 +379,9 @@ internal sealed class SepayClient : ISepayClient
             _logger.LogError(ex, "SePay {Operation} returned unparseable JSON: {Body}",
                 operation, Truncate(body));
             throw new ExternalServiceException(
-                $"SePay returned an unexpected response format during {operation}.",
-                "sepay_parse_error");
+                $"SePay returned an unexpected response format during {operation}: {ex.Message}",
+                "sepay_parse_error",
+                ex);
         }
     }
 
