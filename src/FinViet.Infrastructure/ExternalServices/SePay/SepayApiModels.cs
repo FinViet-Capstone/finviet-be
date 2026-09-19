@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace FinViet.Infrastructure.ExternalServices.SePay;
@@ -244,6 +245,7 @@ internal sealed class SepayV2BankAccountListResponse
 internal sealed class SepayV2BankAccount
 {
     [JsonPropertyName("id")]
+    [JsonConverter(typeof(SepayStringOrNumberConverter))]
     public string Id { get; set; } = string.Empty;
 
     [JsonPropertyName("account_holder_name")]
@@ -283,9 +285,11 @@ internal sealed class SepayV2TransactionListResponse
 internal sealed class SepayV2Transaction
 {
     [JsonPropertyName("id")]
+    [JsonConverter(typeof(SepayStringOrNumberConverter))]
     public string Id { get; set; } = string.Empty;
 
     [JsonPropertyName("bank_account_id")]
+    [JsonConverter(typeof(SepayStringOrNumberConverter))]
     public string BankAccountId { get; set; } = string.Empty;
 
     [JsonPropertyName("transaction_date")]
@@ -320,4 +324,35 @@ internal sealed class SepayV2Pagination
 
     [JsonPropertyName("has_more")]
     public bool HasMore { get; set; }
+}
+
+/// <summary>
+/// SePay API v2 documents account and transaction IDs as UUID strings, while Test Mode can
+/// return the legacy numeric IDs used by its dashboard. Keep one string representation in the
+/// integration layer so both response shapes can be linked and synchronized.
+/// </summary>
+internal sealed class SepayStringOrNumberConverter : JsonConverter<string>
+{
+    public override string Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        => reader.TokenType switch
+        {
+            JsonTokenType.String => reader.GetString() ?? string.Empty,
+            JsonTokenType.Number => ReadNumber(ref reader),
+            JsonTokenType.Null => string.Empty,
+            _ => throw new JsonException($"Expected a SePay identifier as string or number, got {reader.TokenType}.")
+        };
+
+    public override void Write(Utf8JsonWriter writer, string value, JsonSerializerOptions options)
+        => writer.WriteStringValue(value);
+
+    private static string ReadNumber(ref Utf8JsonReader reader)
+    {
+        if (reader.TryGetInt64(out var integer))
+            return integer.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+        if (reader.TryGetDecimal(out var number))
+            return number.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+        throw new JsonException("The SePay numeric identifier is outside the supported range.");
+    }
 }
