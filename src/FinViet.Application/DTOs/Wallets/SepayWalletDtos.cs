@@ -118,6 +118,12 @@ public sealed class LinkSepayTokenRequest
     public string ApiToken { get; set; } = string.Empty;
 
     /// <summary>
+    /// Uses SePay API v2 Sandbox data instead of production banking data. Sandbox tokens are
+    /// created while Test mode is enabled in my.sepay.vn and never access a real bank account.
+    /// </summary>
+    public bool Sandbox { get; set; }
+
+    /// <summary>
     /// Optional bank account number to restrict the wallet to one account when the
     /// SePay token exposes several. When null, all transactions from the token are imported.
     /// </summary>
@@ -133,7 +139,7 @@ public sealed class SepayLinkStatusResponse
 
     public decimal Balance { get; set; }
 
-    /// <summary>"oauth" or "static".</summary>
+    /// <summary>"oauth", "static", or "sandbox".</summary>
     public string AuthMode { get; set; } = string.Empty;
 
     public int? SepayBankAccountId { get; set; }

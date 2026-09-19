@@ -213,6 +213,17 @@ public class WalletsController : ControllerBase
             "SePay bank account linked successfully"));
     }
 
+    // A distinct route prevents older deployments from silently ignoring `sandbox`
+    // and forwarding a Test mode token to the production User API.
+    [HttpPost("sepay/link-sandbox-token")]
+    public Task<ActionResult<ApiResponse<SepayLinkResult>>> LinkSepayWithSandboxToken(
+        [FromBody] LinkSepayTokenRequest request,
+        CancellationToken cancellationToken)
+    {
+        request.Sandbox = true;
+        return LinkSepayWithToken(request, cancellationToken);
+    }
+
     [HttpPost("sepay/bank-accounts")]
     public async Task<ActionResult<ApiResponse<IReadOnlyList<SepayBankAccountResponse>>>> GetSepayBankAccounts(
         [FromBody] SepayBankAccountsRequest request,

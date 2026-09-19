@@ -24,6 +24,7 @@ internal sealed class SepayWalletService : ISepayWalletService
     private const string BasicWalletType = "basic";
     private const string SepayEntryMethod = "sepay_sync";
     private const string StaticAuthMode = "static";
+    private const string SandboxAuthMode = "sandbox";
     private const string OAuthAuthMode = "oauth";
     private const int MaximumWalletsPerCustomer = 10;
 
@@ -289,6 +290,9 @@ internal sealed class SepayWalletService : ISepayWalletService
         if (string.IsNullOrWhiteSpace(apiToken))
             throw new ValidationException("SePay API token is required.");
 
+        if (request.Sandbox)
+            return await LinkWithSandboxTokenAsync(customerId, apiToken, request.AccountNumber, cancellationToken);
+
         // 1. Validate the token by pulling the transaction history.
         SepayUserApiListResponse response;
         try
@@ -414,6 +418,132 @@ internal sealed class SepayWalletService : ISepayWalletService
         };
     }
 
+    private async Task<SepayLinkResult> LinkWithSandboxTokenAsync(
+        Guid customerId,
+        string apiToken,
+        string? requestedAccountNumber,
+        CancellationToken cancellationToken)
+    {
+        List<SepayV2BankAccount> accounts;
+        try
+        {
+            accounts = await _client.GetSandboxBankAccountsAsync(apiToken, cancellationToken);
+        }
+        catch (ExternalServiceException ex) when (ex.Code == "sepay_unauthorized")
+        {
+            throw new ValidationException("Token SePay Sandbox không hợp lệ hoặc đã hết hạn.");
+        }
+
+        var activeAccounts = accounts.Where(a => a.Active == 1).ToList();
+        if (activeAccounts.Count == 0)
+            throw new ValidationException("Token Sandbox chưa có tài khoản demo đang hoạt động.");
+
+        var requested = requestedAccountNumber?.Trim();
+        var account = string.IsNullOrWhiteSpace(requested)
+            ? activeAccounts[0]
+            : activeAccounts.FirstOrDefault(a => a.AccountNumber == requested);
+        if (account is null)
+            throw new ValidationException("Không tìm thấy số tài khoản demo trong SePay Sandbox.");
+
+        var transactions = await FetchAllSandboxTransactionsAsync(
+            apiToken, account.Id, fromDate: null, cancellationToken);
+        var now = DateTime.UtcNow;
+        var apiTokenProtected = _tokenProtector.Protect(apiToken);
+        var createdExpenseIds = new List<Guid>();
+        var created = 0;
+        Wallet wallet;
+        SepayLink sepayLink;
+
+        await using (var databaseTransaction = await _db.Database.BeginTransactionAsync(
+            IsolationLevel.Serializable, cancellationToken))
+        {
+            var basicWalletCount = await _db.Wallets
+                .CountAsync(w => w.CustomerId == customerId && !w.IsDeleted
+                                 && w.WalletType == BasicWalletType, cancellationToken);
+
+            var existingLink = await _db.SepayLinks
+                .Include(l => l.Wallet)
+                .FirstOrDefaultAsync(
+                    l => l.AuthMode == SandboxAuthMode
+                         && l.AccountNumber == account.AccountNumber
+                         && l.Wallet.CustomerId == customerId
+                         && !l.Wallet.IsDeleted,
+                    cancellationToken);
+
+            if (existingLink is not null)
+            {
+                wallet = existingLink.Wallet;
+                sepayLink = existingLink;
+                wallet.Balance = account.Accumulated;
+                wallet.UpdatedAt = now;
+            }
+            else
+            {
+                if (basicWalletCount >= MaximumWalletsPerCustomer)
+                    throw new ValidationException("Adding this SePay bank account would exceed the 10-wallet limit.");
+
+                wallet = new Wallet
+                {
+                    WalletId = Guid.NewGuid(),
+                    CustomerId = customerId,
+                    WalletName = Truncate($"SePay Demo - {account.BankShortName}", 120)!,
+                    WalletType = SepayWalletType,
+                    Balance = account.Accumulated,
+                    IsDeleted = false,
+                    CreatedAt = now,
+                    UpdatedAt = now
+                };
+                sepayLink = new SepayLink
+                {
+                    WalletId = wallet.WalletId,
+                    Wallet = wallet,
+                    AuthMode = SandboxAuthMode,
+                    SepayBankAccountId = 0,
+                    AccountNumber = account.AccountNumber,
+                    CreatedAt = now
+                };
+                _db.Wallets.Add(wallet);
+                _db.SepayLinks.Add(sepayLink);
+            }
+
+            sepayLink.AccountHolderName = account.AccountHolderName;
+            sepayLink.BankShortName = account.BankShortName;
+            sepayLink.AccessTokenProtected = apiTokenProtected;
+            sepayLink.RefreshTokenProtected = null;
+            sepayLink.AccessTokenExpiresAt = null;
+            sepayLink.UpdatedAt = now;
+
+            await _db.SaveChangesAsync(cancellationToken);
+
+            foreach (var transaction in transactions.Select(ToNormalized))
+            {
+                var outcome = await UpsertNormalizedAsync(
+                    transaction.Id, transaction.AmountIn, transaction.AmountOut,
+                    transaction.Content, transaction.Date,
+                    customerId, wallet.WalletId, now, cancellationToken);
+                if (!outcome.Inserted)
+                    continue;
+
+                created++;
+                if (outcome.IsExpense)
+                    createdExpenseIds.Add(outcome.TransactionId);
+            }
+
+            sepayLink.LastSyncedAt = now;
+            sepayLink.UpdatedAt = now;
+            await _db.SaveChangesAsync(cancellationToken);
+            await databaseTransaction.CommitAsync(cancellationToken);
+        }
+
+        await CategorizeAsync(customerId, createdExpenseIds, cancellationToken);
+
+        return new SepayLinkResult
+        {
+            Wallets = [ToWalletResponse(wallet, sepayLink)],
+            TransactionsSynced = created
+        };
+    }
+
     // ── Bank accounts (for account selection UI) ────────────────────────────────
 
     public async Task<IReadOnlyList<SepayBankAccountResponse>> GetBankAccountsAsync(
@@ -472,7 +602,7 @@ internal sealed class SepayWalletService : ISepayWalletService
                 WalletName = link.Wallet.WalletName,
                 Balance = link.Wallet.Balance ?? 0m,
                 AuthMode = link.AuthMode,
-                SepayBankAccountId = IsStatic(link) ? null : link.SepayBankAccountId,
+                SepayBankAccountId = IsTokenBased(link) ? null : link.SepayBankAccountId,
                 BankShortName = link.BankShortName,
                 AccountMask = AccountNumberMask.Apply(link.AccountNumber),
                 AccountHolderName = link.AccountHolderName,
@@ -492,7 +622,7 @@ internal sealed class SepayWalletService : ISepayWalletService
     {
         if (string.IsNullOrWhiteSpace(link.AccessTokenProtected))
             return true;
-        if (IsStatic(link) || !string.IsNullOrWhiteSpace(link.RefreshTokenProtected))
+        if (IsTokenBased(link) || !string.IsNullOrWhiteSpace(link.RefreshTokenProtected))
             return false;
 
         return link.AccessTokenExpiresAt.HasValue && link.AccessTokenExpiresAt.Value <= DateTime.UtcNow;
@@ -533,7 +663,18 @@ internal sealed class SepayWalletService : ISepayWalletService
             List<NormalizedTxn> normalized;
             decimal? latestBalance;
 
-            if (IsStatic(link))
+            if (IsSandbox(link))
+            {
+                var apiToken = _tokenProtector.Unprotect(link.AccessTokenProtected!);
+                var accounts = await _client.GetSandboxBankAccountsAsync(apiToken, cancellationToken);
+                var account = accounts.FirstOrDefault(a => a.Active == 1 && a.AccountNumber == link.AccountNumber)
+                    ?? throw new ValidationException("Tài khoản demo không còn tồn tại trong SePay Sandbox.");
+                var sandboxTransactions = await FetchAllSandboxTransactionsAsync(
+                    apiToken, account.Id, fromDate, cancellationToken);
+                normalized = sandboxTransactions.Select(ToNormalized).ToList();
+                latestBalance = account.Accumulated;
+            }
+            else if (IsStatic(link))
             {
                 var apiToken = _tokenProtector.Unprotect(link.AccessTokenProtected!);
                 var response = await _client.GetUserApiTransactionsAsync(
@@ -782,7 +923,7 @@ internal sealed class SepayWalletService : ISepayWalletService
 
         // The static User API token authenticates against /userapi only; webhook management
         // lives behind OAuth scopes it can never hold.
-        if (IsStatic(link))
+        if (IsTokenBased(link))
         {
             throw new BusinessRuleException(
                 "Webhooks can only be managed on an OAuth-linked wallet. Re-link this wallet with SePay OAuth.",
@@ -816,7 +957,7 @@ internal sealed class SepayWalletService : ISepayWalletService
         // Best effort: drop the webhook we registered so SePay stops posting to an endpoint that
         // can no longer route the delivery. A failure here must not block the unlink — the user
         // asked to disconnect, and the receiver ignores unmatched accounts anyway.
-        if (link.SepayWebhookId.HasValue && !IsStatic(link))
+        if (link.SepayWebhookId.HasValue && !IsTokenBased(link))
         {
             try
             {
@@ -1092,6 +1233,30 @@ internal sealed class SepayWalletService : ISepayWalletService
         return result;
     }
 
+    private async Task<List<SepayV2Transaction>> FetchAllSandboxTransactionsAsync(
+        string apiToken,
+        string bankAccountId,
+        string? fromDate,
+        CancellationToken cancellationToken)
+    {
+        var perPage = Math.Clamp(_options.TransactionPageSize, 1, 100);
+        var maxPages = Math.Clamp(_options.MaxTransactionPages, 1, 100);
+        var result = new List<SepayV2Transaction>();
+
+        for (var page = 1; page <= maxPages; page++)
+        {
+            var response = await _client.GetSandboxTransactionsAsync(
+                apiToken, bankAccountId, page, perPage, fromDate, cancellationToken);
+            result.AddRange(response.Data);
+
+            var pagination = response.Meta?.Pagination;
+            if (pagination is null || !pagination.HasMore || page >= pagination.LastPage)
+                break;
+        }
+
+        return result;
+    }
+
     // ── Transaction upsert ──────────────────────────────────────────────────────
 
     /// <summary>
@@ -1212,6 +1377,12 @@ internal sealed class SepayWalletService : ISepayWalletService
     private static bool IsStatic(SepayLink link)
         => string.Equals(link.AuthMode, StaticAuthMode, StringComparison.OrdinalIgnoreCase);
 
+    private static bool IsSandbox(SepayLink link)
+        => string.Equals(link.AuthMode, SandboxAuthMode, StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsTokenBased(SepayLink link)
+        => IsStatic(link) || IsSandbox(link);
+
     private static string EnsureTrailingSlash(string url)
         => string.IsNullOrWhiteSpace(url) ? "https://my.sepay.vn/" : url.EndsWith('/') ? url : $"{url}/";
 
@@ -1220,6 +1391,9 @@ internal sealed class SepayWalletService : ISepayWalletService
 
     private static NormalizedTxn ToNormalized(SepayUserApiTransaction t)
         => new(t.Id, ParseDecimal(t.AmountIn), ParseDecimal(t.AmountOut), t.TransactionContent, t.TransactionDate);
+
+    private static NormalizedTxn ToNormalized(SepayV2Transaction t)
+        => new(t.Id, t.AmountIn, t.AmountOut, t.TransactionContent, t.TransactionDate);
 
     /// <summary>
     /// The newest transaction's accumulated value is the current running balance. Rows share a
@@ -1275,7 +1449,7 @@ internal sealed class SepayWalletService : ISepayWalletService
             WalletName = wallet.WalletName,
             WalletType = SepayWalletType,
             Balance = wallet.Balance ?? 0m,
-            SepayBankAccountId = IsStatic(link) ? null : link.SepayBankAccountId,
+            SepayBankAccountId = IsTokenBased(link) ? null : link.SepayBankAccountId,
             InstitutionName = link.BankShortName,
             AccountMask = AccountNumberMask.Apply(link.AccountNumber),
             AuthMode = link.AuthMode,

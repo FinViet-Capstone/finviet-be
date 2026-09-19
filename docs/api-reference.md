@@ -373,6 +373,7 @@ their own ratio via `POST /api/profile/income-allocation`.
 | POST | `/sepay/bank-accounts` | `SepayBankAccountsRequest` | `ApiResponse<SepayBankAccountResponse[]>` |
 | POST | `/sepay/link` | `LinkSepayAccountRequest` | `ApiResponse<SepayLinkResult>` |
 | POST | `/sepay/link-token` | `LinkSepayTokenRequest` | `ApiResponse<SepayLinkResult>` |
+| POST | `/sepay/link-sandbox-token` | `LinkSepayTokenRequest` | `ApiResponse<SepayLinkResult>` |
 | GET | `/sepay/links` | — | `ApiResponse<SepayLinkStatusResponse[]>` |
 | POST | `/{id:guid}/sepay-sync` | — | `ApiResponse<SepayWalletSyncResponse>` |
 | POST | `/sepay/sync-all` | — | `ApiResponse<SepaySyncAllResponse>` |
@@ -415,6 +416,8 @@ their own ratio via `POST /api/profile/income-allocation`.
 **POST `/sepay/link` (OAuth)** — Validation: `code` required; `state` validated as above; requires ≥1 active bank account (400 "No active bank accounts found on your SePay account."); `bankAccountId`, if given, must exist/be active (404). Business logic: fetches full transaction history *before* opening the DB transaction (avoids holding a `Serializable` tx open across many outbound calls). DB work in a `Serializable` transaction. Only `basic`-type wallets count toward the 10-wallet cap (422 if exceeded) — linked wallets never count. Re-linking an already-linked `SepayBankAccountId` reuses the wallet and just refreshes tokens/balance. New link creates a `Wallet` (`walletType="sepay_linked"`, name `"SePay - {bank}"`, truncated to 120 chars) and a `SepayLink` (`authMode="oauth"`); tokens stored encrypted. Imports fetched history via upsert, runs AI categorization for new expenses post-commit, then best-effort auto-registers a webhook if `SePay:WebhookUrl`/`WebhookApiKey` are configured (failure never fails the link).
 
 **POST `/sepay/link-token` (static)** — Validation: `apiToken` required; SePay rejecting it → 400 "The SePay API token is invalid or expired." Business logic: no code/state exchange; stores the raw token itself (encrypted) as the "access token", no refresh token, no expiry ("static tokens do not expire"). `sepayBankAccountId = 0` (no numeric id available for static links). Re-link matched on `(authMode="static", accountNumber)` instead of bank-account id. No auto webhook registration (static links can't hold webhook scopes).
+
+Use `/sepay/link-sandbox-token` for a Test mode token. This route forces Sandbox regardless of the body flag. The mobile app reports an outdated backend on HTTP 404/405 and never retries against the production route. Deploy the backend before distributing the mobile update. Existing clients can still set `sandbox=true` on `/sepay/link-token` once the updated backend is deployed. FinViet selects the requested fake account (or the first active one), creates a `SePay Demo` wallet with `authMode="sandbox"`, and imports only isolated fake transactions. Later syncs remain on `userapi-sandbox.sepay.vn`; Sandbox links cannot register production webhooks.
 
 **GET `/sepay/links`** — Business logic: `relinkRequired` = true if no access token stored, or (OAuth only, no refresh token) once `accessTokenExpiresAt <= now`; static links are never relink-required while a token is present. `webhookRegistered = sepayWebhookId.HasValue`.
 
