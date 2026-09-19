@@ -83,6 +83,52 @@ public class SepayIntegrationTests
     }
 
     [Fact]
+    public void SandboxV2_DeserializesUuidAccountsAndTransactions()
+    {
+        const string accountJson = """
+            {
+              "status": "success",
+              "data": [{
+                "id": "f9e8d7c6-b5a4-3210-fedc-ba0987654321",
+                "account_holder_name": "NGUYEN VAN A",
+                "account_number": "0123456789",
+                "accumulated": 1500000,
+                "label": "Tai khoan demo",
+                "active": 1,
+                "bank_short_name": "ACB",
+                "bank_code": "ACB"
+              }]
+            }
+            """;
+        const string transactionJson = """
+            {
+              "status": "success",
+              "data": [{
+                "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+                "bank_account_id": "f9e8d7c6-b5a4-3210-fedc-ba0987654321",
+                "transaction_date": "2026-09-19 10:30:00",
+                "amount_in": 500000,
+                "amount_out": 0,
+                "accumulated": 1500000,
+                "transaction_content": "GIAO DICH GIA LAP"
+              }],
+              "meta": { "pagination": { "current_page": 1, "last_page": 1, "has_more": false } }
+            }
+            """;
+
+        var accounts = JsonSerializer.Deserialize<SepayV2BankAccountListResponse>(accountJson, JsonOptions);
+        var transactions = JsonSerializer.Deserialize<SepayV2TransactionListResponse>(transactionJson, JsonOptions);
+
+        var account = Assert.Single(Assert.IsType<SepayV2BankAccountListResponse>(accounts).Data);
+        var transaction = Assert.Single(Assert.IsType<SepayV2TransactionListResponse>(transactions).Data);
+        Assert.Equal("f9e8d7c6-b5a4-3210-fedc-ba0987654321", account.Id);
+        Assert.Equal(1, account.Active);
+        Assert.Equal("a1b2c3d4-e5f6-7890-abcd-ef1234567890", transaction.Id);
+        Assert.Equal(500000m, transaction.AmountIn);
+        Assert.False(transactions!.Meta!.Pagination!.HasMore);
+    }
+
+    [Fact]
     public void BankAccountList_Deserializes_NestedBankInfo()
     {
         const string json = """
