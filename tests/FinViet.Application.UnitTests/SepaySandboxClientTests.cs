@@ -78,9 +78,9 @@ public class SepaySandboxClientTests
                       "id":15750,
                       "account_holder_name":"DUONG DUC F",
                       "account_number":"0000000001",
-                      "accumulated":10000,
+                      "accumulated":"10000.00",
                       "label":"Demo",
-                      "active":1,
+                      "active":"1",
                       "bank_short_name":"Sacombank",
                       "bank_code":"STB"
                     }]}
@@ -90,11 +90,11 @@ public class SepaySandboxClientTests
                       "id":32777,
                       "bank_account_id":15750,
                       "transaction_date":"2026-09-19 21:52:44",
-                      "amount_out":0,
-                      "amount_in":10000,
-                      "accumulated":10000,
+                      "amount_out":"0.00",
+                      "amount_in":"10000.00",
+                      "accumulated":"10000.00",
                       "transaction_content":"Giao dich thu nghiem"
-                    }],"meta":{"pagination":{"current_page":1,"last_page":1,"has_more":false}}}
+                    }],"meta":{"pagination":{"current_page":"1","last_page":"1","has_more":0}}}
                     """,
                 _ => throw new InvalidOperationException(request.RequestUri.AbsolutePath)
             };
@@ -108,11 +108,15 @@ public class SepaySandboxClientTests
 
         var account = Assert.Single(await client.GetSandboxBankAccountsAsync("test-token"));
         Assert.Equal("15750", account.Id);
+        Assert.Equal(10000m, account.Accumulated);
+        Assert.Equal(1, account.Active);
 
-        var transaction = Assert.Single(
-            (await client.GetSandboxTransactionsAsync("test-token", account.Id)).Data);
+        var transactionResponse = await client.GetSandboxTransactionsAsync("test-token", account.Id);
+        var transaction = Assert.Single(transactionResponse.Data);
         Assert.Equal("32777", transaction.Id);
         Assert.Equal("15750", transaction.BankAccountId);
+        Assert.Equal(10000m, transaction.AmountIn);
+        Assert.False(transactionResponse.Meta!.Pagination!.HasMore);
     }
 
     private static SepayClient CreateClient(HttpClient http) => new(
