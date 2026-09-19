@@ -255,12 +255,14 @@ internal sealed class SepayV2BankAccount
     public string AccountNumber { get; set; } = string.Empty;
 
     [JsonPropertyName("accumulated")]
+    [JsonConverter(typeof(SepayFlexibleDecimalConverter))]
     public decimal Accumulated { get; set; }
 
     [JsonPropertyName("label")]
     public string Label { get; set; } = string.Empty;
 
     [JsonPropertyName("active")]
+    [JsonConverter(typeof(SepayFlexibleIntConverter))]
     public int Active { get; set; }
 
     [JsonPropertyName("bank_short_name")]
@@ -296,12 +298,15 @@ internal sealed class SepayV2Transaction
     public string? TransactionDate { get; set; }
 
     [JsonPropertyName("amount_out")]
+    [JsonConverter(typeof(SepayFlexibleDecimalConverter))]
     public decimal AmountOut { get; set; }
 
     [JsonPropertyName("amount_in")]
+    [JsonConverter(typeof(SepayFlexibleDecimalConverter))]
     public decimal AmountIn { get; set; }
 
     [JsonPropertyName("accumulated")]
+    [JsonConverter(typeof(SepayFlexibleDecimalConverter))]
     public decimal Accumulated { get; set; }
 
     [JsonPropertyName("transaction_content")]
@@ -317,12 +322,15 @@ internal sealed class SepayV2Meta
 internal sealed class SepayV2Pagination
 {
     [JsonPropertyName("current_page")]
+    [JsonConverter(typeof(SepayFlexibleIntConverter))]
     public int CurrentPage { get; set; }
 
     [JsonPropertyName("last_page")]
+    [JsonConverter(typeof(SepayFlexibleIntConverter))]
     public int LastPage { get; set; }
 
     [JsonPropertyName("has_more")]
+    [JsonConverter(typeof(SepayFlexibleBooleanConverter))]
     public bool HasMore { get; set; }
 }
 
@@ -355,4 +363,84 @@ internal sealed class SepayStringOrNumberConverter : JsonConverter<string>
 
         throw new JsonException("The SePay numeric identifier is outside the supported range.");
     }
+}
+
+internal sealed class SepayFlexibleDecimalConverter : JsonConverter<decimal>
+{
+    public override decimal Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        if (reader.TokenType == JsonTokenType.Number && reader.TryGetDecimal(out var number))
+            return number;
+
+        if (reader.TokenType == JsonTokenType.String
+            && decimal.TryParse(
+                reader.GetString(),
+                System.Globalization.NumberStyles.Number,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out number))
+            return number;
+
+        if (reader.TokenType == JsonTokenType.Null)
+            return 0;
+
+        throw new JsonException($"Expected a SePay amount as number or numeric string, got {reader.TokenType}.");
+    }
+
+    public override void Write(Utf8JsonWriter writer, decimal value, JsonSerializerOptions options)
+        => writer.WriteNumberValue(value);
+}
+
+internal sealed class SepayFlexibleIntConverter : JsonConverter<int>
+{
+    public override int Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        if (reader.TokenType == JsonTokenType.Number && reader.TryGetInt32(out var number))
+            return number;
+        if (reader.TokenType == JsonTokenType.String
+            && int.TryParse(
+                reader.GetString(),
+                System.Globalization.NumberStyles.Integer,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out number))
+            return number;
+        if (reader.TokenType == JsonTokenType.True)
+            return 1;
+        if (reader.TokenType is JsonTokenType.False or JsonTokenType.Null)
+            return 0;
+
+        throw new JsonException($"Expected a SePay integer as number, string, or boolean, got {reader.TokenType}.");
+    }
+
+    public override void Write(Utf8JsonWriter writer, int value, JsonSerializerOptions options)
+        => writer.WriteNumberValue(value);
+}
+
+internal sealed class SepayFlexibleBooleanConverter : JsonConverter<bool>
+{
+    public override bool Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        if (reader.TokenType is JsonTokenType.True or JsonTokenType.False)
+            return reader.GetBoolean();
+        if (reader.TokenType == JsonTokenType.Number && reader.TryGetInt32(out var number))
+            return number != 0;
+        if (reader.TokenType == JsonTokenType.String)
+        {
+            var value = reader.GetString();
+            if (bool.TryParse(value, out var boolean))
+                return boolean;
+            if (int.TryParse(
+                value,
+                System.Globalization.NumberStyles.Integer,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out number))
+                return number != 0;
+        }
+        if (reader.TokenType == JsonTokenType.Null)
+            return false;
+
+        throw new JsonException($"Expected a SePay boolean as bool, number, or string, got {reader.TokenType}.");
+    }
+
+    public override void Write(Utf8JsonWriter writer, bool value, JsonSerializerOptions options)
+        => writer.WriteBooleanValue(value);
 }
