@@ -238,6 +238,44 @@ internal sealed class SepayClient : ISepayClient
         return await ReadResponseAsync<SepayUserApiListResponse>(response, "userapi transactions", cancellationToken);
     }
 
+    public async Task<List<SepayV2BankAccount>> GetSandboxBankAccountsAsync(
+        string apiToken,
+        CancellationToken cancellationToken = default)
+    {
+        var response = await SendWithRetryAsync(
+            () => CreateRequest(HttpMethod.Get,
+                "https://userapi-sandbox.sepay.vn/v2/bank-accounts?per_page=100", apiToken),
+            "sandbox bank accounts",
+            cancellationToken);
+        var envelope = await ReadResponseAsync<SepayV2BankAccountListResponse>(
+            response, "sandbox bank accounts", cancellationToken);
+        return envelope.Data;
+    }
+
+    public async Task<SepayV2TransactionListResponse> GetSandboxTransactionsAsync(
+        string apiToken,
+        string bankAccountId,
+        int page = 1,
+        int perPage = 100,
+        string? fromDate = null,
+        CancellationToken cancellationToken = default)
+    {
+        var query = $"bank_account_id={Uri.EscapeDataString(bankAccountId)}" +
+                    $"&page={page}&per_page={Math.Clamp(perPage, 1, 100)}";
+        if (!string.IsNullOrWhiteSpace(fromDate))
+        {
+            query += $"&transaction_date_from={Uri.EscapeDataString(fromDate + " 00:00:00")}";
+        }
+
+        var response = await SendWithRetryAsync(
+            () => CreateRequest(HttpMethod.Get,
+                $"https://userapi-sandbox.sepay.vn/v2/transactions?{query}", apiToken),
+            "sandbox transactions",
+            cancellationToken);
+        return await ReadResponseAsync<SepayV2TransactionListResponse>(
+            response, "sandbox transactions", cancellationToken);
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────────
 
     private void EnsureConfigured()

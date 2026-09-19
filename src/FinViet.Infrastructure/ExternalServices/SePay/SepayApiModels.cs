@@ -229,3 +229,95 @@ internal sealed class SepayUserApiTransaction
     [JsonPropertyName("sub_account")]
     public string? SubAccount { get; set; }
 }
+
+// ─── User API v2 Sandbox ─────────────────────────────────────────────────────
+
+internal sealed class SepayV2BankAccountListResponse
+{
+    [JsonPropertyName("status")]
+    public string Status { get; set; } = string.Empty;
+
+    [JsonPropertyName("data")]
+    public List<SepayV2BankAccount> Data { get; set; } = [];
+}
+
+internal sealed class SepayV2BankAccount
+{
+    [JsonPropertyName("id")]
+    public string Id { get; set; } = string.Empty;
+
+    [JsonPropertyName("account_holder_name")]
+    public string AccountHolderName { get; set; } = string.Empty;
+
+    [JsonPropertyName("account_number")]
+    public string AccountNumber { get; set; } = string.Empty;
+
+    [JsonPropertyName("accumulated")]
+    public decimal Accumulated { get; set; }
+
+    [JsonPropertyName("label")]
+    public string Label { get; set; } = string.Empty;
+
+    [JsonPropertyName("active")]
+    public int Active { get; set; }
+
+    [JsonPropertyName("bank_short_name")]
+    public string BankShortName { get; set; } = string.Empty;
+
+    [JsonPropertyName("bank_code")]
+    public string BankCode { get; set; } = string.Empty;
+}
+
+internal sealed class SepayV2TransactionListResponse
+{
+    [JsonPropertyName("status")]
+    public string Status { get; set; } = string.Empty;
+
+    [JsonPropertyName("data")]
+    public List<SepayV2Transaction> Data { get; set; } = [];
+
+    [JsonPropertyName("meta")]
+    public SepayV2Meta? Meta { get; set; }
+}
+
+internal sealed class SepayV2Transaction
+{
+    [JsonPropertyName("id")]
+    public string Id { get; set; } = string.Empty;
+
+    [JsonPropertyName("bank_account_id")]
+    public string BankAccountId { get; set; } = string.Empty;
+
+    [JsonPropertyName("transaction_date")]
+    public string? TransactionDate { get; set; }
+
+    [JsonPropertyName("amount_out")]
+    public decimal AmountOut { get; set; }
+
+    [JsonPropertyName("amount_in")]
+    public decimal AmountIn { get; set; }
+
+    [JsonPropertyName("accumulated")]
+    public decimal Accumulated { get; set; }
+
+    [JsonPropertyName("transaction_content")]
+    public string? TransactionContent { get; set; }
+}
+
+internal sealed class SepayV2Meta
+{
+    [JsonPropertyName("pagination")]
+    public SepayV2Pagination? Pagination { get; set; }
+}
+
+internal sealed class SepayV2Pagination
+{
+    [JsonPropertyName("current_page")]
+    public int CurrentPage { get; set; }
+
+    [JsonPropertyName("last_page")]
+    public int LastPage { get; set; }
+
+    [JsonPropertyName("has_more")]
+    public bool HasMore { get; set; }
+}

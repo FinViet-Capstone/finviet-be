@@ -11,6 +11,7 @@ public sealed class SepayLink
     /// <summary>
     /// "oauth"  = OAuth2 authorization-code flow (access + refresh token).
     /// "static" = personal SePay User API token (single long-lived token, no refresh).
+    /// "sandbox" = SePay API v2 Test mode token backed only by fake accounts and transactions.
     /// </summary>
     public string AuthMode { get; set; } = "oauth";
 

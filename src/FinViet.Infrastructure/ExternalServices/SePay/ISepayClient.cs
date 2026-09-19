@@ -60,4 +60,18 @@ internal interface ISepayClient
         string? accountNumber = null,
         string? sinceDate = null,
         CancellationToken cancellationToken = default);
+
+    /// <summary>List the fake bank accounts exposed by a SePay Test mode token.</summary>
+    Task<List<SepayV2BankAccount>> GetSandboxBankAccountsAsync(
+        string apiToken,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>List fake transactions from the isolated SePay API v2 Sandbox.</summary>
+    Task<SepayV2TransactionListResponse> GetSandboxTransactionsAsync(
+        string apiToken,
+        string bankAccountId,
+        int page = 1,
+        int perPage = 100,
+        string? fromDate = null,
+        CancellationToken cancellationToken = default);
 }
