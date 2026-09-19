@@ -395,7 +395,7 @@ internal sealed class SepayClient : ISepayClient
             401 => "sepay_unauthorized",
             403 => "sepay_forbidden",
             404 => "sepay_not_found",
-            400 => "sepay_validation_error",
+            400 or 422 => "sepay_validation_error",
             429 => "sepay_rate_limited",
             _ => $"sepay_error_{statusCode}"
         };
