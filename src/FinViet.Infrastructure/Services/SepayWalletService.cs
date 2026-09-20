@@ -546,6 +546,13 @@ internal sealed class SepayWalletService : ISepayWalletService
                     createdExpenseIds.Add(outcome.TransactionId);
             }
 
+            // Test Mode webhooks and account responses may leave `accumulated` at zero even
+            // though transaction rows already exist. In that case the imported ledger is the
+            // only reliable balance source. This also repairs previously linked demo wallets.
+            wallet.Balance = account.Accumulated != 0m
+                ? account.Accumulated
+                : await CalculateSyncedBalanceAsync(wallet.WalletId, cancellationToken);
+
             sepayLink.LastSyncedAt = now;
             sepayLink.UpdatedAt = now;
             await _db.SaveChangesAsync(cancellationToken);
@@ -743,8 +750,12 @@ internal sealed class SepayWalletService : ISepayWalletService
                     }
                 }
 
-                // Update wallet balance.
-                link.Wallet.Balance = latestBalance ?? link.Wallet.Balance;
+                // Test Mode can report an accumulated balance of zero while still returning
+                // transactions. Rebuild the demo balance from the complete imported ledger;
+                // production modes keep using their provider-reported balance.
+                link.Wallet.Balance = IsSandbox(link) && latestBalance == 0m
+                    ? await CalculateSyncedBalanceAsync(walletId, cancellationToken)
+                    : latestBalance ?? link.Wallet.Balance;
                 link.Wallet.UpdatedAt = now;
                 link.LastSyncedAt = now;
                 link.UpdatedAt = now;
@@ -1082,9 +1093,14 @@ internal sealed class SepayWalletService : ISepayWalletService
                 customerId, link.WalletId, now, cancellationToken);
 
             // SePay omits `accumulated` for gateways that do not report a running balance, and an
-            // omitted field deserializes to 0 — so only a positive value is treated as authoritative.
-            if (payload.Accumulated > 0m)
+            // omitted field deserializes to 0. Sandbox wallets can be rebuilt exactly from their
+            // read-only imported ledger; other auth modes apply the new event delta once.
+            if (payload.Accumulated != 0m)
                 link.Wallet.Balance = payload.Accumulated;
+            else if (IsSandbox(link))
+                link.Wallet.Balance = await CalculateSyncedBalanceAsync(link.WalletId, cancellationToken);
+            else if (outcome.Inserted)
+                link.Wallet.Balance = (link.Wallet.Balance ?? 0m) + amountIn - amountOut;
             link.Wallet.UpdatedAt = now;
             link.LastSyncedAt = now;
             link.UpdatedAt = now;
@@ -1435,6 +1451,17 @@ internal sealed class SepayWalletService : ISepayWalletService
         return decimal.TryParse(cleaned, System.Globalization.NumberStyles.Any,
             System.Globalization.CultureInfo.InvariantCulture, out var value) ? value : 0m;
     }
+
+    private Task<decimal> CalculateSyncedBalanceAsync(
+        Guid walletId,
+        CancellationToken cancellationToken)
+        => _db.Transactions
+            .Where(t => t.WalletId == walletId)
+            .SumAsync(
+                t => t.TransactionType == "income"
+                    ? t.Amount
+                    : t.TransactionType == "expense" ? -t.Amount : 0m,
+                cancellationToken);
 
     /// <summary>SePay dates are VN-local (e.g. "2025-02-25 19:59:48"); treat as +07:00.</summary>
     private static DateTime ParseVnDate(string? raw)
