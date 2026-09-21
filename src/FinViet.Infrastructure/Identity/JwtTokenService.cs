@@ -14,12 +14,12 @@ public class JwtTokenService : IJwtTokenService
 
     public JwtTokenService(IConfiguration config) => _config = config;
 
-    public string GenerateAccessToken(Guid userId, string email, string fullName, string role)
+    public string GenerateAccessToken(Guid userId, string email, string fullName, string role, int? expiryMinutes = null)
     {
         var secret  = _config["Jwt:Secret"] ?? throw new InvalidOperationException("Jwt:Secret not configured.");
         var issuer  = _config["Jwt:Issuer"]   ?? "FinViet";
         var audience= _config["Jwt:Audience"] ?? "FinViet";
-        var expiry  = int.Parse(_config["Jwt:AccessTokenExpiryMinutes"] ?? "15");
+        var expiry  = expiryMinutes ?? int.Parse(_config["Jwt:AccessTokenExpiryMinutes"] ?? "15");
 
         var key   = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secret));
         var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
