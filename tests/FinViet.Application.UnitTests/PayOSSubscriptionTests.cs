@@ -1,10 +1,13 @@
 using FinViet.Application.Common.Exceptions;
 using FinViet.Application.DTOs.Subscriptions;
+using FinViet.Application.Features.Subscriptions.Commands.ConfirmPayOSWebhook;
 using FinViet.Application.Features.Subscriptions.Commands.CreatePayment;
 using FinViet.Application.Features.Subscriptions.Queries.GetPaymentStatus;
 using FinViet.Application.Features.Subscriptions.Queries.GetCurrentSubscription;
 using FinViet.Application.Interfaces;
 using FinViet.Application.UnitTests.Infrastructure;
+using FinViet.Infrastructure.ExternalServices.PayOS;
+using FinViet.Infrastructure.Features.Subscriptions.Commands.ConfirmPayOSWebhook;
 using FinViet.Infrastructure.Features.Subscriptions.Commands.CreatePayment;
 using FinViet.Infrastructure.Features.Subscriptions.Commands.ProcessPayOSWebhook;
 using FinViet.Infrastructure.Features.Subscriptions.Queries.GetPaymentStatus;
@@ -363,6 +366,50 @@ public class PayOSSubscriptionTests
         Assert.True(validator.Validate(new CreatePaymentCommand(Guid.NewGuid(), Guid.NewGuid(), "key-1")).IsValid);
     }
 
+    // ── Confirm webhook (admin) ─────────────────────────────────
+
+    private static ConfirmPayOSWebhookCommandHandler CreateConfirmWebhookHandler(
+        IPaymentGateway gateway, string? configuredWebhookUrl) =>
+        new(gateway,
+            Microsoft.Extensions.Options.Options.Create(new PayOSOptions { WebhookUrl = configuredWebhookUrl }),
+            NullLogger<ConfirmPayOSWebhookCommandHandler>.Instance);
+
+    [Fact]
+    public async Task ConfirmWebhook_UsesRequestUrl_WhenProvided()
+    {
+        var gateway = new FakePaymentGateway(confirmWebhookResult: new ConfirmWebhookResult(
+            "https://api.finviet.app/api/webhooks/payos", "FINVIET JSC", "0123456789"));
+        var handler = CreateConfirmWebhookHandler(gateway, configuredWebhookUrl: "https://configured.example/webhook");
+
+        var result = await handler.Handle(
+            new ConfirmPayOSWebhookCommand("https://api.finviet.app/api/webhooks/payos"), default);
+
+        Assert.Equal("https://api.finviet.app/api/webhooks/payos", result.WebhookUrl);
+        Assert.Equal("FINVIET JSC", result.AccountName);
+    }
+
+    [Fact]
+    public async Task ConfirmWebhook_FallsBackToConfiguredUrl_WhenRequestOmitsOne()
+    {
+        var gateway = new FakePaymentGateway(confirmWebhookResult: new ConfirmWebhookResult(
+            "https://configured.example/webhook", "FINVIET JSC", "0123456789"));
+        var handler = CreateConfirmWebhookHandler(gateway, configuredWebhookUrl: "https://configured.example/webhook");
+
+        var result = await handler.Handle(new ConfirmPayOSWebhookCommand(null), default);
+
+        Assert.Equal("https://configured.example/webhook", result.WebhookUrl);
+    }
+
+    [Fact]
+    public async Task ConfirmWebhook_NoUrlAnywhere_Throws400()
+    {
+        var gateway = new FakePaymentGateway();
+        var handler = CreateConfirmWebhookHandler(gateway, configuredWebhookUrl: null);
+
+        await Assert.ThrowsAsync<BadRequestException>(() =>
+            handler.Handle(new ConfirmPayOSWebhookCommand(null), default));
+    }
+
     // ── Fake gateway ────────────────────────────────────────────
 
     private sealed class FakePaymentGateway : IPaymentGateway
@@ -372,17 +419,23 @@ public class PayOSSubscriptionTests
         private readonly WebhookVerificationResult? _webhookResult;
         private readonly PaymentStatusResult? _orderStatusResult;
         private readonly Exception? _orderStatusException;
+        private readonly ConfirmWebhookResult? _confirmWebhookResult;
+        private readonly Exception? _confirmWebhookException;
 
         public FakePaymentGateway(string qrCode = "", string checkoutUrl = "",
             WebhookVerificationResult? webhookResult = null,
             PaymentStatusResult? orderStatusResult = null,
-            Exception? orderStatusException = null)
+            Exception? orderStatusException = null,
+            ConfirmWebhookResult? confirmWebhookResult = null,
+            Exception? confirmWebhookException = null)
         {
             _qrCode = qrCode;
             _checkoutUrl = checkoutUrl;
             _webhookResult = webhookResult;
             _orderStatusResult = orderStatusResult;
             _orderStatusException = orderStatusException;
+            _confirmWebhookResult = confirmWebhookResult;
+            _confirmWebhookException = confirmWebhookException;
         }
 
         public Task<CreateOrderResult> CreateOrderAsync(
@@ -399,5 +452,11 @@ public class PayOSSubscriptionTests
             _orderStatusException is not null
                 ? Task.FromException<PaymentStatusResult>(_orderStatusException)
                 : Task.FromResult(_orderStatusResult ?? throw new BadRequestException("No order status configured."));
+
+        public Task<ConfirmWebhookResult> ConfirmWebhookAsync(
+            string webhookUrl, CancellationToken cancellationToken = default) =>
+            _confirmWebhookException is not null
+                ? Task.FromException<ConfirmWebhookResult>(_confirmWebhookException)
+                : Task.FromResult(_confirmWebhookResult ?? throw new BadRequestException("No confirm-webhook result configured."));
     }
 }

@@ -118,4 +118,26 @@ internal sealed class PayOSGateway : IPaymentGateway
                 "Payment provider failed to fetch order status.", "payos_get_status_failed", ex);
         }
     }
+
+    public async Task<ConfirmWebhookResult> ConfirmWebhookAsync(
+        string webhookUrl,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var response = await _client.Webhooks.ConfirmAsync(
+                webhookUrl,
+                new global::PayOS.Models.RequestOptions<global::PayOS.Models.Webhooks.ConfirmWebhookRequest>
+                {
+                    CancellationToken = cancellationToken,
+                });
+            return new ConfirmWebhookResult(response.WebhookUrl, response.AccountName, response.AccountNumber);
+        }
+        catch (PayOSException ex)
+        {
+            _logger.LogError(ex, "PayOS ConfirmWebhook failed for url {WebhookUrl}", webhookUrl);
+            throw new ExternalServiceException(
+                "Payment provider rejected the webhook URL.", "payos_confirm_webhook_failed", ex);
+        }
+    }
 }

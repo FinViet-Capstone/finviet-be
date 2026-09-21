@@ -18,6 +18,10 @@ public interface IPaymentGateway
     Task<PaymentStatusResult> GetOrderStatusAsync(
         long orderCode,
         CancellationToken cancellationToken = default);
+
+    Task<ConfirmWebhookResult> ConfirmWebhookAsync(
+        string webhookUrl,
+        CancellationToken cancellationToken = default);
 }
 
 public sealed record CreateOrderResult(string QrCode, string CheckoutUrl);
@@ -36,3 +40,5 @@ public enum PaymentGatewayStatus
 }
 
 public sealed record PaymentStatusResult(PaymentGatewayStatus Status, string? TransactionId);
+
+public sealed record ConfirmWebhookResult(string WebhookUrl, string AccountName, string AccountNumber);
