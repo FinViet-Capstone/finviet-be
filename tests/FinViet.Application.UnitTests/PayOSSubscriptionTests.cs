@@ -83,6 +83,48 @@ public class PayOSSubscriptionTests
     }
 
     [Fact]
+    public async Task CreatePayment_UsesOrderCodeFactory_ForGeneratedCode()
+    {
+        // Proves the retry loop reads its order code from the injectable factory rather than
+        // a locally captured value, which is what lets it draw a fresh code on each attempt.
+        await using var db = TestDbContextFactory.Create();
+        var plan = SeedPlan();
+        db.SubscriptionPlans.Add(plan);
+        await db.SaveChangesAsync();
+
+        var gateway = new FakePaymentGateway("FAKE_QR_DATA", "https://checkout.payos.vn/fake");
+        var handler = new CreatePaymentCommandHandler(db, gateway,
+            NullLogger<CreatePaymentCommandHandler>.Instance)
+        {
+            OrderCodeFactory = () => 111L,
+        };
+
+        var result = await handler.Handle(
+            new CreatePaymentCommand(Guid.NewGuid(), plan.PlanId, null), default);
+
+        Assert.Equal(111L, result.OrderCode);
+        Assert.Equal(111L, db.Payments.Single().OrderCode);
+    }
+
+    [Theory]
+    [InlineData(
+        "ERROR: 23505: duplicate key value violates unique constraint \"uq_payments_order_code\"",
+        true)]
+    [InlineData(
+        "ERROR: 23505: duplicate key value violates unique constraint \"uq_payments_idempotency_key\"",
+        false)]
+    [InlineData(
+        "ERROR: 23503: insert or update on table \"payments\" violates foreign key constraint",
+        false)]
+    public void IsOrderCodeCollision_ScopedToOrderCodeConstraint(string innerMessage, bool expected)
+    {
+        var ex = new Microsoft.EntityFrameworkCore.DbUpdateException(
+            "Save failed", new Exception(innerMessage));
+
+        Assert.Equal(expected, CreatePaymentCommandHandler.IsOrderCodeCollision(ex));
+    }
+
+    [Fact]
     public async Task CreatePayment_DiscontinuedPlan_Throws422()
     {
         await using var db = TestDbContextFactory.Create();

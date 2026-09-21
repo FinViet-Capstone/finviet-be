@@ -15,6 +15,7 @@ internal class CreatePaymentCommandHandler : IRequestHandler<CreatePaymentComman
 {
     private const string Operation = "subscription-create-payment";
     private const string Active = "active";
+    private const int MaxOrderCodeAttempts = 5;
 
     private readonly FinVietDbContext _db;
     private readonly IPaymentGateway _gateway;
@@ -29,6 +30,9 @@ internal class CreatePaymentCommandHandler : IRequestHandler<CreatePaymentComman
         _gateway = gateway;
         _logger = logger;
     }
+
+    /// <summary>Test seam: lets a unit test force an order-code collision deterministically.</summary>
+    internal Func<long> OrderCodeFactory { get; set; } = GenerateOrderCode;
 
     public async Task<CreatePaymentResultDto> Handle(CreatePaymentCommand request, CancellationToken cancellationToken)
     {
@@ -62,7 +66,6 @@ internal class CreatePaymentCommandHandler : IRequestHandler<CreatePaymentComman
         if (hasActiveSubscription)
             throw new BusinessRuleException("You already have an active subscription.", "already_subscribed");
 
-        var orderCode = GenerateOrderCode();
         var now = DateTime.UtcNow;
         var payment = new Payment
         {
@@ -73,13 +76,40 @@ internal class CreatePaymentCommandHandler : IRequestHandler<CreatePaymentComman
             Amount = plan.Price,
             ChargeType = "initial",
             Status = "pending",
-            OrderCode = orderCode,
+            OrderCode = OrderCodeFactory(),
             IdempotencyKey = request.IdempotencyKey,
             CreatedAt = now,
             UpdatedAt = now,
         };
         _db.Payments.Add(payment);
-        await _db.SaveChangesAsync(cancellationToken);
+
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                await _db.SaveChangesAsync(cancellationToken);
+                break;
+            }
+            catch (DbUpdateException ex) when (IsOrderCodeCollision(ex))
+            {
+                // GenerateOrderCode() can draw the same value twice within the same millisecond
+                // under concurrent creation; regenerate and retry a bounded number of times
+                // instead of surfacing the raw unique-violation to the caller.
+                if (attempt >= MaxOrderCodeAttempts)
+                {
+                    _logger.LogError(ex,
+                        "Exhausted {MaxAttempts} order-code generation attempts for customer {CustomerId}.",
+                        MaxOrderCodeAttempts, request.CustomerId);
+                    throw new ConflictException("Could not generate a unique payment order code. Please try again.");
+                }
+
+                _logger.LogWarning(
+                    "OrderCode collision on attempt {Attempt} for customer {CustomerId}; regenerating.",
+                    attempt, request.CustomerId);
+                payment.OrderCode = OrderCodeFactory();
+            }
+        }
+        var orderCode = payment.OrderCode!.Value;
 
         var expiresAt = new DateTimeOffset(now, TimeSpan.Zero).AddMinutes(15);
         var orderResult = await _gateway.CreateOrderAsync(
@@ -118,5 +148,14 @@ internal class CreatePaymentCommandHandler : IRequestHandler<CreatePaymentComman
         var ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() % 1_000_000_000_000L;
         var rnd = Random.Shared.NextInt64(0, 1000);
         return ts * 1000 + rnd;
+    }
+
+    internal static bool IsOrderCodeCollision(DbUpdateException ex)
+    {
+        var inner = ex.InnerException?.Message ?? string.Empty;
+        // Npgsql error code 23505 = unique_violation. Scoped to this specific constraint —
+        // an unrelated unique-violation (e.g. idempotency key) should surface as-is, not
+        // trigger a pointless order-code retry.
+        return inner.Contains("23505") && inner.Contains("uq_payments_order_code");
     }
 }

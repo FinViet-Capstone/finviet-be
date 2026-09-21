@@ -2,6 +2,65 @@
 
 <!-- Feature name and short description -->
 
+**Feature: Harden payOS orderCode generation against collisions** (branch
+`feature/payos-subscription`, GitHub issue #123).
+`CreatePaymentCommandHandler.GenerateOrderCode()` draws `(unixMs % 1e12) * 1000 + rand(0..999)`.
+Two orders created in the same millisecond can draw the same random tail, and there was no retry,
+so the insert would surface a raw DB unique-violation (500) to the client instead of a usable
+response.
+
+## Status
+
+Implemented and unit-tested.
+`dotnet build FinViet.sln --no-restore --maxcpucount:1` succeeds with the same 2 pre-existing
+nullable warnings (none new).
+`FinViet.Application.UnitTests` 375/375 pass (3 new in `PayOSSubscriptionTests.cs`).
+Not committed/pushed yet.
+
+## Goals
+
+- `CreatePaymentCommandHandler.Handle` now inserts the `Payment` row inside a bounded retry loop
+  (`MaxOrderCodeAttempts = 5`).
+  On a `DbUpdateException` that is specifically the `uq_payments_order_code` unique-violation
+  (Npgsql `23505`), it draws a fresh order code and retries, instead of letting the exception
+  propagate.
+  Once all attempts are exhausted it throws `ConflictException` (409) instead of letting the raw
+  `DbUpdateException` reach the client — matching the codebase's existing
+  collision-to-`ConflictException` conversion (`RegisterCommandHandler`).
+  Relies on EF Core's automatic savepoint at the start of `SaveChangesAsync` when called inside a
+  user-initiated transaction (already the case here via `_db.Database.BeginTransactionAsync`), so a
+  failed attempt rolls back to the savepoint rather than aborting the whole transaction.
+- The unique index itself already existed (`uq_payments_order_code`,
+  `V0012__payos_replace_vnpay.sql`) — this was purely the missing retry half of the ticket's
+  proposed change.
+- `FinVietDbContext`: added the matching `HasIndex(e => e.OrderCode, "uq_payments_order_code")
+  .IsUnique().HasFilter(...)` to the EF model, mirroring how other DB-level unique constraints
+  (`uq_tx_external`, `uq_notification_devices_token`) are already declared there alongside their
+  migration — documentation of the real constraint, not itself a schema change.
+- `CreatePaymentCommandHandler.IsOrderCodeCollision(DbUpdateException)` is `internal static` and
+  scoped to the specific constraint name (matching the `IsUniqueViolation`/
+  `IsCustomerInstallationConflict` convention already used in `RegisterCommandHandler`/
+  `CreateAdminCommandHandler`/`NotificationService`) so an unrelated unique-violation (e.g. a
+  duplicate idempotency key) surfaces as-is instead of triggering a pointless retry.
+
+## Notes
+
+- **The retry loop's DB-collision path is not exercised by the unit suite.**
+  EF Core's InMemory provider (used by `TestDbContextFactory`) does not enforce
+  `HasIndex().IsUnique()` — only primary and alternate keys — confirmed empirically in this session
+  (a two-row same-`OrderCode` insert raised no exception).
+  `IsOrderCodeCollision` itself is unit-tested directly against fabricated Npgsql-shaped exception
+  messages (matching/non-matching constraint name, non-23505 code), and `OrderCodeFactory` (a small
+  `internal` `Func<long>` test seam added to the handler) is proven to be what the insert actually
+  reads its code from.
+  The full bounded-retry mechanism, including the exhausted-attempts `ConflictException` path,
+  against a real unique-constraint violation would need a live-Postgres integration test to exercise
+  end to end — same gap that already exists for the three other unique-violation retry/catch paths
+  in this codebase, none of which have one either.
+- No `.env`, credential, production change, commit, or push made without explicit permission.
+
+---
+
 **Feature: Receipt OCR reliability and honest confidence** (branch
 `fix/receipt-ocr-reliability`, cross-repo with `finviet-mobile`). A live test against Render on
 2026-09-04 proved that a clear Vietnamese receipt is extracted correctly when the multipart MIME

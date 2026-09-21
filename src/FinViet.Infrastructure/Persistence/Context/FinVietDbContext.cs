@@ -639,6 +639,9 @@ public partial class FinVietDbContext : DbContext
                 .HasConversion(PgEnumStringConverter.Create<PaymentStatus>());
             entity.Property(e => e.OrderCode)
                 .HasColumnName("order_code");
+            entity.HasIndex(e => e.OrderCode, "uq_payments_order_code")
+                .IsUnique()
+                .HasFilter("order_code IS NOT NULL");
             entity.Property(e => e.PayosTransactionId)
                 .HasMaxLength(100)
                 .HasColumnName("payos_transaction_id");
