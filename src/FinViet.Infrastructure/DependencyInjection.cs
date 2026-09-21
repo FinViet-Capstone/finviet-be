@@ -84,7 +84,14 @@ public static class DependencyInjection
 
         // PayOS payment gateway (VietQR bank transfer).
         services.AddOptions<PayOSOptions>()
-            .Bind(configuration.GetSection(PayOSOptions.SectionName));
+            .Bind(configuration.GetSection(PayOSOptions.SectionName))
+            .Validate(options => !string.IsNullOrWhiteSpace(options.ClientId),
+                "PayOS:ClientId is required. Supply it through user-secrets or PayOS__ClientId.")
+            .Validate(options => !string.IsNullOrWhiteSpace(options.ApiKey),
+                "PayOS:ApiKey is required. Supply it through user-secrets or PayOS__ApiKey.")
+            .Validate(options => !string.IsNullOrWhiteSpace(options.ChecksumKey),
+                "PayOS:ChecksumKey is required. Supply it through user-secrets or PayOS__ChecksumKey.")
+            .ValidateOnStart();
         services.AddSingleton(sp =>
         {
             var opts = sp.GetRequiredService<IOptions<PayOSOptions>>().Value;
