@@ -3,7 +3,7 @@ using System;
 namespace FinViet.Infrastructure.Persistence.Entities;
 
 /// <summary>
-/// Audit record for every VNPay charge attempt (initial subscribe or a scheduled renewal).
+/// Audit record for every PayOS charge attempt (initial subscribe or manual renewal).
 /// Independent from personal-finance transactions and never changes a wallet balance.
 /// </summary>
 public partial class Payment
@@ -11,9 +11,8 @@ public partial class Payment
     public Guid PaymentId { get; set; }
 
     /// <summary>
-    /// Null until the IPN handler confirms an "initial" charge and creates the
-    /// CustomerSubscription row (see ProcessVNPayIpnCommandHandler) — a subscription can't exist
-    /// before its first payment succeeds.
+    /// Null until the webhook handler confirms an "initial" charge and creates the
+    /// CustomerSubscription row - a subscription can't exist before its first payment succeeds.
     /// </summary>
     public Guid? SubscriptionId { get; set; }
 
@@ -29,24 +28,16 @@ public partial class Payment
     /// <summary>Postgres enum <c>payment_status</c> (pending/succeeded/failed/canceled).</summary>
     public string Status { get; set; } = null!;
 
-    public string VnpTxnRef { get; set; } = null!;
+    /// <summary>PayOS's numeric order identifier, unique per merchant.</summary>
+    public long? OrderCode { get; set; }
 
-    public string? VnpTransactionNo { get; set; }
-
-    public string? VnpResponseCode { get; set; }
-
-    public string? VnpTransactionStatus { get; set; }
-
-    public string? VnpBankCode { get; set; }
-
-    public string? VnpCardType { get; set; }
-
-    /// <summary>Raw vnp_PayDate (yyyyMMddHHmmss), stored as-is for audit purposes.</summary>
-    public string? VnpPayDate { get; set; }
+    /// <summary>PayOS's own transaction reference from the webhook confirmation.</summary>
+    public string? PayosTransactionId { get; set; }
 
     public DateTime? PaidAt { get; set; }
 
-    public string? RawIpnPayload { get; set; }
+    /// <summary>Full webhook JSON payload for audit.</summary>
+    public string? RawWebhookPayload { get; set; }
 
     public string? IdempotencyKey { get; set; }
 

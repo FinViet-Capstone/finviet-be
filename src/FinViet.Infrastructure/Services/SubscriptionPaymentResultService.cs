@@ -6,24 +6,19 @@ using Microsoft.Extensions.Logging;
 namespace FinViet.Infrastructure.Services;
 
 /// <summary>
-/// Single shared place that applies a VNPay charge outcome to a Payment (and, on success,
-/// creates/renews the CustomerSubscription) — used by both ProcessVNPayIpnCommandHandler and
-/// SubscriptionRenewalScheduler so the two call sites can never drift apart on this logic.
-/// Callers are responsible for loading and row-locking (FOR UPDATE) the Payment before calling
-/// this, within an open transaction; this method itself re-checks terminal state so a duplicate
-/// call (e.g. a VNPay IPN retry) is always a safe no-op.
+/// Applies a payment outcome to a Payment row (and, on success, creates/renews the
+/// CustomerSubscription). Used by the PayOS webhook handler. Callers are responsible for
+/// loading and row-locking (FOR UPDATE) the Payment before calling this, within an open
+/// transaction; this method re-checks terminal state so a duplicate call (e.g. a PayOS
+/// webhook retry) is always a safe no-op.
 /// </summary>
 internal interface ISubscriptionPaymentResultService
 {
     Task<bool> ApplyResultAsync(
         Payment payment,
         bool success,
-        string? responseCode,
-        string? transactionStatus,
-        string? transactionNo,
-        string? bankCode,
-        string? cardType,
-        string? payDate,
+        string? providerTransactionId,
+        string? rawPayload,
         CancellationToken cancellationToken = default);
 }
 
@@ -47,37 +42,23 @@ internal sealed class SubscriptionPaymentResultService : ISubscriptionPaymentRes
     public async Task<bool> ApplyResultAsync(
         Payment payment,
         bool success,
-        string? responseCode,
-        string? transactionStatus,
-        string? transactionNo,
-        string? bankCode,
-        string? cardType,
-        string? payDate,
+        string? providerTransactionId,
+        string? rawPayload,
         CancellationToken cancellationToken = default)
     {
         if (payment.Status != Pending)
         {
-            // Already resolved by an earlier call (VNPay IPN retry, or the renewal job's direct
-            // charge response racing its own confirming IPN) — safe no-op, this is the
-            // idempotency guarantee.
             return false;
         }
 
-        payment.VnpResponseCode = responseCode;
-        payment.VnpTransactionStatus = transactionStatus;
-        payment.VnpTransactionNo = transactionNo;
-        payment.VnpBankCode = bankCode;
-        payment.VnpCardType = cardType;
-        payment.VnpPayDate = payDate;
+        payment.PayosTransactionId = providerTransactionId;
+        payment.RawWebhookPayload = rawPayload;
         payment.UpdatedAt = DateTime.UtcNow;
 
         if (!success)
         {
             payment.Status = Failed;
             await _db.SaveChangesAsync(cancellationToken);
-            // Renewal dunning-state transitions (retry_count/next_retry_at/status) are owned
-            // exclusively by SubscriptionRenewalScheduler — this method only records what
-            // happened to this one payment attempt.
             return true;
         }
 
@@ -98,10 +79,8 @@ internal sealed class SubscriptionPaymentResultService : ISubscriptionPaymentRes
                 Status = Active,
                 StartDate = todayVn,
                 EndDate = null,
-                // Snapshotted once, here, and never re-read from SubscriptionPlan.Price again —
-                // this is the guarantee that makes editing SubscriptionPlan.Price in place safe.
                 LockedPrice = payment.Amount,
-                AutoRenew = true,
+                AutoRenew = false,
                 NextBillingDate = todayVn.AddMonths(plan.BillingIntervalMonths),
                 RetryCount = 0,
                 CreatedAt = DateTime.UtcNow,
@@ -116,12 +95,8 @@ internal sealed class SubscriptionPaymentResultService : ISubscriptionPaymentRes
             }
             catch (DbUpdateException ex)
             {
-                // Lost a race against uq_active_subscription — two tabs both completed a VNPay
-                // charge for the same customer. The charge succeeded on VNPay's side; a manual
-                // refund is an ops follow-up, out of scope here. Record this payment as failed
-                // rather than leaving two active subscriptions or crashing the IPN handler.
                 _logger.LogWarning(ex,
-                    "Payment {PaymentId} succeeded at VNPay but customer {CustomerId} already had an active subscription; marking failed.",
+                    "Payment {PaymentId} succeeded at PayOS but customer {CustomerId} already had an active subscription; marking failed.",
                     payment.PaymentId, payment.CustomerId);
                 _db.Entry(subscription).State = EntityState.Detached;
                 payment.SubscriptionId = null;
@@ -134,8 +109,6 @@ internal sealed class SubscriptionPaymentResultService : ISubscriptionPaymentRes
             var subscription = await _db.CustomerSubscriptions
                 .FirstAsync(s => s.SubscriptionId == payment.SubscriptionId!.Value, cancellationToken);
             subscription.Status = Active;
-            // Advance from the previous NextBillingDate, not from "today" — prevents cumulative
-            // drift across repeated dunning cycles.
             subscription.NextBillingDate = (subscription.NextBillingDate ?? todayVn).AddMonths(plan.BillingIntervalMonths);
             subscription.RetryCount = 0;
             subscription.NextRetryAt = null;

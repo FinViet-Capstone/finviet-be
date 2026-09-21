@@ -6,10 +6,6 @@ using Microsoft.Extensions.Logging.Abstractions;
 
 namespace FinViet.Application.UnitTests;
 
-// Covers the one property the whole VNPay feature exists for: an existing subscriber's
-// LockedPrice is snapshotted once (at initial success) and never re-read from
-// SubscriptionPlan.Price on renewal — plus the idempotency guarantee (a duplicate VNPay IPN, or
-// the renewal job's own charge response racing a confirming IPN, must be a safe no-op).
 public class SubscriptionPaymentResultServiceTests
 {
     private static SubscriptionPlan NewPlan(decimal price = 49000m, short billingIntervalMonths = 1) => new()
@@ -31,7 +27,7 @@ public class SubscriptionPaymentResultServiceTests
         Amount = amount,
         ChargeType = chargeType,
         Status = "pending",
-        VnpTxnRef = $"TEST{Guid.NewGuid():N}",
+        OrderCode = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
         CreatedAt = DateTime.UtcNow,
         UpdatedAt = DateTime.UtcNow,
     };
@@ -42,25 +38,22 @@ public class SubscriptionPaymentResultServiceTests
         await using var db = TestDbContextFactory.Create();
         var service = new SubscriptionPaymentResultService(db, NullLogger<SubscriptionPaymentResultService>.Instance);
 
-        // Admin's catalog price has already moved to 109000 by the time this payment resolves —
-        // the subscription must still lock in what was actually charged (59000), not the current
-        // catalog price. This is the exact scenario the whole feature was built to prevent.
         var plan = NewPlan(price: 109000m, billingIntervalMonths: 1);
         var payment = NewPayment(plan.PlanId, amount: 59000m, chargeType: "initial");
         db.SubscriptionPlans.Add(plan);
         db.Payments.Add(payment);
         await db.SaveChangesAsync();
 
-        var applied = await service.ApplyResultAsync(payment, success: true, "00", "00", "TXN1", "NCB", "ATM", "20260815120000");
+        var applied = await service.ApplyResultAsync(payment, success: true, "TXN-REF-001", """{"code":"00"}""");
 
         Assert.True(applied);
         Assert.Equal("succeeded", payment.Status);
         Assert.NotNull(payment.SubscriptionId);
 
         var subscription = await db.CustomerSubscriptions.SingleAsync(s => s.SubscriptionId == payment.SubscriptionId);
-        Assert.Equal(59000m, subscription.LockedPrice); // not 109000 — the live catalog price
+        Assert.Equal(59000m, subscription.LockedPrice);
         Assert.Equal("active", subscription.Status);
-        Assert.True(subscription.AutoRenew);
+        Assert.False(subscription.AutoRenew);
         Assert.Equal(0, subscription.RetryCount);
     }
 
@@ -76,7 +69,7 @@ public class SubscriptionPaymentResultServiceTests
         db.Payments.Add(payment);
         await db.SaveChangesAsync();
 
-        var applied = await service.ApplyResultAsync(payment, success: false, "24", null, null, null, null, null);
+        var applied = await service.ApplyResultAsync(payment, success: false, null, """{"code":"01"}""");
 
         Assert.True(applied);
         Assert.Equal("failed", payment.Status);
@@ -91,9 +84,7 @@ public class SubscriptionPaymentResultServiceTests
         var service = new SubscriptionPaymentResultService(db, NullLogger<SubscriptionPaymentResultService>.Instance);
 
         var plan = NewPlan(billingIntervalMonths: 1);
-        var originalNextBillingDate = new DateOnly(2026, 8, 1); // in the past relative to "now" —
-        // a renewal that ran late (e.g. after a dunning retry) must still advance from this
-        // original due date, not from "today", to avoid cumulative drift across retry cycles.
+        var originalNextBillingDate = new DateOnly(2026, 8, 1);
         var subscription = new CustomerSubscription
         {
             SubscriptionId = Guid.NewGuid(),
@@ -101,7 +92,7 @@ public class SubscriptionPaymentResultServiceTests
             Status = "past_due",
             StartDate = new DateOnly(2026, 6, 1),
             LockedPrice = 49000m,
-            AutoRenew = true,
+            AutoRenew = false,
             NextBillingDate = originalNextBillingDate,
             RetryCount = 2,
             NextRetryAt = new DateOnly(2026, 8, 15),
@@ -112,7 +103,7 @@ public class SubscriptionPaymentResultServiceTests
         db.Payments.Add(payment);
         await db.SaveChangesAsync();
 
-        await service.ApplyResultAsync(payment, success: true, "00", "00", "TXN2", "NCB", "ATM", "20260815120000");
+        await service.ApplyResultAsync(payment, success: true, "TXN-REF-002", """{"code":"00"}""");
 
         var reloaded = await db.CustomerSubscriptions.SingleAsync(s => s.SubscriptionId == subscription.SubscriptionId);
         Assert.Equal(originalNextBillingDate.AddMonths(1), reloaded.NextBillingDate);
@@ -122,21 +113,21 @@ public class SubscriptionPaymentResultServiceTests
     }
 
     [Fact]
-    public async Task AlreadyResolvedPayment_IsANoOp_IdempotentAgainstDuplicateIpn()
+    public async Task AlreadyResolvedPayment_IsANoOp_IdempotentAgainstDuplicateWebhook()
     {
         await using var db = TestDbContextFactory.Create();
         var service = new SubscriptionPaymentResultService(db, NullLogger<SubscriptionPaymentResultService>.Instance);
 
         var plan = NewPlan();
         var payment = NewPayment(plan.PlanId, amount: 49000m, chargeType: "initial");
-        payment.Status = "succeeded"; // already resolved by an earlier call
+        payment.Status = "succeeded";
         db.SubscriptionPlans.Add(plan);
         db.Payments.Add(payment);
         await db.SaveChangesAsync();
 
-        var applied = await service.ApplyResultAsync(payment, success: true, "00", "00", "TXN3", null, null, null);
+        var applied = await service.ApplyResultAsync(payment, success: true, "TXN-REF-003", """{"code":"00"}""");
 
         Assert.False(applied);
-        Assert.False(await db.CustomerSubscriptions.AnyAsync()); // no duplicate subscription created
+        Assert.False(await db.CustomerSubscriptions.AnyAsync());
     }
 }
