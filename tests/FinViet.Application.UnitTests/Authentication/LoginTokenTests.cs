@@ -230,7 +230,7 @@ public class LoginTokenTests
     private static Mock<IJwtTokenService> Jwt(string access = "access", string refresh = "refresh")
     {
         var jwt = new Mock<IJwtTokenService>();
-        jwt.Setup(x => x.GenerateAccessToken(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<string>(), "Customer"))
+        jwt.Setup(x => x.GenerateAccessToken(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<string>(), "Customer", It.IsAny<int?>()))
             .Returns(access);
         jwt.Setup(x => x.GenerateRefreshToken()).Returns(refresh);
         return jwt;
