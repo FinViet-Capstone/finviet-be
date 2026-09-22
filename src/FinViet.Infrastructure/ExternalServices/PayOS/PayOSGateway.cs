@@ -55,7 +55,7 @@ internal sealed class PayOSGateway : IPaymentGateway
         }
     }
 
-    public Task<WebhookVerificationResult> VerifyWebhookAsync(
+    public async Task<WebhookVerificationResult> VerifyWebhookAsync(
         string webhookBody,
         CancellationToken cancellationToken = default)
     {
@@ -65,13 +65,13 @@ internal sealed class PayOSGateway : IPaymentGateway
                 new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
                 ?? throw new BadRequestException("Empty webhook payload.");
 
-            var verified = _client.Webhooks.VerifyAsync(webhook).GetAwaiter().GetResult();
+            var verified = await _client.Webhooks.VerifyAsync(webhook);
 
-            return Task.FromResult(new WebhookVerificationResult(
+            return new WebhookVerificationResult(
                 OrderCode: verified.OrderCode,
                 Amount: (int)verified.Amount,
                 Success: verified.Code == "00",
-                TransactionId: verified.Reference));
+                TransactionId: verified.Reference);
         }
         catch (PayOSInvalidSignatureException ex)
         {
