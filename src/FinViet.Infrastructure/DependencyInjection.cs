@@ -91,6 +91,14 @@ public static class DependencyInjection
                 "PayOS:ApiKey is required. Supply it through user-secrets or PayOS__ApiKey.")
             .Validate(options => !string.IsNullOrWhiteSpace(options.ChecksumKey),
                 "PayOS:ChecksumKey is required. Supply it through user-secrets or PayOS__ChecksumKey.")
+            .PostConfigure(options =>
+            {
+                var frontendUrl = (configuration["AppSettings:FrontendUrl"] ?? "http://localhost:3000").TrimEnd('/');
+                if (string.IsNullOrWhiteSpace(options.ReturnUrl))
+                    options.ReturnUrl = $"{frontendUrl}/payment/return";
+                if (string.IsNullOrWhiteSpace(options.CancelUrl))
+                    options.CancelUrl = $"{frontendUrl}/payment/cancel";
+            })
             .ValidateOnStart();
         services.AddSingleton(sp =>
         {
