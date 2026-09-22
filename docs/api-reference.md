@@ -1,6 +1,6 @@
 # FinViet Backend API Reference
 
-Extracted from `src/FinViet.Api/Controllers`, `src/FinViet.Application/{Features,DTOs}`, `src/FinViet.Infrastructure/{Features,Services,ExternalServices}`, and `context/be-revamp.md` (revamp history).
+Extracted from `src/FinViet.Api/Controllers`, `src/FinViet.Application/{Features,DTOs}`, `src/FinViet.Infrastructure/{Features,Services,ExternalServices}`.
 Live Swagger/OpenAPI JSON is also available at `/swagger/v1/swagger.json` when the API is running.
 
 Every endpoint below documents **Validation** (exact field-level rules — FluentValidation, or manual/inline checks where no validator exists) and **Business logic** (what the handler actually does, side effects, edge cases) in addition to the request/response shape, so this doc can be wired directly into the mobile client's request builders and error mapping.

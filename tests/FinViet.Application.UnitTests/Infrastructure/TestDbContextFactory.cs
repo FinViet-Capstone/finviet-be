@@ -1,6 +1,7 @@
 using FinViet.Infrastructure.Persistence.Context;
 using FinViet.Infrastructure.Persistence.Entities;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 
 namespace FinViet.Application.UnitTests.Infrastructure;
 
@@ -11,6 +12,7 @@ internal static class TestDbContextFactory
         var options = new DbContextOptionsBuilder<FinVietDbContext>()
             .UseInMemoryDatabase($"finviet-unit-{Guid.NewGuid():N}")
             .EnableSensitiveDataLogging()
+            .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning))
             .Options;
 
         return new InMemoryFinVietDbContext(options);

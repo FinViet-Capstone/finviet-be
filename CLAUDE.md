@@ -133,20 +133,20 @@ A standalone Node.js tool (not part of the .NET solution) that generates `FinVie
 
 ## Workflow (from `context/ai-interaction.md`)
 
-For every feature/fix:
+Progress is tracked via GitHub issues (`gh issue view <number>`), not a local scratch file. For every feature/fix:
 
-1. **Document** the feature in [context/current-feature.md](context/current-feature.md) first (never delete its guiding HTML comments — clear them per-section when starting a new feature instead).
+1. **Track**: work against a GitHub issue (create one first if none exists yet for the work).
 2. **Branch**: `feature/[name]` or `fix/[name]`.
 3. **Implement**.
 4. **Test**: verify via Swagger or the integration suite; `dotnet build` must pass; `dotnet test` for anything with coverage.
 5. **Iterate** as needed.
 6. **Commit** — only after build passes and manual verification succeeds. Conventional commit messages (`feat:`, `fix:`, `chore:`); never mention AI generation in the commit message. Never commit or push without explicit permission.
 7. **Merge** to `main`/`khoi`, then **delete the branch**.
-8. Mark the feature completed in `context/current-feature.md` and append to its History section.
+8. Close (or update) the GitHub issue once the feature ships.
 
 Additional standing rules:
 
 - Make minimal, scoped changes; don't refactor unrelated code or "fix" known deviations (e.g. the Domain/Infrastructure entity split, or unifying the two CQRS styles) as a side effect of an unrelated task.
-- Don't add features beyond what's documented in `context/current-feature.md` for the current cycle.
+- Don't add features beyond what's documented in the originating GitHub issue for the current cycle.
 - If something isn't working after 2-3 attempts, stop and explain rather than continuing to try random fixes.
-- `context/coding-standards.md` and `context/current-feature.md` are living documents for this repo — check them for the latest feature-in-progress and any standards updates beyond what's summarized here.
+- `context/coding-standards.md` is a living document for this repo — check it for standards updates beyond what's summarized here; check GitHub issues for the latest feature-in-progress.
