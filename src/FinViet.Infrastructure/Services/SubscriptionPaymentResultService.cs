@@ -95,7 +95,6 @@ internal sealed class SubscriptionPaymentResultService : ISubscriptionPaymentRes
                 LockedPrice = payment.Amount,
                 AutoRenew = false,
                 NextBillingDate = todayVn.AddMonths(plan.BillingIntervalMonths),
-                RetryCount = 0,
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow,
             };
@@ -123,8 +122,6 @@ internal sealed class SubscriptionPaymentResultService : ISubscriptionPaymentRes
                 .FirstAsync(s => s.SubscriptionId == payment.SubscriptionId!.Value, cancellationToken);
             subscription.Status = Active;
             subscription.NextBillingDate = (subscription.NextBillingDate ?? todayVn).AddMonths(plan.BillingIntervalMonths);
-            subscription.RetryCount = 0;
-            subscription.NextRetryAt = null;
             subscription.UpdatedAt = DateTime.UtcNow;
             await _db.SaveChangesAsync(cancellationToken);
         }

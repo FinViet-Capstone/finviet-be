@@ -370,14 +370,6 @@ public partial class FinVietDbContext : DbContext
                 .HasDefaultValue(true)
                 .HasColumnName("auto_renew");
             entity.Property(e => e.NextBillingDate).HasColumnName("next_billing_date");
-            entity.Property(e => e.NextRetryAt).HasColumnName("next_retry_at");
-            entity.Property(e => e.RetryCount)
-                .HasDefaultValue(0)
-                .HasColumnName("retry_count");
-            entity.Property(e => e.RenewalClaimedAt).HasColumnName("renewal_claimed_at");
-            entity.Property(e => e.VnpayCardToken)
-                .HasMaxLength(100)
-                .HasColumnName("vnpay_card_token");
             entity.Property(e => e.CanceledAt).HasColumnName("canceled_at");
 
             entity.HasOne(d => d.Customer).WithMany(p => p.CustomerSubscriptions)
