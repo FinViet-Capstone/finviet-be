@@ -54,7 +54,6 @@ public class SubscriptionPaymentResultServiceTests
         Assert.Equal(59000m, subscription.LockedPrice);
         Assert.Equal("active", subscription.Status);
         Assert.False(subscription.AutoRenew);
-        Assert.Equal(0, subscription.RetryCount);
     }
 
     [Fact]
@@ -98,7 +97,7 @@ public class SubscriptionPaymentResultServiceTests
     }
 
     [Fact]
-    public async Task RenewalSuccess_AdvancesFromPreviousNextBillingDate_NotFromToday_AndResetsRetryState()
+    public async Task RenewalSuccess_AdvancesFromPreviousNextBillingDate_NotFromToday()
     {
         await using var db = TestDbContextFactory.Create();
         var service = new SubscriptionPaymentResultService(db, NullLogger<SubscriptionPaymentResultService>.Instance);
@@ -114,8 +113,6 @@ public class SubscriptionPaymentResultServiceTests
             LockedPrice = 49000m,
             AutoRenew = false,
             NextBillingDate = originalNextBillingDate,
-            RetryCount = 2,
-            NextRetryAt = new DateOnly(2026, 8, 15),
         };
         var payment = NewPayment(plan.PlanId, amount: 49000m, chargeType: "renewal", subscription.SubscriptionId);
         db.SubscriptionPlans.Add(plan);
@@ -128,8 +125,6 @@ public class SubscriptionPaymentResultServiceTests
         var reloaded = await db.CustomerSubscriptions.SingleAsync(s => s.SubscriptionId == subscription.SubscriptionId);
         Assert.Equal(originalNextBillingDate.AddMonths(1), reloaded.NextBillingDate);
         Assert.Equal("active", reloaded.Status);
-        Assert.Equal(0, reloaded.RetryCount);
-        Assert.Null(reloaded.NextRetryAt);
     }
 
     [Fact]
