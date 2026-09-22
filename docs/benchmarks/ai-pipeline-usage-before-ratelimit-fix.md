@@ -37,7 +37,7 @@ new `PreviewPerMinute`/`PreviewPerDay` tier in `AiLimitsOptions`, wired into
   30/min, 300/day tier, independent of the standard 6/min cap.
 - **`score_comment`**: only 0/13 calls succeeded (0.0%) — all 13 attempts in
   this window errored. Not addressed by this fix; flagged as a separate
-  follow-up (see `context/current-feature.md` for status).
+  follow-up (track via a GitHub issue).
 
 ## Not yet regenerated
 
