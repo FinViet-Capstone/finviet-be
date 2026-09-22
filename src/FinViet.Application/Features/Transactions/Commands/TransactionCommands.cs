@@ -35,19 +35,6 @@ public class DeleteTransactionCommand : IRequest<bool>
     public Guid TransactionId { get; set; }
 }
 
-/// <summary>
-/// Splits one transaction across several categories. The original row is replaced by the
-/// parts, whose amounts must sum to it exactly — so the wallet balance never moves and every
-/// aggregation that groups by category keeps working unchanged.
-/// </summary>
-public class SplitTransactionCommand : IRequest<IReadOnlyList<TransactionResponseDto>>
-{
-    public Guid CustomerId { get; set; }
-    public Guid TransactionId { get; set; }
-    public IReadOnlyList<SplitPartRequest> Parts { get; set; } = new List<SplitPartRequest>();
-    public string? IdempotencyKey { get; set; }
-}
-
 public class ClassifyTransactionCommand : IRequest<TransactionResponseDto>
 {
     public Guid CustomerId { get; set; }
