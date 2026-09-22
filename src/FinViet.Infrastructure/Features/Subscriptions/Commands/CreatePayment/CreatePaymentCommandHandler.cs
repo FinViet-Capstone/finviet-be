@@ -2,12 +2,14 @@ using FinViet.Application.Common.Exceptions;
 using FinViet.Application.DTOs.Subscriptions;
 using FinViet.Application.Features.Subscriptions.Commands.CreatePayment;
 using FinViet.Application.Interfaces;
+using FinViet.Infrastructure.ExternalServices.PayOS;
 using FinViet.Infrastructure.Persistence.Context;
 using FinViet.Infrastructure.Persistence.Entities;
 using FinViet.Infrastructure.Persistence.Idempotency;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace FinViet.Infrastructure.Features.Subscriptions.Commands.CreatePayment;
 
@@ -19,15 +21,18 @@ internal class CreatePaymentCommandHandler : IRequestHandler<CreatePaymentComman
 
     private readonly FinVietDbContext _db;
     private readonly IPaymentGateway _gateway;
+    private readonly PayOSOptions _payOSOptions;
     private readonly ILogger<CreatePaymentCommandHandler> _logger;
 
     public CreatePaymentCommandHandler(
         FinVietDbContext db,
         IPaymentGateway gateway,
+        IOptions<PayOSOptions> payOSOptions,
         ILogger<CreatePaymentCommandHandler> logger)
     {
         _db = db;
         _gateway = gateway;
+        _payOSOptions = payOSOptions.Value;
         _logger = logger;
     }
 
@@ -127,8 +132,8 @@ internal class CreatePaymentCommandHandler : IRequestHandler<CreatePaymentComman
             amount: (int)plan.Price,
             description: $"FinViet Premium",
             expiry: expiresAt,
-            returnUrl: "https://finviet.app/payment/return",
-            cancelUrl: "https://finviet.app/payment/cancel",
+            returnUrl: _payOSOptions.ReturnUrl!,
+            cancelUrl: _payOSOptions.CancelUrl!,
             cancellationToken);
 
         var response = new CreatePaymentResultDto

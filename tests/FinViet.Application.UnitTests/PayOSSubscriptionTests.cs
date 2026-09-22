@@ -20,6 +20,13 @@ namespace FinViet.Application.UnitTests;
 
 public class PayOSSubscriptionTests
 {
+    private static Microsoft.Extensions.Options.IOptions<PayOSOptions> DefaultPayOSOptions() =>
+        Microsoft.Extensions.Options.Options.Create(new PayOSOptions
+        {
+            ReturnUrl = "https://example.com/payment/return",
+            CancelUrl = "https://example.com/payment/cancel",
+        });
+
     private static SubscriptionPlan SeedPlan(decimal price = 49000m) => new()
     {
         PlanId = Guid.NewGuid(),
@@ -41,7 +48,7 @@ public class PayOSSubscriptionTests
         await db.SaveChangesAsync();
 
         var gateway = new FakePaymentGateway("FAKE_QR_DATA", "https://checkout.payos.vn/fake");
-        var handler = new CreatePaymentCommandHandler(db, gateway,
+        var handler = new CreatePaymentCommandHandler(db, gateway, DefaultPayOSOptions(),
             NullLogger<CreatePaymentCommandHandler>.Instance);
 
         var result = await handler.Handle(
@@ -75,6 +82,7 @@ public class PayOSSubscriptionTests
 
         var handler = new CreatePaymentCommandHandler(db,
             new FakePaymentGateway("QR", "URL"),
+            DefaultPayOSOptions(),
             NullLogger<CreatePaymentCommandHandler>.Instance);
 
         var ex = await Assert.ThrowsAsync<BusinessRuleException>(() =>
@@ -93,7 +101,7 @@ public class PayOSSubscriptionTests
         await db.SaveChangesAsync();
 
         var gateway = new FakePaymentGateway("FAKE_QR_DATA", "https://checkout.payos.vn/fake");
-        var handler = new CreatePaymentCommandHandler(db, gateway,
+        var handler = new CreatePaymentCommandHandler(db, gateway, DefaultPayOSOptions(),
             NullLogger<CreatePaymentCommandHandler>.Instance)
         {
             OrderCodeFactory = () => 111L,
@@ -135,6 +143,7 @@ public class PayOSSubscriptionTests
 
         var handler = new CreatePaymentCommandHandler(db,
             new FakePaymentGateway("QR", "URL"),
+            DefaultPayOSOptions(),
             NullLogger<CreatePaymentCommandHandler>.Instance);
 
         var ex = await Assert.ThrowsAsync<BusinessRuleException>(() =>
