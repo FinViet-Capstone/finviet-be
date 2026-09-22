@@ -46,76 +46,86 @@ internal class CreatePaymentCommandHandler : IRequestHandler<CreatePaymentComman
             .FirstOrDefaultAsync(p => p.PlanId == request.PlanId, cancellationToken)
             ?? throw new NotFoundException("SubscriptionPlan", request.PlanId);
 
-        await using var transaction = await _db.Database.BeginTransactionAsync(cancellationToken);
-
-        if (request.IdempotencyKey is not null)
-        {
-            var requestHash = IdempotencyStore.ComputeRequestHash(request);
-            var claim = await IdempotencyStore.ClaimAsync(
-                _db, request.CustomerId, Operation, request.IdempotencyKey, requestHash, cancellationToken);
-
-            if (claim.IsReplay)
-            {
-                var replay = IdempotencyStore.ReadReplay<CreatePaymentResultDto>(claim);
-                await transaction.CommitAsync(cancellationToken);
-                return replay;
-            }
-        }
-
-        if (!plan.IsActive)
-            throw new BusinessRuleException("This plan is no longer offered.", "plan_discontinued");
-
-        var hasActiveSubscription = await _db.CustomerSubscriptions
-            .AsNoTracking()
-            .AnyAsync(s => s.CustomerId == request.CustomerId && s.Status == Active, cancellationToken);
-        if (hasActiveSubscription)
-            throw new BusinessRuleException("You already have an active subscription.", "already_subscribed");
-
         var now = DateTime.UtcNow;
-        var payment = new Payment
-        {
-            PaymentId = Guid.NewGuid(),
-            CustomerId = request.CustomerId,
-            PlanId = plan.PlanId,
-            SubscriptionId = null,
-            Amount = plan.Price,
-            ChargeType = "initial",
-            Status = "pending",
-            OrderCode = OrderCodeFactory(),
-            IdempotencyKey = request.IdempotencyKey,
-            CreatedAt = now,
-            UpdatedAt = now,
-        };
-        _db.Payments.Add(payment);
+        Payment payment;
 
-        for (var attempt = 1; ; attempt++)
+        await using (var transaction = await _db.Database.BeginTransactionAsync(cancellationToken))
         {
-            try
+            if (request.IdempotencyKey is not null)
             {
-                await _db.SaveChangesAsync(cancellationToken);
-                break;
-            }
-            catch (DbUpdateException ex) when (IsOrderCodeCollision(ex))
-            {
-                // GenerateOrderCode() can draw the same value twice within the same millisecond
-                // under concurrent creation; regenerate and retry a bounded number of times
-                // instead of surfacing the raw unique-violation to the caller.
-                if (attempt >= MaxOrderCodeAttempts)
+                var requestHash = IdempotencyStore.ComputeRequestHash(request);
+                var claim = await IdempotencyStore.ClaimAsync(
+                    _db, request.CustomerId, Operation, request.IdempotencyKey, requestHash, cancellationToken);
+
+                if (claim.IsReplay)
                 {
-                    _logger.LogError(ex,
-                        "Exhausted {MaxAttempts} order-code generation attempts for customer {CustomerId}.",
-                        MaxOrderCodeAttempts, request.CustomerId);
-                    throw new ConflictException("Could not generate a unique payment order code. Please try again.");
+                    var replay = IdempotencyStore.ReadReplay<CreatePaymentResultDto>(claim);
+                    await transaction.CommitAsync(cancellationToken);
+                    return replay;
                 }
-
-                _logger.LogWarning(
-                    "OrderCode collision on attempt {Attempt} for customer {CustomerId}; regenerating.",
-                    attempt, request.CustomerId);
-                payment.OrderCode = OrderCodeFactory();
             }
-        }
-        var orderCode = payment.OrderCode!.Value;
 
+            if (!plan.IsActive)
+                throw new BusinessRuleException("This plan is no longer offered.", "plan_discontinued");
+
+            var hasActiveSubscription = await _db.CustomerSubscriptions
+                .AsNoTracking()
+                .AnyAsync(s => s.CustomerId == request.CustomerId && s.Status == Active, cancellationToken);
+            if (hasActiveSubscription)
+                throw new BusinessRuleException("You already have an active subscription.", "already_subscribed");
+
+            payment = new Payment
+            {
+                PaymentId = Guid.NewGuid(),
+                CustomerId = request.CustomerId,
+                PlanId = plan.PlanId,
+                SubscriptionId = null,
+                Amount = plan.Price,
+                ChargeType = "initial",
+                Status = "pending",
+                OrderCode = OrderCodeFactory(),
+                IdempotencyKey = request.IdempotencyKey,
+                CreatedAt = now,
+                UpdatedAt = now,
+            };
+            _db.Payments.Add(payment);
+
+            for (var attempt = 1; ; attempt++)
+            {
+                try
+                {
+                    await _db.SaveChangesAsync(cancellationToken);
+                    break;
+                }
+                catch (DbUpdateException ex) when (IsOrderCodeCollision(ex))
+                {
+                    // GenerateOrderCode() can draw the same value twice within the same millisecond
+                    // under concurrent creation; regenerate and retry a bounded number of times
+                    // instead of surfacing the raw unique-violation to the caller.
+                    if (attempt >= MaxOrderCodeAttempts)
+                    {
+                        _logger.LogError(ex,
+                            "Exhausted {MaxAttempts} order-code generation attempts for customer {CustomerId}.",
+                            MaxOrderCodeAttempts, request.CustomerId);
+                        throw new ConflictException("Could not generate a unique payment order code. Please try again.");
+                    }
+
+                    _logger.LogWarning(
+                        "OrderCode collision on attempt {Attempt} for customer {CustomerId}; regenerating.",
+                        attempt, request.CustomerId);
+                    payment.OrderCode = OrderCodeFactory();
+                }
+            }
+
+            // Commit before the payOS network call below - a DB transaction must never stay
+            // open across a network round-trip (pins a connection and lock for the full
+            // latency). A crash after this point leaves the payment "pending" with no
+            // completed idempotency response, which is reconcilable (see finviet-be#121)
+            // rather than rolled back.
+            await transaction.CommitAsync(cancellationToken);
+        }
+
+        var orderCode = payment.OrderCode!.Value;
         var expiresAt = new DateTimeOffset(now, TimeSpan.Zero).AddMinutes(15);
         var orderResult = await _gateway.CreateOrderAsync(
             orderCode: orderCode,
@@ -139,7 +149,6 @@ internal class CreatePaymentCommandHandler : IRequestHandler<CreatePaymentComman
             await IdempotencyStore.CompleteAsync(
                 _db, request.CustomerId, Operation, request.IdempotencyKey, response, cancellationToken);
         }
-        await transaction.CommitAsync(cancellationToken);
 
         _logger.LogInformation(
             "Created payment {PaymentId} with orderCode {OrderCode} for customer {CustomerId}, plan {PlanId}",
