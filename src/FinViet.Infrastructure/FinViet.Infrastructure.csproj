@@ -12,6 +12,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="FinViet.Application.UnitTests" />
+    <InternalsVisibleTo Include="FinViet.Infrastructure.IntegrationTests" />
   </ItemGroup>
 
   <ItemGroup>
@@ -28,6 +29,7 @@
     <PackageReference Include="ExcelDataReader.DataSet" Version="3.7.0" />
     <PackageReference Include="BCrypt.Net-Next" Version="4.0.3" />
     <PackageReference Include="Microsoft.IdentityModel.Tokens" Version="7.5.2" />
+    <PackageReference Include="payOS" Version="2.1.0" />
     <PackageReference Include="PdfPig" Version="0.1.15" />
     <PackageReference Include="Pgvector" Version="0.3.2" />
     <PackageReference Include="Pgvector.EntityFrameworkCore" Version="0.2.2" />

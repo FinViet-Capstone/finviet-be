@@ -115,7 +115,7 @@ A few decisions that are deliberate rather than accidental, since they read as d
 ## Limitations and what's next
 
 - **Integration tests do not run in CI.** They need a live server and a seeded database, so the GitHub Actions workflow builds and runs the Domain and Application unit suites only. Getting them into CI means a containerized Postgres plus a deterministic seed step.
-- **Subscriptions are half a feature.** Plans and customer subscriptions are modeled and admin-manageable, but no payment provider is wired up and there is no customer-facing purchase endpoint, so the mobile app cannot surface it.
+- **Subscriptions checkout is backend-only so far.** Plans, customer subscriptions, and a PayOS QR checkout (`POST /api/subscriptions/create-payment`, webhook at `/api/webhooks/payos`) are implemented and admin-manageable, but no client has integrated the purchase flow yet.
 - **Routes are unversioned.** That works while both clients ship in step with the API. It becomes a problem the first time a released mobile build has to keep working against a changed contract.
 - **Deployment is a single instance.** Merges to `main` build, unit test, and deploy straight to one Render service. There is no staging environment in between.
 

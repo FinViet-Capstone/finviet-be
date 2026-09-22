@@ -7,7 +7,7 @@ using FinViet.Infrastructure.ExternalServices.Notification;
 using FinViet.Infrastructure.ExternalServices.Ocr;
 using FinViet.Infrastructure.ExternalServices.TransactionImport;
 using FinViet.Infrastructure.ExternalServices.SePay;
-using FinViet.Infrastructure.ExternalServices.VNPay;
+using FinViet.Infrastructure.ExternalServices.PayOS;
 using FinViet.Infrastructure.Features.Auth.Commands.Login;
 using FinViet.Infrastructure.Identity;
 using FinViet.Infrastructure.Persistence.Context;
@@ -82,15 +82,37 @@ public static class DependencyInjection
             http.Timeout = TimeSpan.FromSeconds(Math.Clamp(options.TimeoutSeconds, 5, 120));
         });
 
-        // VNPay (recurring/tokenized billing). TmnCode/HashSecret are validated at the point of
-        // use (VNPayClient.EnsureConfigured), not at startup, so the API still boots in
-        // environments without VNPay configured — same convention as SePay's WebhookApiKey.
-        services.AddOptions<VNPayOptions>()
-            .Bind(configuration.GetSection(VNPayOptions.SectionName))
-            .Validate(options => options.TimeoutSeconds is >= 5 and <= 120,
-                "VNPay:TimeoutSeconds must be between 5 and 120.")
+        // PayOS payment gateway (VietQR bank transfer).
+        services.AddOptions<PayOSOptions>()
+            .Bind(configuration.GetSection(PayOSOptions.SectionName))
+            .Validate(options => !string.IsNullOrWhiteSpace(options.ClientId),
+                "PayOS:ClientId is required. Supply it through user-secrets or PayOS__ClientId.")
+            .Validate(options => !string.IsNullOrWhiteSpace(options.ApiKey),
+                "PayOS:ApiKey is required. Supply it through user-secrets or PayOS__ApiKey.")
+            .Validate(options => !string.IsNullOrWhiteSpace(options.ChecksumKey),
+                "PayOS:ChecksumKey is required. Supply it through user-secrets or PayOS__ChecksumKey.")
+            .PostConfigure(options =>
+            {
+                var frontendUrl = (configuration["AppSettings:FrontendUrl"] ?? "http://localhost:3000").TrimEnd('/');
+                if (string.IsNullOrWhiteSpace(options.ReturnUrl))
+                    options.ReturnUrl = $"{frontendUrl}/payment/return";
+                if (string.IsNullOrWhiteSpace(options.CancelUrl))
+                    options.CancelUrl = $"{frontendUrl}/payment/cancel";
+            })
             .ValidateOnStart();
-        services.AddHttpClient<IVNPayClient, VNPayClient>();
+        services.AddSingleton(sp =>
+        {
+            var opts = sp.GetRequiredService<IOptions<PayOSOptions>>().Value;
+            return new PayOS.PayOSClient(new PayOS.PayOSOptions
+            {
+                ClientId = opts.ClientId,
+                ApiKey = opts.ApiKey,
+                ChecksumKey = opts.ChecksumKey,
+            });
+        });
+        services.AddSingleton<IPaymentGateway>(sp => new PayOSGateway(
+            sp.GetRequiredService<PayOS.PayOSClient>(),
+            sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<PayOSGateway>>()));
         services.AddScoped<ISubscriptionPaymentResultService, SubscriptionPaymentResultService>();
 
         // JWT
@@ -232,7 +254,6 @@ public static class DependencyInjection
         services.AddScoped<IRagDocumentQueryService, RagDocumentQueryService>();
 
         services.AddHostedService<WeeklyReportScheduler>();
-        services.AddHostedService<SubscriptionRenewalScheduler>();
 
         return services;
     }

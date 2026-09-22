@@ -370,14 +370,6 @@ public partial class FinVietDbContext : DbContext
                 .HasDefaultValue(true)
                 .HasColumnName("auto_renew");
             entity.Property(e => e.NextBillingDate).HasColumnName("next_billing_date");
-            entity.Property(e => e.NextRetryAt).HasColumnName("next_retry_at");
-            entity.Property(e => e.RetryCount)
-                .HasDefaultValue(0)
-                .HasColumnName("retry_count");
-            entity.Property(e => e.RenewalClaimedAt).HasColumnName("renewal_claimed_at");
-            entity.Property(e => e.VnpayCardToken)
-                .HasMaxLength(100)
-                .HasColumnName("vnpay_card_token");
             entity.Property(e => e.CanceledAt).HasColumnName("canceled_at");
 
             entity.HasOne(d => d.Customer).WithMany(p => p.CustomerSubscriptions)
@@ -637,31 +629,18 @@ public partial class FinVietDbContext : DbContext
             entity.Property(e => e.Status)
                 .HasColumnName("status")
                 .HasConversion(PgEnumStringConverter.Create<PaymentStatus>());
-            entity.Property(e => e.VnpTxnRef)
+            entity.Property(e => e.OrderCode)
+                .HasColumnName("order_code");
+            entity.HasIndex(e => e.OrderCode, "uq_payments_order_code")
+                .IsUnique()
+                .HasFilter("order_code IS NOT NULL");
+            entity.Property(e => e.PayosTransactionId)
                 .HasMaxLength(100)
-                .HasColumnName("vnp_txn_ref");
-            entity.Property(e => e.VnpTransactionNo)
-                .HasMaxLength(50)
-                .HasColumnName("vnp_transaction_no");
-            entity.Property(e => e.VnpResponseCode)
-                .HasMaxLength(2)
-                .HasColumnName("vnp_response_code");
-            entity.Property(e => e.VnpTransactionStatus)
-                .HasMaxLength(2)
-                .HasColumnName("vnp_transaction_status");
-            entity.Property(e => e.VnpBankCode)
-                .HasMaxLength(20)
-                .HasColumnName("vnp_bank_code");
-            entity.Property(e => e.VnpCardType)
-                .HasMaxLength(20)
-                .HasColumnName("vnp_card_type");
-            entity.Property(e => e.VnpPayDate)
-                .HasMaxLength(14)
-                .HasColumnName("vnp_pay_date");
+                .HasColumnName("payos_transaction_id");
             entity.Property(e => e.PaidAt).HasColumnName("paid_at");
-            entity.Property(e => e.RawIpnPayload)
+            entity.Property(e => e.RawWebhookPayload)
                 .HasColumnType("jsonb")
-                .HasColumnName("raw_ipn_payload");
+                .HasColumnName("raw_webhook_payload");
             entity.Property(e => e.IdempotencyKey)
                 .HasMaxLength(200)
                 .HasColumnName("idempotency_key");
