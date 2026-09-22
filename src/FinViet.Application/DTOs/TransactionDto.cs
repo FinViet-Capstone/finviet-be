@@ -61,18 +61,3 @@ public class TransactionResponseDto
     public DateTime? UpdatedAt { get; set; }
 }
 
-/// <summary>Request body for <c>POST /api/Transactions/{id}/split</c>.</summary>
-public class SplitTransactionDto
-{
-    public List<SplitPartRequest>? Parts { get; set; }
-}
-
-/// <summary>One part of a split — the category it belongs to and how much of the original it takes.</summary>
-public class SplitPartRequest
-{
-    public string? CategoryId { get; set; }
-    public decimal Amount { get; set; }
-
-    /// <summary>Optional per-part note. Falls back to the original transaction's note when omitted.</summary>
-    public string? Note { get; set; }
-}
