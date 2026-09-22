@@ -1,9 +1,9 @@
 using FinViet.Application.Features.Subscriptions.Commands.ProcessPayOSWebhook;
 using FinViet.Application.Interfaces;
 using FinViet.Infrastructure.Persistence.Context;
+using FinViet.Infrastructure.Persistence.Repositories;
 using FinViet.Infrastructure.Services;
 using MediatR;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
 namespace FinViet.Infrastructure.Features.Subscriptions.Commands.ProcessPayOSWebhook;
@@ -35,9 +35,7 @@ internal class ProcessPayOSWebhookCommandHandler : IRequestHandler<ProcessPayOSW
 
         await using var transaction = await _db.Database.BeginTransactionAsync(cancellationToken);
 
-        var payment = await _db.Payments
-            .Where(p => p.OrderCode == verified.OrderCode)
-            .SingleOrDefaultAsync(cancellationToken);
+        var payment = await PaymentLocking.LockByOrderCodeAsync(_db, verified.OrderCode, cancellationToken);
 
         if (payment is null)
         {

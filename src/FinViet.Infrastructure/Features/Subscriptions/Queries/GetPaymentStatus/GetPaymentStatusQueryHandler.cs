@@ -4,6 +4,7 @@ using FinViet.Application.Features.Subscriptions.Queries.GetPaymentStatus;
 using FinViet.Application.Interfaces;
 using FinViet.Infrastructure.Persistence.Context;
 using FinViet.Infrastructure.Persistence.Entities;
+using FinViet.Infrastructure.Persistence.Repositories;
 using FinViet.Infrastructure.Services;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
@@ -23,6 +24,7 @@ internal sealed class GetPaymentStatusQueryHandler(
     public async Task<SubscriptionPaymentStatusDto> Handle(GetPaymentStatusQuery request, CancellationToken cancellationToken)
     {
         var payment = await db.Payments
+            .AsNoTracking()
             .Where(p => p.OrderCode == request.OrderCode && p.CustomerId == request.CustomerId)
             .SingleOrDefaultAsync(cancellationToken);
 
@@ -33,7 +35,11 @@ internal sealed class GetPaymentStatusQueryHandler(
 
         if (payment.Status == Pending)
         {
-            await ReconcileWithGatewayAsync(payment, cancellationToken);
+            var reconciled = await ReconcileWithGatewayAsync(payment, cancellationToken);
+            if (reconciled is not null)
+            {
+                payment = reconciled;
+            }
         }
 
         return new SubscriptionPaymentStatusDto(payment.OrderCode!.Value, payment.Status, payment.Amount, payment.SubscriptionId);
@@ -43,7 +49,7 @@ internal sealed class GetPaymentStatusQueryHandler(
     // QR would otherwise stay "pending" forever. Poll payOS directly and apply the outcome
     // through the same ApplyResultAsync path the webhook uses, so idempotency / terminal-state
     // handling is shared rather than duplicated.
-    private async Task ReconcileWithGatewayAsync(Payment payment, CancellationToken cancellationToken)
+    private async Task<Payment?> ReconcileWithGatewayAsync(Payment payment, CancellationToken cancellationToken)
     {
         PaymentStatusResult remoteStatus;
         try
@@ -55,23 +61,31 @@ internal sealed class GetPaymentStatusQueryHandler(
             logger.LogWarning(ex,
                 "PayOS status reconciliation failed for orderCode {OrderCode}; leaving payment pending",
                 payment.OrderCode);
-            return;
+            return null;
         }
 
         if (remoteStatus.Status == PaymentGatewayStatus.Pending)
         {
-            return;
+            return null;
         }
 
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
 
+        var locked = await PaymentLocking.LockByOrderCodeAsync(db, payment.OrderCode!.Value, cancellationToken);
+        if (locked is null)
+        {
+            await transaction.CommitAsync(cancellationToken);
+            return null;
+        }
+
         await resultService.ApplyResultAsync(
-            payment,
+            locked,
             remoteStatus.Status == PaymentGatewayStatus.Succeeded,
             remoteStatus.TransactionId,
             rawPayload: null,
             cancellationToken);
 
         await transaction.CommitAsync(cancellationToken);
+        return locked;
     }
 }
