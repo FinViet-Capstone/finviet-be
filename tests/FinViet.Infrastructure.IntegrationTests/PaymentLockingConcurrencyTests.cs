@@ -198,7 +198,7 @@ public sealed class PaymentLockingConcurrencyTests
             long orderCode, CancellationToken cancellationToken = default)
         {
             await Task.Delay(50, cancellationToken);
-            return new PaymentStatusResult(PaymentGatewayStatus.Succeeded, "TXN-CONCURRENCY-TEST");
+            return new PaymentStatusResult(PaymentGatewayStatus.Succeeded, "TXN-CONCURRENCY-TEST", 49000);
         }
 
         public Task<ConfirmWebhookResult> ConfirmWebhookAsync(

@@ -185,6 +185,45 @@ public class PayOSSubscriptionTests
     }
 
     [Fact]
+    public async Task Webhook_AmountMismatch_MarksFailed_NoSubscriptionCreated()
+    {
+        await using var db = TestDbContextFactory.Create();
+        var plan = SeedPlan(59000m);
+        var orderCode = 1234567891L;
+        var payment = new Payment
+        {
+            PaymentId = Guid.NewGuid(),
+            CustomerId = Guid.NewGuid(),
+            PlanId = plan.PlanId,
+            Amount = 59000m,
+            ChargeType = "initial",
+            Status = "pending",
+            OrderCode = orderCode,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow,
+        };
+        db.SubscriptionPlans.Add(plan);
+        db.Payments.Add(payment);
+        await db.SaveChangesAsync();
+
+        // Webhook reports a paid amount lower than the stored Payment.Amount (e.g. a plan-price
+        // change between order creation and payment) — must not activate the subscription.
+        var gateway = new FakePaymentGateway(webhookResult: new WebhookVerificationResult(
+            orderCode, 39000, Success: true, TransactionId: "TXN-MISMATCH"));
+        var resultService = new SubscriptionPaymentResultService(db,
+            NullLogger<SubscriptionPaymentResultService>.Instance);
+        var handler = new ProcessPayOSWebhookCommandHandler(db, gateway, resultService,
+            NullLogger<ProcessPayOSWebhookCommandHandler>.Instance);
+
+        var ok = await handler.Handle(new("""{"code":"00"}"""), default);
+
+        Assert.True(ok);
+        Assert.Equal("failed", payment.Status);
+        Assert.Null(payment.SubscriptionId);
+        Assert.Empty(db.CustomerSubscriptions);
+    }
+
+    [Fact]
     public async Task Webhook_DuplicateForResolvedPayment_IsNoOp()
     {
         await using var db = TestDbContextFactory.Create();
@@ -265,7 +304,7 @@ public class PayOSSubscriptionTests
         db.Payments.Add(SeedPendingPayment(customerId, Guid.NewGuid(), orderCode));
         await db.SaveChangesAsync();
 
-        var gateway = new FakePaymentGateway(orderStatusResult: new PaymentStatusResult(PaymentGatewayStatus.Pending, null));
+        var gateway = new FakePaymentGateway(orderStatusResult: new PaymentStatusResult(PaymentGatewayStatus.Pending, null, 49000));
         var handler = CreateStatusHandler(db, gateway);
         var result = await handler.Handle(new(customerId, orderCode), default);
         Assert.Equal("pending", result.Status);
@@ -307,7 +346,7 @@ public class PayOSSubscriptionTests
         await db.SaveChangesAsync();
 
         var gateway = new FakePaymentGateway(
-            orderStatusResult: new PaymentStatusResult(PaymentGatewayStatus.Succeeded, "TXN-RECONCILE"));
+            orderStatusResult: new PaymentStatusResult(PaymentGatewayStatus.Succeeded, "TXN-RECONCILE", 59000));
         var handler = CreateStatusHandler(db, gateway);
 
         var result = await handler.Handle(new(customerId, orderCode), default);
@@ -315,6 +354,28 @@ public class PayOSSubscriptionTests
         Assert.Equal("succeeded", result.Status);
         Assert.NotNull(result.SubscriptionId);
         Assert.Single(db.CustomerSubscriptions);
+    }
+
+    [Fact]
+    public async Task PaymentStatus_PendingLocally_PaidAtGatewayWithMismatchedAmount_ResolvesFailed()
+    {
+        await using var db = TestDbContextFactory.Create();
+        var plan = SeedPlan(59000m);
+        var customerId = Guid.NewGuid();
+        var orderCode = 7777777778L;
+        db.SubscriptionPlans.Add(plan);
+        db.Payments.Add(SeedPendingPayment(customerId, plan.PlanId, orderCode, 59000m));
+        await db.SaveChangesAsync();
+
+        var gateway = new FakePaymentGateway(
+            orderStatusResult: new PaymentStatusResult(PaymentGatewayStatus.Succeeded, "TXN-RECONCILE-MISMATCH", 39000));
+        var handler = CreateStatusHandler(db, gateway);
+
+        var result = await handler.Handle(new(customerId, orderCode), default);
+
+        Assert.Equal("failed", result.Status);
+        Assert.Null(result.SubscriptionId);
+        Assert.Empty(db.CustomerSubscriptions);
     }
 
     [Theory]
@@ -330,7 +391,7 @@ public class PayOSSubscriptionTests
         await db.SaveChangesAsync();
 
         var gateway = new FakePaymentGateway(
-            orderStatusResult: new PaymentStatusResult(gatewayStatus, null));
+            orderStatusResult: new PaymentStatusResult(gatewayStatus, null, 49000));
         var handler = CreateStatusHandler(db, gateway);
 
         var result = await handler.Handle(new(customerId, orderCode), default);

@@ -109,7 +109,10 @@ internal sealed class PayOSGateway : IPaymentGateway
                 _ => PaymentGatewayStatus.Pending,
             };
 
-            return new PaymentStatusResult(status, transactionId);
+            // link.Amount is the configured order total (always equal to what we sent PayOS at
+            // order creation, i.e. payment.Amount) — AmountPaid is what PayOS actually received,
+            // which is what the amount-mismatch check in ApplyResultAsync needs to compare against.
+            return new PaymentStatusResult(status, transactionId, (int)link.AmountPaid);
         }
         catch (PayOSException ex)
         {

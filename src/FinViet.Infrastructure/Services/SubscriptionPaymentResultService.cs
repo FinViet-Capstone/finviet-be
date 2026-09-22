@@ -7,16 +7,20 @@ namespace FinViet.Infrastructure.Services;
 
 /// <summary>
 /// Applies a payment outcome to a Payment row (and, on success, creates/renews the
-/// CustomerSubscription). Used by the PayOS webhook handler. Callers are responsible for
-/// loading and row-locking (FOR UPDATE) the Payment before calling this, within an open
-/// transaction; this method re-checks terminal state so a duplicate call (e.g. a PayOS
-/// webhook retry) is always a safe no-op.
+/// CustomerSubscription). Used by the PayOS webhook handler and the payment-status
+/// reconciliation fallback. Callers are responsible for loading and row-locking (FOR UPDATE)
+/// the Payment before calling this, within an open transaction; this method re-checks terminal
+/// state so a duplicate call (e.g. a PayOS webhook retry) is always a safe no-op. A reported
+/// <paramref name="amount"/> that doesn't match <see cref="Payment.Amount"/> is treated as a
+/// failure regardless of <paramref name="success"/>, so the subscription is never activated on
+/// a mismatched amount (defense-in-depth against a plan-price change or a mis-provisioned order).
 /// </summary>
 internal interface ISubscriptionPaymentResultService
 {
     Task<bool> ApplyResultAsync(
         Payment payment,
         bool success,
+        int amount,
         string? providerTransactionId,
         string? rawPayload,
         CancellationToken cancellationToken = default);
@@ -42,6 +46,7 @@ internal sealed class SubscriptionPaymentResultService : ISubscriptionPaymentRes
     public async Task<bool> ApplyResultAsync(
         Payment payment,
         bool success,
+        int amount,
         string? providerTransactionId,
         string? rawPayload,
         CancellationToken cancellationToken = default)
@@ -49,6 +54,14 @@ internal sealed class SubscriptionPaymentResultService : ISubscriptionPaymentRes
         if (payment.Status != Pending)
         {
             return false;
+        }
+
+        if (success && amount != payment.Amount)
+        {
+            _logger.LogWarning(
+                "Payment {PaymentId} amount mismatch: expected {ExpectedAmount}, provider reported {ReportedAmount}; marking failed.",
+                payment.PaymentId, payment.Amount, amount);
+            success = false;
         }
 
         payment.PayosTransactionId = providerTransactionId;

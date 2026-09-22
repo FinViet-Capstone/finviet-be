@@ -81,6 +81,7 @@ internal sealed class GetPaymentStatusQueryHandler(
         await resultService.ApplyResultAsync(
             locked,
             remoteStatus.Status == PaymentGatewayStatus.Succeeded,
+            remoteStatus.Amount,
             remoteStatus.TransactionId,
             rawPayload: null,
             cancellationToken);

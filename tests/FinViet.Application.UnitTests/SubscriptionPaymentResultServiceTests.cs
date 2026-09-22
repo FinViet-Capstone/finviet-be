@@ -44,7 +44,7 @@ public class SubscriptionPaymentResultServiceTests
         db.Payments.Add(payment);
         await db.SaveChangesAsync();
 
-        var applied = await service.ApplyResultAsync(payment, success: true, "TXN-REF-001", """{"code":"00"}""");
+        var applied = await service.ApplyResultAsync(payment, success: true, amount: 59000, "TXN-REF-001", """{"code":"00"}""");
 
         Assert.True(applied);
         Assert.Equal("succeeded", payment.Status);
@@ -69,7 +69,27 @@ public class SubscriptionPaymentResultServiceTests
         db.Payments.Add(payment);
         await db.SaveChangesAsync();
 
-        var applied = await service.ApplyResultAsync(payment, success: false, null, """{"code":"01"}""");
+        var applied = await service.ApplyResultAsync(payment, success: false, amount: 49000, null, """{"code":"01"}""");
+
+        Assert.True(applied);
+        Assert.Equal("failed", payment.Status);
+        Assert.Null(payment.SubscriptionId);
+        Assert.False(await db.CustomerSubscriptions.AnyAsync());
+    }
+
+    [Fact]
+    public async Task AmountMismatch_MarksPaymentFailed_NoSubscriptionCreated_EvenWhenProviderReportsSuccess()
+    {
+        await using var db = TestDbContextFactory.Create();
+        var service = new SubscriptionPaymentResultService(db, NullLogger<SubscriptionPaymentResultService>.Instance);
+
+        var plan = NewPlan();
+        var payment = NewPayment(plan.PlanId, amount: 49000m, chargeType: "initial");
+        db.SubscriptionPlans.Add(plan);
+        db.Payments.Add(payment);
+        await db.SaveChangesAsync();
+
+        var applied = await service.ApplyResultAsync(payment, success: true, amount: 39000, "TXN-REF-004", """{"code":"00"}""");
 
         Assert.True(applied);
         Assert.Equal("failed", payment.Status);
@@ -103,7 +123,7 @@ public class SubscriptionPaymentResultServiceTests
         db.Payments.Add(payment);
         await db.SaveChangesAsync();
 
-        await service.ApplyResultAsync(payment, success: true, "TXN-REF-002", """{"code":"00"}""");
+        await service.ApplyResultAsync(payment, success: true, amount: 49000, "TXN-REF-002", """{"code":"00"}""");
 
         var reloaded = await db.CustomerSubscriptions.SingleAsync(s => s.SubscriptionId == subscription.SubscriptionId);
         Assert.Equal(originalNextBillingDate.AddMonths(1), reloaded.NextBillingDate);
@@ -125,7 +145,7 @@ public class SubscriptionPaymentResultServiceTests
         db.Payments.Add(payment);
         await db.SaveChangesAsync();
 
-        var applied = await service.ApplyResultAsync(payment, success: true, "TXN-REF-003", """{"code":"00"}""");
+        var applied = await service.ApplyResultAsync(payment, success: true, amount: 49000, "TXN-REF-003", """{"code":"00"}""");
 
         Assert.False(applied);
         Assert.False(await db.CustomerSubscriptions.AnyAsync());

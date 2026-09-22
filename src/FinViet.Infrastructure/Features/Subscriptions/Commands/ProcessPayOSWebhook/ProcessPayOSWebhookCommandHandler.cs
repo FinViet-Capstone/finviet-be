@@ -56,6 +56,7 @@ internal class ProcessPayOSWebhookCommandHandler : IRequestHandler<ProcessPayOSW
         await _resultService.ApplyResultAsync(
             payment,
             verified.Success,
+            verified.Amount,
             verified.TransactionId,
             request.RawBody,
             cancellationToken);

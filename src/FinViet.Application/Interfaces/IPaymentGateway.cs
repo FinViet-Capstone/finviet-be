@@ -39,6 +39,6 @@ public enum PaymentGatewayStatus
     Failed,
 }
 
-public sealed record PaymentStatusResult(PaymentGatewayStatus Status, string? TransactionId);
+public sealed record PaymentStatusResult(PaymentGatewayStatus Status, string? TransactionId, int Amount);
 
 public sealed record ConfirmWebhookResult(string WebhookUrl, string AccountName, string AccountNumber);
