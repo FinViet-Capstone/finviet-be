@@ -545,17 +545,7 @@ public class TransactionRepository : ITransactionRepository
     private async Task<List<TransactionResponseDto>> ToDtosAsync(
         IReadOnlyCollection<Transaction> entities, CancellationToken cancellationToken)
     {
-        var guessIds = entities
-            .Select(t => t.AiCategoryGuess)
-            .Where(g => g != null)
-            .Distinct()
-            .ToList();
-        var names = guessIds.Count == 0
-            ? new Dictionary<string, string>()
-            : await _context.Categories
-                .AsNoTracking()
-                .Where(c => guessIds.Contains(c.CategoryId))
-                .ToDictionaryAsync(c => c.CategoryId, c => c.CategoryName, cancellationToken);
+        var names = await TransactionCategorization.ResolveGuessNamesAsync(_context, entities, cancellationToken);
         var now = DateTime.UtcNow;
 
         return entities

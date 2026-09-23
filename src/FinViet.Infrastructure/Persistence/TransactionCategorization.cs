@@ -1,5 +1,7 @@
 using System.Linq.Expressions;
+using FinViet.Infrastructure.Persistence.Context;
 using FinViet.Infrastructure.Persistence.Entities;
+using Microsoft.EntityFrameworkCore;
 
 namespace FinViet.Infrastructure.Persistence;
 
@@ -46,6 +48,24 @@ public static class TransactionCategorization
         AllStatuses.Select(s => (s, Condition(s).Compile())).ToArray();
 
     private sealed record CutoffHolder(DateTime Value);
+
+    /// <summary>Resolves the category names of the AI guesses on <paramref name="transactions"/>, keyed by category id.</summary>
+    public static async Task<IReadOnlyDictionary<string, string>> ResolveGuessNamesAsync(
+        FinVietDbContext context, IEnumerable<Transaction> transactions, CancellationToken cancellationToken)
+    {
+        var guessIds = transactions
+            .Select(t => t.AiCategoryGuess)
+            .OfType<string>()
+            .Distinct()
+            .ToList();
+        if (guessIds.Count == 0)
+            return new Dictionary<string, string>();
+
+        return await context.Categories
+            .AsNoTracking()
+            .Where(c => guessIds.Contains(c.CategoryId))
+            .ToDictionaryAsync(c => c.CategoryId, c => c.CategoryName, cancellationToken);
+    }
 
     /// <summary>Derives the status of an in-memory entity.</summary>
     public static string Derive(Transaction transaction, DateTime utcNow)

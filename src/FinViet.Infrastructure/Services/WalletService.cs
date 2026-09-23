@@ -1,9 +1,9 @@
-using FinViet.Infrastructure.Persistence;
 using System.Data;
 using FinViet.Application.Common;
 using FinViet.Application.DTOs.Wallets;
 using FinViet.Application.Exceptions;
 using FinViet.Application.Interfaces;
+using FinViet.Infrastructure.Persistence;
 using FinViet.Infrastructure.Persistence.Context;
 using FinViet.Infrastructure.Persistence.Entities;
 using FinViet.Infrastructure.Persistence.Idempotency;
@@ -552,13 +552,7 @@ public class WalletService : IWalletService
             .Take(query.PageSize)
             .ToListAsync(cancellationToken);
 
-        var guessIds = entities.Select(x => x.AiCategoryGuess).Where(g => g != null).Distinct().ToList();
-        var guessNames = guessIds.Count == 0
-            ? new Dictionary<string, string>()
-            : await _dbContext.Categories
-                .AsNoTracking()
-                .Where(c => guessIds.Contains(c.CategoryId))
-                .ToDictionaryAsync(c => c.CategoryId, c => c.CategoryName, cancellationToken);
+        var guessNames = await TransactionCategorization.ResolveGuessNamesAsync(_dbContext, entities, cancellationToken);
         var now = DateTime.UtcNow;
 
         var items = entities.Select(x => new WalletTransactionResponse
