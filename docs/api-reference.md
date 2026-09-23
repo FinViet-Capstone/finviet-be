@@ -582,7 +582,7 @@ Only computed when `deadline` is set. `monthsRemaining` = whole calendar months 
 | POST | `/photo` | multipart: `file` | `ApiResponse<ExtractResponse>` |
 
 **ExtractResponse**: `{ rows: ExtractedTransactionItem[], totalScanned, skipped, errors: string[] }`
-**ExtractedTransactionItem**: `{ amount, type, merchant?, description?, transactionDate, amountConfidence?, merchantConfidence?, transactionDateConfidence?, categoryId?, categoryName?, confidence? }`. The three field-confidence values are populated by receipt OCR only; `confidence` remains the independent category-suggestion confidence.
+**ExtractedTransactionItem**: `{ amount, type, merchant?, description?, transactionDate, amountConfidence?, merchantConfidence?, transactionDateConfidence?, categoryId?, categoryName?, confidence?, rawFields? }`. The three field-confidence values are populated by receipt OCR only; `confidence` remains the independent category-suggestion confidence. `rawFields: { header, value }[]` is `/csv`-only (always `null` for `/sms`/`/photo`) — the original source-file row, every column in file order, not just columns mapped to a normalized field above; also `null` for CSV rows parsed via the header-less legacy positional layout (no header text exists to pair values with), so a response can mix rows with and without it.
 
 ### POST `/sms`
 **Validation**: `MaxSmsTextLength = 20,000` chars (exact constant). Empty/whitespace → 400 "Vui lòng dán nội dung tin nhắn cần trích xuất." Over the limit → 400 "Nội dung quá dài (tối đa 20.000 ký tự). Hãy chia nhỏ và dán lại." — a hard length check on the raw string, not truncation.

@@ -205,6 +205,42 @@ public class BankStatementExcelParserTests
         Assert.Equal("INCOME", row.TransactionType);
         Assert.Equal(50_000m, row.Amount);
         Assert.Equal("Legacy row", row.Note);
+        // No header row exists to pair values with under the fixed-position legacy layout, so
+        // there's nothing meaningful to label columns with.
+        Assert.Null(row.RawFields);
+    }
+
+    [Fact]
+    public void Parse_Csv_RecognizedHeader_PopulatesRawFieldsWithFullOriginalRow()
+    {
+        // "So du" (running balance) isn't mapped to any normalized field — it should still show
+        // up in RawFields alongside the recognized columns, in original file order.
+        var csv = "Ngay,Mo ta,So tien,Nguoi nhan,So du\n12/06/2026,Chuyen khoan,-45000,NGUYEN VAN B,1000000\n";
+        var parser = new BankStatementExcelParser();
+
+        var result = parser.Parse(ToStream(csv), ".csv");
+
+        var row = Assert.Single(result.Rows);
+        Assert.NotNull(row.RawFields);
+        Assert.Equal(
+            new[] { "Ngay", "Mo ta", "So tien", "Nguoi nhan", "So du" },
+            row.RawFields!.Select(f => f.Header));
+        Assert.Equal(
+            new[] { "12/06/2026", "Chuyen khoan", "-45000", "NGUYEN VAN B", "1000000" },
+            row.RawFields!.Select(f => f.Value));
+    }
+
+    [Fact]
+    public void Parse_Csv_HeaderRowWithBlankCell_SkipsUnlabeledColumn()
+    {
+        var csv = "Ngay,Mo ta,So tien,\n12/06/2026,Chuyen khoan,-45000,unused\n";
+        var parser = new BankStatementExcelParser();
+
+        var result = parser.Parse(ToStream(csv), ".csv");
+
+        var row = Assert.Single(result.Rows);
+        Assert.NotNull(row.RawFields);
+        Assert.Equal(new[] { "Ngay", "Mo ta", "So tien" }, row.RawFields!.Select(f => f.Header));
     }
 
     private static string BuildRow(string no, string date, string debit, string credit, string description, string correspondent)
