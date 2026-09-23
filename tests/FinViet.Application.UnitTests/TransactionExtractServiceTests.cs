@@ -200,6 +200,45 @@ public class TransactionExtractServiceTests
         Assert.Equal("cat_shopping", item.CategoryId);
     }
 
+    [Fact]
+    public async Task ExtractSmsAsync_ParsedRowCarriesRawFields_PassesThroughToItem()
+    {
+        // ExtractCsvAsync and ExtractSmsAsync share the same row-mapping code path
+        // (BuildResponseAsync) - exercising it via SMS here (simpler to set up than a full CSV
+        // parse) still proves RawFields passes through for whichever parser populates it, while
+        // SmsTransactionParser itself never sets it, so real SMS rows stay null.
+        var customerId = Guid.NewGuid();
+        var rawFields = new List<RawFieldPair> { new() { Header = "So tien", Value = "-45000" } };
+        var smsParser = SmsParserFor(new ParsedTransactionDto
+        {
+            TransactionType = "INCOME",
+            Amount = 50_000m,
+            TransactionDate = DateTime.UtcNow,
+            Note = "Luong",
+            RawText = "Luong",
+            RawFields = rawFields
+        });
+        var service = CreateService(smsParser, NoRule(), new Mock<IAiCategorizationService>(MockBehavior.Strict));
+
+        var result = await service.ExtractSmsAsync(customerId, "any text");
+
+        var item = Assert.Single(result.Rows);
+        Assert.Same(rawFields, item.RawFields);
+    }
+
+    [Fact]
+    public async Task ExtractSmsAsync_RowWithNoRawFields_ItemRawFieldsStaysNull()
+    {
+        var customerId = Guid.NewGuid();
+        var smsParser = SmsParserFor(Row("INCOME", "Luong"));
+        var service = CreateService(smsParser, NoRule(), new Mock<IAiCategorizationService>(MockBehavior.Strict));
+
+        var result = await service.ExtractSmsAsync(customerId, "any text");
+
+        var item = Assert.Single(result.Rows);
+        Assert.Null(item.RawFields);
+    }
+
     private static TransactionExtractService CreateService(
         Mock<ISmsTransactionParser> smsParser,
         Mock<IMerchantRuleService> rules,

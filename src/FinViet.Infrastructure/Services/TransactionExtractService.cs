@@ -80,7 +80,8 @@ public class TransactionExtractService : ITransactionExtractService
                 // column for it; otherwise fall back to the transaction description, same as before
                 // CorrespondentName existed.
                 Merchant = string.IsNullOrWhiteSpace(row.CorrespondentName) ? row.Note : row.CorrespondentName,
-                TransactionDate = row.TransactionDate
+                TransactionDate = row.TransactionDate,
+                RawFields = row.RawFields
             };
             items.Add(item);
 
