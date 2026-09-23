@@ -58,6 +58,16 @@ public class TransactionRepository : ITransactionRepository
             query = query.Where(t => t.TransactionDate < toExclusive);
         }
 
+        var statuses = ParseCategorizationStatuses(filter.CategorizationStatus);
+        if (statuses.Count > 0)
+            query = query.Where(TransactionCategorization.Matches(statuses, DateTime.UtcNow));
+
+        if (!string.IsNullOrWhiteSpace(filter.EntryMethod))
+        {
+            var entryMethod = filter.EntryMethod.Trim().ToLowerInvariant();
+            query = query.Where(t => t.EntryMethod == entryMethod);
+        }
+
         if (filter.UncategorizedOnly)
             query = query.Where(t => t.CategoryId == null && t.TransactionType != "transfer_out" && t.TransactionType != "transfer_in");
 
@@ -84,7 +94,7 @@ public class TransactionRepository : ITransactionRepository
             PageSize = pageSize,
             TotalItems = total,
             TotalPages = (int)Math.Ceiling(total / (double)pageSize),
-            Items = entities.Select(MapToDto).ToList()
+            Items = await ToDtosAsync(entities, cancellationToken)
         };
     }
 
@@ -97,7 +107,7 @@ public class TransactionRepository : ITransactionRepository
                         && (t.CustomerId == customerId || (t.Wallet != null && t.Wallet.CustomerId == customerId)))
             .FirstOrDefaultAsync(cancellationToken);
 
-        return transaction is null ? null : MapToDto(transaction);
+        return transaction is null ? null : await ToDtoAsync(transaction, cancellationToken);
     }
 
     public async Task<TransactionSummaryResponseDto> GetSummaryAsync(
@@ -177,7 +187,7 @@ public class TransactionRepository : ITransactionRepository
     public async Task<TransactionResponseDto> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var transaction = await _context.Transactions.FindAsync(new object[] { id }, cancellationToken: cancellationToken);
-        return transaction == null ? null! : MapToDto(transaction);
+        return transaction == null ? null! : await ToDtoAsync(transaction, cancellationToken);
     }
 
     public async Task<TransactionResponseDto> CreateAsync(Guid walletId, string? categoryId, string transactionType, decimal amount, DateTime transactionDate, string note, CancellationToken cancellationToken = default)
@@ -200,7 +210,7 @@ public class TransactionRepository : ITransactionRepository
 
         _context.Transactions.Add(transaction);
         await _context.SaveChangesAsync(cancellationToken);
-        return MapToDto(transaction);
+        return await ToDtoAsync(transaction, cancellationToken);
     }
 
     public async Task<TransactionResponseDto> CreateManualForCustomerAsync(
@@ -285,7 +295,7 @@ public class TransactionRepository : ITransactionRepository
         _context.Transactions.Add(transaction);
         await _context.SaveChangesAsync(cancellationToken);
 
-        var response = MapToDto(transaction);
+        var response = await ToDtoAsync(transaction, cancellationToken);
         await IdempotencyStore.CompleteAsync(
             _context,
             customerId,
@@ -314,7 +324,7 @@ public class TransactionRepository : ITransactionRepository
 
         _context.Transactions.Update(transaction);
         await _context.SaveChangesAsync(cancellationToken);
-        return MapToDto(transaction);
+        return await ToDtoAsync(transaction, cancellationToken);
     }
 
     public async Task<bool> DeleteAsync(Guid id, CancellationToken cancellationToken = default)
@@ -410,7 +420,7 @@ public class TransactionRepository : ITransactionRepository
         transaction.UpdatedAt = DateTime.UtcNow;
 
         await _context.SaveChangesAsync(cancellationToken);
-        return MapToDto(transaction);
+        return await ToDtoAsync(transaction, cancellationToken);
     }
 
     public async Task<TransactionResponseDto?> EditForCustomerAsync(
@@ -472,7 +482,7 @@ public class TransactionRepository : ITransactionRepository
         await _context.SaveChangesAsync(cancellationToken);
         await databaseTransaction.CommitAsync(cancellationToken);
 
-        return MapToDto(target);
+        return await ToDtoAsync(target, cancellationToken);
     }
 
     private static string NormalizeType(string type)
@@ -514,7 +524,46 @@ public class TransactionRepository : ITransactionRepository
             _ => throw new BusinessRuleException($"Unsupported transaction type '{transactionType}'.", "transaction_type_invalid")
         };
 
-    private static TransactionResponseDto MapToDto(Transaction transaction) => new()
+    private static List<string> ParseCategorizationStatuses(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+            return new List<string>();
+
+        var statuses = raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(s => s.ToLowerInvariant())
+            .Distinct()
+            .ToList();
+        if (statuses.Any(s => !TransactionCategorization.IsValid(s)))
+            throw new BadRequestException(
+                $"categorizationStatus must be a comma-separated list of: {string.Join(", ", TransactionCategorization.AllStatuses)}.");
+        return statuses;
+    }
+
+    private async Task<TransactionResponseDto> ToDtoAsync(Transaction transaction, CancellationToken cancellationToken) =>
+        (await ToDtosAsync(new[] { transaction }, cancellationToken))[0];
+
+    private async Task<List<TransactionResponseDto>> ToDtosAsync(
+        IReadOnlyCollection<Transaction> entities, CancellationToken cancellationToken)
+    {
+        var guessIds = entities
+            .Select(t => t.AiCategoryGuess)
+            .Where(g => g != null)
+            .Distinct()
+            .ToList();
+        var names = guessIds.Count == 0
+            ? new Dictionary<string, string>()
+            : await _context.Categories
+                .AsNoTracking()
+                .Where(c => guessIds.Contains(c.CategoryId))
+                .ToDictionaryAsync(c => c.CategoryId, c => c.CategoryName, cancellationToken);
+        var now = DateTime.UtcNow;
+
+        return entities
+            .Select(t => MapToDto(t, t.AiCategoryGuess is not null && names.TryGetValue(t.AiCategoryGuess, out var n) ? n : null, now))
+            .ToList();
+    }
+
+    private static TransactionResponseDto MapToDto(Transaction transaction, string? aiSuggestedCategoryName, DateTime utcNow) => new()
     {
         TransactionId = transaction.TransactionId,
         CustomerId = transaction.CustomerId,
@@ -531,6 +580,11 @@ public class TransactionRepository : ITransactionRepository
         TransferPairId = transaction.TransferPairId,
         ExternalId = transaction.ExternalId,
         SplitGroupId = transaction.SplitGroupId,
+        CategorizationStatus = TransactionCategorization.Derive(transaction, utcNow),
+        AiSuggestedCategoryId = transaction.AiCategoryGuess,
+        AiSuggestedCategoryName = aiSuggestedCategoryName,
+        AiConfidence = transaction.AiConfidence,
+        AiSource = transaction.AiClassificationSource,
         CreatedAt = transaction.CreatedAt == default ? transaction.TransactionDate ?? DateTime.UtcNow : transaction.CreatedAt,
         UpdatedAt = transaction.UpdatedAt
     };

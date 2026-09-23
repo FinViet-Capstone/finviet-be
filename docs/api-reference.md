@@ -318,16 +318,47 @@ their own ratio via `POST /api/profile/income-allocation`.
   walletId?: Guid, type?: string,            // "expense" | "income" | "transfer_out" | "transfer_in" (case-insensitive)
   categoryId?: string, from?: DateTime, to?: DateTime,
   q?: string,               // free-text ILIKE search — see note below
-  uncategorizedOnly: boolean = false
+  uncategorizedOnly: boolean = false,
+  categorizationStatus?: string,  // comma-separated: none,pending,suggested,unsure,failed,applied,reviewed
+  entryMethod?: string            // e.g. "sepay_sync"
 }
 ```
+Results are always newest first.
+An unknown `categorizationStatus` value returns 400.
+Filters combine with `walletId` and paging.
+The SePay review inbox is `GET /api/transactions?categorizationStatus=pending,suggested,unsure,failed&entryMethod=sepay_sync`.
+For a badge count, use the same query with `pageSize=1` and read `totalItems`.
 > **Doc/code correction**: `q` searches `Description` and `Merchant` (Postgres `ILIKE '%term%'`), **not** `Note`/`BeneficiaryName` as a stale comment on the DTO claims — build the mobile search UI against `description`/`merchant`.
 
 **CreateTransactionDto**: `{ walletId, categoryId?, transactionType, amount, transactionDate, note?, description?, merchant?, entryMethod? }`
 **UpdateTransactionDto**: `{ categoryId?, amount?, merchant?, transactionDate? }` — **partial update**: a field left `null`/omitted is left unchanged. `walletId` and `transactionType` remain immutable after creation (out of scope for this endpoint).
 **ClassifyTransactionDto**: `{ categoryId?: string }`
 
-**TransactionResponseDto**: `{ transactionId, customerId, walletId, categoryId?, transactionType, sourceChannel, entryMethod, amount, transactionDate, note?, description?, merchant?, transferPairId?, externalId?, createdAt, updatedAt? }`
+**TransactionResponseDto**: `{ transactionId, customerId, walletId, categoryId?, transactionType, sourceChannel, entryMethod, amount, transactionDate, note?, description?, merchant?, transferPairId?, externalId?, splitGroupId?, categorizationStatus, aiSuggestedCategoryId?, aiSuggestedCategoryName?, aiConfidence?, aiSource?, createdAt, updatedAt? }`
+
+**Categorization fields** (also returned on `WalletTransactionResponse` from `GET /wallets/{id}/transactions`):
+- `categorizationStatus`: `none | pending | suggested | unsure | failed | applied | reviewed`.
+  It is derived from existing columns, with no schema change.
+  One helper (`TransactionCategorization`) computes it for both the DTO and the list filter, so they cannot disagree.
+- `aiSuggestedCategoryId` / `aiSuggestedCategoryName`: the stored AI guess (`ai_category_guess`).
+  `categoryId` stays null until the guess is accepted.
+- `aiConfidence`: the stored `ai_confidence`.
+- `aiSource`: `manual | merchant_rule | ai_auto | ai_suggestion | fallback`, or null when never classified.
+
+Derivation rules, first match wins:
+
+| # | Status | Condition |
+|---|---|---|
+| 1 | `reviewed` | `aiSource = manual` |
+| 2 | `applied` | `categoryId` is set |
+| 3 | `none` | not a SePay expense (`entryMethod <> sepay_sync` or `type <> expense`) |
+| 4 | `suggested` | `aiSource = ai_suggestion` and an AI guess is set |
+| 5 | `unsure` | `aiSource = ai_suggestion` and no AI guess |
+| 6 | `pending` | `aiSource` is null and `ai_classified_at` is within the last 10 minutes |
+| 7 | `failed` | anything else |
+
+`ai_classified_at` has a second meaning: while a row is queued for AI (source still null) it holds the enqueue time, and it is overwritten with the completion time when the worker finishes.
+A row that stays queued for more than 10 minutes is reported as `failed`.
 
 **TransactionSummaryResponseDto**: `{ income, expense, net, byCategory: {categoryId?, categoryName?, total}[], byDay: {date, income, expense, net}[], topBeneficiaries: {beneficiary, total}[] }`
 

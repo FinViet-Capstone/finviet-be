@@ -15,4 +15,14 @@ public class WalletTransactionResponse
     public DateTimeOffset TransactionDate { get; set; }
 
     public string? Note { get; set; }
+
+    public string CategorizationStatus { get; set; } = "none";
+
+    public string? AiSuggestedCategoryId { get; set; }
+
+    public string? AiSuggestedCategoryName { get; set; }
+
+    public decimal? AiConfidence { get; set; }
+
+    public string? AiSource { get; set; }
 }

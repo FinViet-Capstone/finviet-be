@@ -1,3 +1,4 @@
+using FinViet.Infrastructure.Persistence;
 using System.Data;
 using FinViet.Application.Common;
 using FinViet.Application.DTOs.Wallets;
@@ -546,22 +547,37 @@ public class WalletService : IWalletService
 
         var totalItems = await transactionsQuery.CountAsync(cancellationToken);
 
-        var items = await transactionsQuery
+        var entities = await transactionsQuery
             .Skip((query.Page - 1) * query.PageSize)
             .Take(query.PageSize)
-            .Select(x => new WalletTransactionResponse
-            {
-                TransactionId = x.TransactionId,
-                WalletId = x.WalletId,
-                CategoryId = x.CategoryId,
-                TransactionType = x.TransactionType,
-                Amount = x.Amount,
-                TransactionDate = x.TransactionDate.HasValue
-                    ? new DateTimeOffset(DateTime.SpecifyKind(x.TransactionDate.Value, DateTimeKind.Utc))
-                    : DateTimeOffset.MinValue,
-                Note = x.Description
-            })
             .ToListAsync(cancellationToken);
+
+        var guessIds = entities.Select(x => x.AiCategoryGuess).Where(g => g != null).Distinct().ToList();
+        var guessNames = guessIds.Count == 0
+            ? new Dictionary<string, string>()
+            : await _dbContext.Categories
+                .AsNoTracking()
+                .Where(c => guessIds.Contains(c.CategoryId))
+                .ToDictionaryAsync(c => c.CategoryId, c => c.CategoryName, cancellationToken);
+        var now = DateTime.UtcNow;
+
+        var items = entities.Select(x => new WalletTransactionResponse
+        {
+            TransactionId = x.TransactionId,
+            WalletId = x.WalletId,
+            CategoryId = x.CategoryId,
+            TransactionType = x.TransactionType,
+            Amount = x.Amount,
+            TransactionDate = x.TransactionDate.HasValue
+                ? new DateTimeOffset(DateTime.SpecifyKind(x.TransactionDate.Value, DateTimeKind.Utc))
+                : DateTimeOffset.MinValue,
+            Note = x.Description,
+            CategorizationStatus = TransactionCategorization.Derive(x, now),
+            AiSuggestedCategoryId = x.AiCategoryGuess,
+            AiSuggestedCategoryName = x.AiCategoryGuess is not null && guessNames.TryGetValue(x.AiCategoryGuess, out var n) ? n : null,
+            AiConfidence = x.AiConfidence,
+            AiSource = x.AiClassificationSource
+        }).ToList();
 
         return new PagedResult<WalletTransactionResponse>
         {

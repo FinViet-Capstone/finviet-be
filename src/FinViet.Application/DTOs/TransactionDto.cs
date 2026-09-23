@@ -57,6 +57,17 @@ public class TransactionResponseDto
     /// </summary>
     public Guid? SplitGroupId { get; set; }
 
+    /// <summary>none | pending | suggested | unsure | failed | applied | reviewed (derived, first matching rule wins).</summary>
+    public string CategorizationStatus { get; set; } = "none";
+
+    /// <summary>The stored AI guess (ai_category_guess); the category itself stays unset until accepted.</summary>
+    public string? AiSuggestedCategoryId { get; set; }
+    public string? AiSuggestedCategoryName { get; set; }
+    public decimal? AiConfidence { get; set; }
+
+    /// <summary>manual | merchant_rule | ai_auto | ai_suggestion | fallback, or null when never classified.</summary>
+    public string? AiSource { get; set; }
+
     public DateTime CreatedAt { get; set; }
     public DateTime? UpdatedAt { get; set; }
 }
