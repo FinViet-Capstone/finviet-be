@@ -8,6 +8,7 @@ using FinViet.Application.Interfaces;
 using FinViet.Infrastructure.ExternalServices.SePay;
 using FinViet.Infrastructure.Persistence.Context;
 using FinViet.Infrastructure.Persistence.Entities;
+using FinViet.Infrastructure.Services.Background;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Caching.Memory;
@@ -39,7 +40,7 @@ internal sealed class SepayWalletService : ISepayWalletService
     private readonly ISepayClient _client;
     private readonly ISepayTokenProtector _tokenProtector;
     private readonly ISepayLinkStateProtector _stateProtector;
-    private readonly IAiCategorizationService _categorizationService;
+    private readonly ISepayCategorizationQueue _categorizationQueue;
     private readonly IMemoryCache _cache;
     private readonly ILogger<SepayWalletService> _logger;
     private readonly SepayOptions _options;
@@ -49,7 +50,7 @@ internal sealed class SepayWalletService : ISepayWalletService
         ISepayClient client,
         ISepayTokenProtector tokenProtector,
         ISepayLinkStateProtector stateProtector,
-        IAiCategorizationService categorizationService,
+        ISepayCategorizationQueue categorizationQueue,
         IMemoryCache cache,
         ILogger<SepayWalletService> logger,
         IOptions<SepayOptions> options)
@@ -58,7 +59,7 @@ internal sealed class SepayWalletService : ISepayWalletService
         _client = client;
         _tokenProtector = tokenProtector;
         _stateProtector = stateProtector;
-        _categorizationService = categorizationService;
+        _categorizationQueue = categorizationQueue;
         _cache = cache;
         _logger = logger;
         _options = options.Value;
@@ -142,7 +143,8 @@ internal sealed class SepayWalletService : ISepayWalletService
             ? null
             : _tokenProtector.Protect(token.RefreshToken);
 
-        var createdExpenseIds = new List<Guid>();
+        var createdExpenses = new List<CreatedExpense>();
+        IReadOnlyList<Guid> queuedIds = [];
         var created = 0;
         Wallet wallet;
         SepayLink sepayLink;
@@ -229,17 +231,18 @@ internal sealed class SepayWalletService : ISepayWalletService
 
                 created++;
                 if (outcome.IsExpense)
-                    createdExpenseIds.Add(outcome.TransactionId);
+                    createdExpenses.Add(new CreatedExpense(outcome.TransactionId, outcome.TransactionDate));
             }
 
             sepayLink.LastSyncedAt = now;
             sepayLink.UpdatedAt = now;
 
             await _db.SaveChangesAsync(cancellationToken);
+            queuedIds = await StageCategorizationAsync(customerId, createdExpenses, now, cancellationToken);
             await databaseTransaction.CommitAsync(cancellationToken);
         }
 
-        await CategorizeAsync(customerId, createdExpenseIds, cancellationToken);
+        _categorizationQueue.Enqueue(customerId, queuedIds);
         await TryAutoRegisterWebhookAsync(customerId, wallet.WalletId, cancellationToken);
 
         return new SepayLinkResult
@@ -316,7 +319,8 @@ internal sealed class SepayWalletService : ISepayWalletService
         var now = DateTime.UtcNow;
         var apiTokenProtected = _tokenProtector.Protect(apiToken);
 
-        var createdExpenseIds = new List<Guid>();
+        var createdExpenses = new List<CreatedExpense>();
+        IReadOnlyList<Guid> queuedIds = [];
         var created = 0;
         Wallet wallet;
         SepayLink sepayLink;
@@ -399,17 +403,18 @@ internal sealed class SepayWalletService : ISepayWalletService
 
                 created++;
                 if (outcome.IsExpense)
-                    createdExpenseIds.Add(outcome.TransactionId);
+                    createdExpenses.Add(new CreatedExpense(outcome.TransactionId, outcome.TransactionDate));
             }
 
             sepayLink.LastSyncedAt = now;
             sepayLink.UpdatedAt = now;
 
             await _db.SaveChangesAsync(cancellationToken);
+            queuedIds = await StageCategorizationAsync(customerId, createdExpenses, now, cancellationToken);
             await databaseTransaction.CommitAsync(cancellationToken);
         }
 
-        await CategorizeAsync(customerId, createdExpenseIds, cancellationToken);
+        _categorizationQueue.Enqueue(customerId, queuedIds);
 
         return new SepayLinkResult
         {
@@ -466,7 +471,8 @@ internal sealed class SepayWalletService : ISepayWalletService
         }
         var now = DateTime.UtcNow;
         var apiTokenProtected = _tokenProtector.Protect(apiToken);
-        var createdExpenseIds = new List<Guid>();
+        var createdExpenses = new List<CreatedExpense>();
+        IReadOnlyList<Guid> queuedIds = [];
         var created = 0;
         Wallet wallet;
         SepayLink sepayLink;
@@ -543,7 +549,7 @@ internal sealed class SepayWalletService : ISepayWalletService
 
                 created++;
                 if (outcome.IsExpense)
-                    createdExpenseIds.Add(outcome.TransactionId);
+                    createdExpenses.Add(new CreatedExpense(outcome.TransactionId, outcome.TransactionDate));
             }
 
             // Test Mode webhooks and account responses may leave `accumulated` at zero even
@@ -556,10 +562,11 @@ internal sealed class SepayWalletService : ISepayWalletService
             sepayLink.LastSyncedAt = now;
             sepayLink.UpdatedAt = now;
             await _db.SaveChangesAsync(cancellationToken);
+            queuedIds = await StageCategorizationAsync(customerId, createdExpenses, now, cancellationToken);
             await databaseTransaction.CommitAsync(cancellationToken);
         }
 
-        await CategorizeAsync(customerId, createdExpenseIds, cancellationToken);
+        _categorizationQueue.Enqueue(customerId, queuedIds);
 
         return new SepayLinkResult
         {
@@ -729,7 +736,8 @@ internal sealed class SepayWalletService : ISepayWalletService
 
             var created = 0;
             var updated = 0;
-            var createdExpenseIds = new List<Guid>();
+            var createdExpenses = new List<CreatedExpense>();
+            IReadOnlyList<Guid> queuedIds = [];
 
             await using (var databaseTransaction = await _db.Database.BeginTransactionAsync(cancellationToken))
             {
@@ -742,7 +750,7 @@ internal sealed class SepayWalletService : ISepayWalletService
                     {
                         created++;
                         if (outcome.IsExpense)
-                            createdExpenseIds.Add(outcome.TransactionId);
+                            createdExpenses.Add(new CreatedExpense(outcome.TransactionId, outcome.TransactionDate));
                     }
                     else if (outcome.TransactionId != Guid.Empty)
                     {
@@ -761,11 +769,12 @@ internal sealed class SepayWalletService : ISepayWalletService
                 link.UpdatedAt = now;
 
                 await _db.SaveChangesAsync(cancellationToken);
+                queuedIds = await StageCategorizationAsync(customerId, createdExpenses, now, cancellationToken);
                 await databaseTransaction.CommitAsync(cancellationToken);
             }
 
-            // AI categorization for new expenses (outside the DB transaction).
-            await CategorizeAsync(customerId, createdExpenseIds, cancellationToken);
+            // Background AI categorization for new expenses; the rows were staged in the transaction above.
+            _categorizationQueue.Enqueue(customerId, queuedIds);
 
             return new SepayWalletSyncResponse
             {
@@ -1086,6 +1095,7 @@ internal sealed class SepayWalletService : ISepayWalletService
         var now = DateTime.UtcNow;
 
         SepayUpsertOutcome outcome;
+        IReadOnlyList<Guid> queuedIds = [];
         await using (var databaseTransaction = await _db.Database.BeginTransactionAsync(cancellationToken))
         {
             outcome = await UpsertNormalizedAsync(
@@ -1106,11 +1116,16 @@ internal sealed class SepayWalletService : ISepayWalletService
             link.UpdatedAt = now;
 
             await _db.SaveChangesAsync(cancellationToken);
+            if (outcome.Inserted && outcome.IsExpense)
+            {
+                queuedIds = await StageCategorizationAsync(
+                    customerId, [new CreatedExpense(outcome.TransactionId, outcome.TransactionDate)], now, cancellationToken);
+            }
+
             await databaseTransaction.CommitAsync(cancellationToken);
         }
 
-        if (outcome.Inserted && outcome.IsExpense)
-            await CategorizeAsync(customerId, [outcome.TransactionId], cancellationToken);
+        _categorizationQueue.Enqueue(customerId, queuedIds);
 
         return new SepayWebhookResult
         {
@@ -1371,40 +1386,42 @@ internal sealed class SepayWalletService : ISepayWalletService
         return new SepayUpsertOutcome(
             reader.GetGuid(0),
             reader.GetBoolean(1),
-            transactionType == "expense");
+            transactionType == "expense",
+            transactionDate);
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Runs AI categorization for newly created expenses. A categorization failure never rolls back
-    /// an already-committed sync — the transactions simply stay uncategorized.
+    /// Marks the newly created expenses that qualify for background categorization (dated in the
+    /// current or previous month, and the customer's AI mode is not off) as queued by stamping
+    /// <c>ai_classified_at</c>, leaving the source NULL so they read as pending. Runs inside the
+    /// caller's database transaction; the caller hands the returned ids to the queue after commit.
     /// </summary>
-    private async Task CategorizeAsync(
+    private async Task<IReadOnlyList<Guid>> StageCategorizationAsync(
         Guid customerId,
-        IReadOnlyCollection<Guid> transactionIds,
+        IReadOnlyCollection<CreatedExpense> createdExpenses,
+        DateTime now,
         CancellationToken cancellationToken)
     {
-        foreach (var transactionId in transactionIds)
-        {
-            try
-            {
-                await _categorizationService.CategorizeTransactionAsync(
-                    customerId,
-                    transactionId,
-                    cancellationToken);
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex,
-                    "AI categorization failed for SePay transaction {TransactionId}; sync committed.",
-                    transactionId);
-            }
-        }
+        var ids = createdExpenses
+            .Where(e => SepayCategorizationWindow.IsInWindow(e.TransactionDate, now))
+            .Select(e => e.TransactionId)
+            .ToList();
+        if (ids.Count == 0)
+            return [];
+
+        var mode = await _db.AiCustomerPreferences.AsNoTracking()
+            .Where(p => p.CustomerId == customerId)
+            .Select(p => p.CategorizationMode)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (string.Equals(mode, "off", StringComparison.Ordinal))
+            return [];
+
+        await _db.Transactions
+            .Where(t => t.CustomerId == customerId && ids.Contains(t.TransactionId))
+            .ExecuteUpdateAsync(s => s.SetProperty(t => t.AiClassifiedAt, now), cancellationToken);
+        return ids;
     }
 
     private static bool IsStatic(SepayLink link)
@@ -1517,5 +1534,7 @@ internal sealed class SepayWalletService : ISepayWalletService
         return trimmed[..Math.Min(trimmed.Length, maxLength)];
     }
 
-    private sealed record SepayUpsertOutcome(Guid TransactionId, bool Inserted, bool IsExpense);
+    private sealed record SepayUpsertOutcome(Guid TransactionId, bool Inserted, bool IsExpense, DateTime TransactionDate = default);
+
+    private sealed record CreatedExpense(Guid TransactionId, DateTime TransactionDate);
 }
