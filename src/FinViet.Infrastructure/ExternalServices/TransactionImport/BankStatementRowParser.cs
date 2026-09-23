@@ -42,6 +42,7 @@ internal static class BankStatementRowParser
         public int? DebitIndex;
         public int? CreditIndex;
         public int? CorrespondentIndex;
+        public IReadOnlyList<string?> HeaderCells = Array.Empty<string?>();
     }
 
     public static void ParseRows(IEnumerable<IReadOnlyList<string?>> rows, ParseResult result)
@@ -99,7 +100,8 @@ internal static class BankStatementRowParser
             AmountIndex = amountIndex,
             DebitIndex = debitIndex,
             CreditIndex = creditIndex,
-            CorrespondentIndex = correspondentIndex
+            CorrespondentIndex = correspondentIndex,
+            HeaderCells = cells
         };
     }
 
@@ -170,8 +172,31 @@ internal static class BankStatementRowParser
             TransactionDate = transactionDate,
             Note = TrimNote(description),
             CorrespondentName = string.IsNullOrWhiteSpace(correspondent) ? null : correspondent.Trim(),
-            RawText = string.Join(" | ", cells)
+            RawText = string.Join(" | ", cells),
+            RawFields = BuildRawFields(layout.HeaderCells, cells)
         });
+    }
+
+    /// <summary>Pairs every original header cell with the same-index value cell from this row,
+    /// preserving the full source row (not just columns mapped to a normalized field above) - so
+    /// a bank column the parser doesn't understand still shows up for the client's raw-data view.
+    /// Header cells with no text are skipped since there is nothing meaningful to label them
+    /// with; columns are otherwise emitted in their original file order. Bounded by the header
+    /// row's own length - a data row with extra trailing values the header row has no column for
+    /// (a ragged/malformed row) has those extras dropped rather than given a fabricated label.</summary>
+    private static List<RawFieldPair> BuildRawFields(IReadOnlyList<string?> headerCells, IReadOnlyList<string?> rowCells)
+    {
+        var fields = new List<RawFieldPair>(headerCells.Count);
+        for (var i = 0; i < headerCells.Count; i++)
+        {
+            var header = headerCells[i]?.Trim();
+            if (string.IsNullOrEmpty(header))
+                continue;
+
+            fields.Add(new RawFieldPair { Header = header, Value = GetCell(rowCells, i) });
+        }
+
+        return fields;
     }
 
     private static void ParseLegacyPositionalRow(IReadOnlyList<string?> cells, ParseResult result)

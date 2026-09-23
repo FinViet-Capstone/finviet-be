@@ -18,14 +18,6 @@ public interface ITransactionRepository
     Task<bool> DeleteAsync(Guid id, CancellationToken cancellationToken = default);
     Task<bool> DeleteForCustomerAsync(Guid customerId, Guid transactionId, CancellationToken cancellationToken = default);
 
-    /// <summary>
-    /// Splits one transaction across categories, replacing it with sibling rows that share a
-    /// split group id. The parts must sum to the original amount, so the wallet balance is
-    /// unchanged. Throws <c>BusinessRuleException</c> for a synced transaction, a transfer
-    /// leg, a saving-goal transaction, fewer than two parts, a non-positive part, or a total
-    /// that does not match.
-    /// </summary>
-    Task<IReadOnlyList<TransactionResponseDto>> SplitForCustomerAsync(Guid customerId, Guid transactionId, IReadOnlyList<SplitPartRequest> parts, string? idempotencyKey, CancellationToken cancellationToken = default);
     Task<TransactionResponseDto?> ClassifyAsync(Guid transactionId, string? categoryId, CancellationToken cancellationToken = default);
 
     // Partial update: a null parameter leaves that field unchanged. Reverses/reapplies the

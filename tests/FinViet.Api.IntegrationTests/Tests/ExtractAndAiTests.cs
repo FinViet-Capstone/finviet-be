@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json.Nodes;
 using FinViet.Api.IntegrationTests.Infrastructure;
 
 namespace FinViet.Api.IntegrationTests.Tests;
@@ -38,7 +39,17 @@ public class ExtractAndAiTests : ApiTestBase
             Encoding.UTF8.GetBytes(csv), "text/csv", Cust);
 
         Assert.Equal(200, r.Code);
-        Assert.True(ArrayLen(ApiTestFixture.Data(r)?["rows"]) >= 2);
+        var rows = ApiTestFixture.Data(r)?["rows"] as JsonArray;
+        Assert.True(ArrayLen(rows) >= 2);
+
+        // finviet-be#134 - a recognized-header CSV row must carry the full original row back as
+        // ordered {header, value} pairs, not just the columns mapped to a normalized field.
+        var firstRow = rows![0]!;
+        var rawFields = firstRow["rawFields"] as JsonArray;
+        Assert.NotNull(rawFields);
+        Assert.Equal(3, rawFields!.Count);
+        Assert.Equal("Ngay", rawFields[0]!["header"]!.GetValue<string>());
+        Assert.Equal("12/06/2026", rawFields[0]!["value"]!.GetValue<string>());
     }
 
     // TC-AI-01 — AI Spending Score, weekly view (50/50 weights)
