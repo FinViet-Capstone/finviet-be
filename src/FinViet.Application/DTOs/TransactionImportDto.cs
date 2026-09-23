@@ -18,7 +18,7 @@ public class ParsedTransactionDto
     public string RawText { get; set; } = string.Empty;
 
     /// <summary>Original source-file row as ordered header/value pairs, preserved as-is (see
-    /// <see cref="RawFieldPair"/>). Null when no header row could be resolved — the fixed-position
+    /// <see cref="RawFieldPair"/>). Null when no header row could be resolved - the fixed-position
     /// legacy bank-statement layout has no header text to pair values with. SMS parsing never
     /// populates this field, so it stays null for SMS rows by construction.</summary>
     public List<RawFieldPair>? RawFields { get; set; }

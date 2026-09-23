@@ -204,7 +204,7 @@ public class TransactionExtractServiceTests
     public async Task ExtractSmsAsync_ParsedRowCarriesRawFields_PassesThroughToItem()
     {
         // ExtractCsvAsync and ExtractSmsAsync share the same row-mapping code path
-        // (BuildResponseAsync) — exercising it via SMS here (simpler to set up than a full CSV
+        // (BuildResponseAsync) - exercising it via SMS here (simpler to set up than a full CSV
         // parse) still proves RawFields passes through for whichever parser populates it, while
         // SmsTransactionParser itself never sets it, so real SMS rows stay null.
         var customerId = Guid.NewGuid();

@@ -34,11 +34,12 @@ public class ExtractedTransactionItem
     /// <summary>Model confidence 0.0–1.0 (null when no suggestion was made).</summary>
     public decimal? Confidence { get; set; }
 
-    /// <summary>Original source-file row, column-by-column, exactly as the bank exported it —
-    /// not just the columns mapped to normalized fields above. CSV/XLSX import only (null for
-    /// SMS/photo rows, and for CSV rows parsed via the header-less legacy layout, which has no
-    /// header text to pair values with). Optional/additive: clients render their own raw-data
-    /// view only when present.</summary>
+    /// <summary>Original source-file row, one pair per header-row column, in file order - not
+    /// just the columns mapped to normalized fields above. A data row with more raw values than
+    /// the header row has columns for has those extra trailing values dropped, since there is no
+    /// header text to pair them with. CSV/XLSX import only (null for SMS/photo rows, and for CSV
+    /// rows parsed via the header-less legacy layout, which has no header row at all). Optional/
+    /// additive: clients render their own raw-data view only when present.</summary>
     public List<RawFieldPair>? RawFields { get; set; }
 }
 

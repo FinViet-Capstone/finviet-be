@@ -178,10 +178,12 @@ internal static class BankStatementRowParser
     }
 
     /// <summary>Pairs every original header cell with the same-index value cell from this row,
-    /// preserving the full source row (not just columns mapped to a normalized field above) —
-    /// so a bank column the parser doesn't understand still shows up for the client's raw-data
-    /// view. Header cells with no text are skipped since there is nothing meaningful to label
-    /// them with; columns are otherwise emitted in their original file order.</summary>
+    /// preserving the full source row (not just columns mapped to a normalized field above) - so
+    /// a bank column the parser doesn't understand still shows up for the client's raw-data view.
+    /// Header cells with no text are skipped since there is nothing meaningful to label them
+    /// with; columns are otherwise emitted in their original file order. Bounded by the header
+    /// row's own length - a data row with extra trailing values the header row has no column for
+    /// (a ragged/malformed row) has those extras dropped rather than given a fabricated label.</summary>
     private static List<RawFieldPair> BuildRawFields(IReadOnlyList<string?> headerCells, IReadOnlyList<string?> rowCells)
     {
         var fields = new List<RawFieldPair>(headerCells.Count);

@@ -213,7 +213,7 @@ public class BankStatementExcelParserTests
     [Fact]
     public void Parse_Csv_RecognizedHeader_PopulatesRawFieldsWithFullOriginalRow()
     {
-        // "So du" (running balance) isn't mapped to any normalized field — it should still show
+        // "So du" (running balance) isn't mapped to any normalized field - it should still show
         // up in RawFields alongside the recognized columns, in original file order.
         var csv = "Ngay,Mo ta,So tien,Nguoi nhan,So du\n12/06/2026,Chuyen khoan,-45000,NGUYEN VAN B,1000000\n";
         var parser = new BankStatementExcelParser();
@@ -241,6 +241,23 @@ public class BankStatementExcelParserTests
         var row = Assert.Single(result.Rows);
         Assert.NotNull(row.RawFields);
         Assert.Equal(new[] { "Ngay", "Mo ta", "So tien" }, row.RawFields!.Select(f => f.Header));
+    }
+
+    [Fact]
+    public void Parse_Csv_DataRowWiderThanHeaderRow_DropsExtraTrailingValues()
+    {
+        // A ragged/malformed row with more raw values than the header row defines columns for -
+        // there's no header text to pair the extra trailing value(s) with, so they're dropped
+        // rather than given a fabricated label.
+        var csv = "Ngay,Mo ta,So tien\n12/06/2026,Chuyen khoan,-45000,EXTRA_COL_VALUE\n";
+        var parser = new BankStatementExcelParser();
+
+        var result = parser.Parse(ToStream(csv), ".csv");
+
+        var row = Assert.Single(result.Rows);
+        Assert.NotNull(row.RawFields);
+        Assert.Equal(3, row.RawFields!.Count);
+        Assert.DoesNotContain(row.RawFields, f => f.Value == "EXTRA_COL_VALUE");
     }
 
     private static string BuildRow(string no, string date, string debit, string credit, string description, string correspondent)

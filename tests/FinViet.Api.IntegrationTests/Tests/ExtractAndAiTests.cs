@@ -42,7 +42,7 @@ public class ExtractAndAiTests : ApiTestBase
         var rows = ApiTestFixture.Data(r)?["rows"] as JsonArray;
         Assert.True(ArrayLen(rows) >= 2);
 
-        // finviet-be#134 — a recognized-header CSV row must carry the full original row back as
+        // finviet-be#134 - a recognized-header CSV row must carry the full original row back as
         // ordered {header, value} pairs, not just the columns mapped to a normalized field.
         var firstRow = rows![0]!;
         var rawFields = firstRow["rawFields"] as JsonArray;
