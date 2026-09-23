@@ -20,6 +20,12 @@ public class TransactionQueryDto
     /// <summary>Free-text search over Note and BeneficiaryName.</summary>
     public string? Q { get; set; }
 
+    /// <summary>Comma-separated derived statuses: none, pending, suggested, unsure, failed, applied, reviewed.</summary>
+    public string? CategorizationStatus { get; set; }
+
+    /// <summary>Restrict to one entry method, e.g. sepay_sync.</summary>
+    public string? EntryMethod { get; set; }
+
     /// <summary>Only transactions with no category assigned.</summary>
     public bool UncategorizedOnly { get; set; }
 }

@@ -28,9 +28,14 @@ public interface IAiCategorizationService
         IReadOnlyList<string> inputs,
         CancellationToken cancellationToken = default);
 
-    Task<bool> ReprocessAsync(
+    /// <summary>Background variant of <see cref="CategorizeTransactionAsync"/> for a batch of queued
+    /// SePay expenses: applies the manual lock, merchant rules, AI mode and empty-input rules per row,
+    /// then classifies the rest with bounded concurrency on the batch rate-limit tier. Every row is
+    /// persisted independently (rule, auto-applied, suggestion, unsure or fallback) and a per-row
+    /// failure never throws. Rows that are missing, already categorized or locked as manual are
+    /// skipped and reported with <c>Applied = false</c>.</summary>
+    Task<IReadOnlyList<CategorizationOutcome>> CategorizeManyAsync(
         Guid customerId,
-        Guid transactionId,
-        string rawInput,
+        IReadOnlyList<Guid> transactionIds,
         CancellationToken cancellationToken = default);
 }

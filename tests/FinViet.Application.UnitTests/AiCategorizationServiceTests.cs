@@ -324,6 +324,254 @@ public class AiCategorizationServiceTests
         model.Verify(x => x.ClassifyAsync(It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>(), It.IsAny<AiRequestContext>()), Times.Once);
     }
 
+    [Fact]
+    public async Task CategorizeManyAsync_SuggestOnly_StoresGuessAsSuggestion()
+    {
+        await using var db = TestDbContextFactory.Create();
+        var customerId = Guid.NewGuid();
+        var transaction = TransactionFor(customerId);
+        db.Categories.Add(Category("cat_food", "Ăn uống"));
+        db.Transactions.Add(transaction);
+        await db.SaveChangesAsync();
+        var service = CreateService(db, Classifier("Ăn uống", 0.95m), AnyNoRule());
+
+        var outcomes = await service.CategorizeManyAsync(customerId, [transaction.TransactionId]);
+
+        Assert.Single(outcomes);
+        Assert.False(outcomes[0].Applied);
+        Assert.Null(transaction.CategoryId);
+        Assert.Equal("ai_suggestion", transaction.AiClassificationSource);
+        Assert.Equal("cat_food", transaction.AiCategoryGuess);
+        Assert.Equal(0.95m, transaction.AiConfidence);
+        Assert.NotNull(transaction.AiClassifiedAt);
+    }
+
+    [Fact]
+    public async Task CategorizeManyAsync_AutoModeConfident_AppliesCategory()
+    {
+        await using var db = TestDbContextFactory.Create();
+        var customerId = Guid.NewGuid();
+        var transaction = TransactionFor(customerId);
+        db.Categories.Add(Category("cat_food", "Ăn uống"));
+        db.Transactions.Add(transaction);
+        db.AiCustomerPreferences.Add(Preference(customerId, "high_confidence_auto", 0.85m));
+        await db.SaveChangesAsync();
+        var service = CreateService(db, Classifier("Ăn uống", 0.9m), AnyNoRule());
+
+        var outcomes = await service.CategorizeManyAsync(customerId, [transaction.TransactionId]);
+
+        Assert.True(outcomes[0].Applied);
+        Assert.Equal("cat_food", transaction.CategoryId);
+        Assert.Equal("ai_auto", transaction.AiClassificationSource);
+        Assert.True(transaction.IsAiClassified);
+    }
+
+    [Fact]
+    public async Task CategorizeManyAsync_AutoModeBelowThreshold_StoresSuggestion()
+    {
+        await using var db = TestDbContextFactory.Create();
+        var customerId = Guid.NewGuid();
+        var transaction = TransactionFor(customerId);
+        db.Categories.Add(Category("cat_food", "Ăn uống"));
+        db.Transactions.Add(transaction);
+        db.AiCustomerPreferences.Add(Preference(customerId, "high_confidence_auto", 0.85m));
+        await db.SaveChangesAsync();
+        var service = CreateService(db, Classifier("Ăn uống", 0.5m), AnyNoRule());
+
+        var outcomes = await service.CategorizeManyAsync(customerId, [transaction.TransactionId]);
+
+        Assert.False(outcomes[0].Applied);
+        Assert.Null(transaction.CategoryId);
+        Assert.Equal("ai_suggestion", transaction.AiClassificationSource);
+        Assert.Equal("cat_food", transaction.AiCategoryGuess);
+    }
+
+    [Fact]
+    public async Task CategorizeManyAsync_UnresolvedCategory_StoresUnsureSuggestionWithoutGuess()
+    {
+        await using var db = TestDbContextFactory.Create();
+        var customerId = Guid.NewGuid();
+        var transaction = TransactionFor(customerId);
+        db.Categories.Add(Category("cat_food", "Ăn uống"));
+        db.Transactions.Add(transaction);
+        await db.SaveChangesAsync();
+        var service = CreateService(db, Classifier("Not a real category", 0.9m), AnyNoRule());
+
+        await service.CategorizeManyAsync(customerId, [transaction.TransactionId]);
+
+        Assert.Equal("ai_suggestion", transaction.AiClassificationSource);
+        Assert.Null(transaction.AiCategoryGuess);
+        Assert.Null(transaction.CategoryId);
+        Assert.NotNull(transaction.AiClassifiedAt);
+    }
+
+    [Fact]
+    public async Task CategorizeManyAsync_RateLimited_StoresFallback()
+    {
+        await using var db = TestDbContextFactory.Create();
+        var customerId = Guid.NewGuid();
+        var transaction = TransactionFor(customerId);
+        db.Categories.Add(Category("cat_food", "Ăn uống"));
+        db.Transactions.Add(transaction);
+        await db.SaveChangesAsync();
+        var limiter = new Mock<IAiRateLimiter>();
+        limiter.Setup(x => x.TryAcquireAsync(It.IsAny<Guid>(), "classification_batch", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+        var model = new Mock<IAiModelClient>(MockBehavior.Strict);
+        var service = CreateService(db, model, AnyNoRule(), limiter);
+
+        var outcomes = await service.CategorizeManyAsync(customerId, [transaction.TransactionId]);
+
+        Assert.Equal("rate_limited", outcomes[0].Reason);
+        Assert.Equal("fallback", transaction.AiClassificationSource);
+        Assert.Null(transaction.AiCategoryGuess);
+        model.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task CategorizeManyAsync_ProviderError_StoresFallback()
+    {
+        await using var db = TestDbContextFactory.Create();
+        var customerId = Guid.NewGuid();
+        var transaction = TransactionFor(customerId);
+        db.Categories.Add(Category("cat_food", "Ăn uống"));
+        db.Transactions.Add(transaction);
+        await db.SaveChangesAsync();
+        var model = new Mock<IAiModelClient>();
+        model.Setup(x => x.ClassifyAsync(
+                It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<string>>(),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<AiRequestContext>()))
+            .ThrowsAsync(new FinViet.Application.Exceptions.AiProviderUnavailableException("down"));
+        var service = CreateService(db, model, AnyNoRule());
+
+        await service.CategorizeManyAsync(customerId, [transaction.TransactionId]);
+
+        Assert.Equal("fallback", transaction.AiClassificationSource);
+        Assert.NotNull(transaction.AiClassifiedAt);
+    }
+
+    [Fact]
+    public async Task CategorizeManyAsync_ManualRow_IsSkippedWithoutCallingGemini()
+    {
+        await using var db = TestDbContextFactory.Create();
+        var customerId = Guid.NewGuid();
+        var transaction = TransactionFor(customerId);
+        transaction.AiClassificationSource = "manual";
+        db.Transactions.Add(transaction);
+        await db.SaveChangesAsync();
+        var model = new Mock<IAiModelClient>(MockBehavior.Strict);
+        var service = CreateService(db, model, new Mock<IMerchantRuleService>(MockBehavior.Strict));
+
+        var outcomes = await service.CategorizeManyAsync(customerId, [transaction.TransactionId]);
+
+        Assert.Equal("MANUAL", outcomes[0].Source);
+        Assert.Equal("manual", transaction.AiClassificationSource);
+        Assert.Null(transaction.AiClassifiedAt);
+        model.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task CategorizeManyAsync_MerchantRule_AppliesRuleWithoutCallingGemini()
+    {
+        await using var db = TestDbContextFactory.Create();
+        var customerId = Guid.NewGuid();
+        var transaction = TransactionFor(customerId);
+        db.Categories.Add(Category("cat_food", "Ăn uống"));
+        db.Transactions.Add(transaction);
+        await db.SaveChangesAsync();
+        var rules = new Mock<IMerchantRuleService>();
+        rules.Setup(x => x.ResolveAsync(customerId, It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new RuleMatch(Guid.NewGuid(), "cat_food", "Ăn uống", "highlands"));
+        var model = new Mock<IAiModelClient>(MockBehavior.Strict);
+        var service = CreateService(db, model, rules);
+
+        var outcomes = await service.CategorizeManyAsync(customerId, [transaction.TransactionId]);
+
+        Assert.True(outcomes[0].Applied);
+        Assert.Equal("cat_food", transaction.CategoryId);
+        Assert.Equal("merchant_rule", transaction.AiClassificationSource);
+        model.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task CategorizeManyAsync_ModeOff_StoresFallbackWithoutCallingGemini()
+    {
+        await using var db = TestDbContextFactory.Create();
+        var customerId = Guid.NewGuid();
+        var transaction = TransactionFor(customerId);
+        db.Transactions.Add(transaction);
+        db.AiCustomerPreferences.Add(Preference(customerId, "off", 0.85m));
+        await db.SaveChangesAsync();
+        var model = new Mock<IAiModelClient>(MockBehavior.Strict);
+        var service = CreateService(db, model, AnyNoRule());
+
+        await service.CategorizeManyAsync(customerId, [transaction.TransactionId]);
+
+        Assert.Equal("fallback", transaction.AiClassificationSource);
+        model.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task CategorizeManyAsync_EmptyInput_StoresFallback()
+    {
+        await using var db = TestDbContextFactory.Create();
+        var customerId = Guid.NewGuid();
+        var transaction = TransactionFor(customerId);
+        transaction.Merchant = null;
+        transaction.Description = " ";
+        db.Transactions.Add(transaction);
+        await db.SaveChangesAsync();
+        var model = new Mock<IAiModelClient>(MockBehavior.Strict);
+        var service = CreateService(db, model, AnyNoRule());
+
+        var outcomes = await service.CategorizeManyAsync(customerId, [transaction.TransactionId]);
+
+        Assert.Equal("empty_input", outcomes[0].Reason);
+        Assert.Equal("fallback", transaction.AiClassificationSource);
+        model.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task CategorizeManyAsync_RowBecomesManualDuringClassification_KeepsManualState()
+    {
+        await using var db = TestDbContextFactory.Create();
+        var customerId = Guid.NewGuid();
+        var transaction = TransactionFor(customerId);
+        db.Categories.Add(Category("cat_food", "Ăn uống"));
+        db.Transactions.Add(transaction);
+        await db.SaveChangesAsync();
+        var model = new Mock<IAiModelClient>();
+        model.Setup(x => x.ClassifyAsync(
+                It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<string>>(),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<AiRequestContext>()))
+            .Returns(async () =>
+            {
+                // The user dismisses the row while Gemini is still answering.
+                transaction.AiClassificationSource = "manual";
+                await db.SaveChangesAsync();
+                return new AiClassificationResult { CategoryName = "Ăn uống", Confidence = 0.9m };
+            });
+        var service = CreateService(db, model, AnyNoRule());
+
+        var outcomes = await service.CategorizeManyAsync(customerId, [transaction.TransactionId]);
+
+        Assert.Equal("changed_while_queued", outcomes[0].Reason);
+        Assert.Equal("manual", transaction.AiClassificationSource);
+        Assert.Null(transaction.AiCategoryGuess);
+    }
+
+    private static Mock<IMerchantRuleService> AnyNoRule()
+    {
+        var rules = new Mock<IMerchantRuleService>();
+        rules.Setup(x => x.ResolveAsync(It.IsAny<Guid>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((RuleMatch?)null);
+        return rules;
+    }
+
     private static AiCategorizationService CreateService(
         FinViet.Infrastructure.Persistence.Context.FinVietDbContext db,
         Mock<IAiModelClient> model,

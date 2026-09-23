@@ -318,16 +318,47 @@ their own ratio via `POST /api/profile/income-allocation`.
   walletId?: Guid, type?: string,            // "expense" | "income" | "transfer_out" | "transfer_in" (case-insensitive)
   categoryId?: string, from?: DateTime, to?: DateTime,
   q?: string,               // free-text ILIKE search — see note below
-  uncategorizedOnly: boolean = false
+  uncategorizedOnly: boolean = false,
+  categorizationStatus?: string,  // comma-separated: none,pending,suggested,unsure,failed,applied,reviewed
+  entryMethod?: string            // e.g. "sepay_sync"
 }
 ```
+Results are always newest first.
+An unknown `categorizationStatus` value returns 400.
+Filters combine with `walletId` and paging.
+The SePay review inbox is `GET /api/transactions?categorizationStatus=pending,suggested,unsure,failed&entryMethod=sepay_sync`.
+For a badge count, use the same query with `pageSize=1` and read `totalItems`.
 > **Doc/code correction**: `q` searches `Description` and `Merchant` (Postgres `ILIKE '%term%'`), **not** `Note`/`BeneficiaryName` as a stale comment on the DTO claims — build the mobile search UI against `description`/`merchant`.
 
 **CreateTransactionDto**: `{ walletId, categoryId?, transactionType, amount, transactionDate, note?, description?, merchant?, entryMethod? }`
 **UpdateTransactionDto**: `{ categoryId?, amount?, merchant?, transactionDate? }` — **partial update**: a field left `null`/omitted is left unchanged. `walletId` and `transactionType` remain immutable after creation (out of scope for this endpoint).
 **ClassifyTransactionDto**: `{ categoryId?: string }`
 
-**TransactionResponseDto**: `{ transactionId, customerId, walletId, categoryId?, transactionType, sourceChannel, entryMethod, amount, transactionDate, note?, description?, merchant?, transferPairId?, externalId?, createdAt, updatedAt? }`
+**TransactionResponseDto**: `{ transactionId, customerId, walletId, categoryId?, transactionType, sourceChannel, entryMethod, amount, transactionDate, note?, description?, merchant?, transferPairId?, externalId?, splitGroupId?, categorizationStatus, aiSuggestedCategoryId?, aiSuggestedCategoryName?, aiConfidence?, aiSource?, createdAt, updatedAt? }`
+
+**Categorization fields** (also returned on `WalletTransactionResponse` from `GET /wallets/{id}/transactions`):
+- `categorizationStatus`: `none | pending | suggested | unsure | failed | applied | reviewed`.
+  It is derived from existing columns, with no schema change.
+  One helper (`TransactionCategorization`) computes it for both the DTO and the list filter, so they cannot disagree.
+- `aiSuggestedCategoryId` / `aiSuggestedCategoryName`: the stored AI guess (`ai_category_guess`).
+  `categoryId` stays null until the guess is accepted.
+- `aiConfidence`: the stored `ai_confidence`.
+- `aiSource`: `manual | merchant_rule | ai_auto | ai_suggestion | fallback`, or null when never classified.
+
+Derivation rules, first match wins:
+
+| # | Status | Condition |
+|---|---|---|
+| 1 | `reviewed` | `aiSource = manual` |
+| 2 | `applied` | `categoryId` is set |
+| 3 | `none` | not a SePay expense (`entryMethod <> sepay_sync` or `type <> expense`) |
+| 4 | `suggested` | `aiSource = ai_suggestion` and an AI guess is set |
+| 5 | `unsure` | `aiSource = ai_suggestion` and no AI guess |
+| 6 | `pending` | `aiSource` is null and `ai_classified_at` is within the last 10 minutes |
+| 7 | `failed` | anything else |
+
+`ai_classified_at` has a second meaning: while a row is queued for AI (source still null) it holds the enqueue time, and it is overwritten with the completion time when the worker finishes.
+A row that stays queued for more than 10 minutes is reported as `failed`.
 
 **TransactionSummaryResponseDto**: `{ income, expense, net, byCategory: {categoryId?, categoryName?, total}[], byDay: {date, income, expense, net}[], topBeneficiaries: {beneficiary, total}[] }`
 
@@ -390,6 +421,13 @@ their own ratio via `POST /api/profile/income-allocation`.
 **WithdrawWalletRequest**: `{ fromWalletId, toWalletId?, amount, description? }`
 **WalletTransactionQuery**: `{ page=1, pageSize=10, fromDate?, toDate?, categoryId?, transactionType?, sortOrder="desc" }`
 
+**Background categorization**: link (OAuth, token, sandbox), `/{id}/sepay-sync`, `/sepay/sync-all` and the webhook no longer call Gemini inline; responses return without waiting for AI.
+New SePay expenses dated in the current or previous calendar month (Asia/Ho_Chi_Minh) are stamped with `ai_classified_at = now()` inside the import transaction (source stays null, so `categorizationStatus` is `pending`) and handed to an in-memory queue after commit.
+Nothing is queued when the customer's AI mode is `off`; older imported rows stay unprocessed and read as `failed`.
+`SepayCategorizationWorker` drains the queue in batches of up to 20 ids per customer on the `classification_batch` rate-limit tier and moves each row to `applied` (`merchant_rule` or `ai_auto`), `suggested`, `unsure` (`ai_suggestion` with no guess) or `failed` (`fallback`, on rate limit, provider error or empty input); rows that became `manual` meanwhile are skipped.
+After a batch applies any category, budgets are re-checked once per affected month.
+The queue is lost on restart; those rows read as `failed` once the 10-minute pending window lapses and are not retried automatically.
+
 **SePay DTOs** (unchanged from prior reference — see original field lists):
 `SepayAuthorizeUrlResponse`, `SepayBankAccountsRequest/Response`, `LinkSepayAccountRequest/TokenRequest`, `SepayLinkResult`, `SepayLinkStatusResponse`, `SepayWebhookRegistrationResponse`, `SepayWalletSyncResponse`, `SepaySyncAllResponse`, `SepayUnlinkResponse`, `SepayWebhookRequest/Result`.
 
@@ -413,7 +451,7 @@ their own ratio via `POST /api/profile/income-allocation`.
 
 **POST `/sepay/bank-accounts`** — Validation: `code` required; `state`, if present, must be a valid signature belonging to the caller else 422 `sepay_state_invalid`. Business logic: exchanged OAuth token is cached under `sepay:code:{customerId}:{sha256(code)}` for **5 minutes** (SePay codes are single-use, so the same code can serve both this call and the subsequent `link` call). `alreadyLinked` flags accounts already tied to a `SepayLink` for this customer.
 
-**POST `/sepay/link` (OAuth)** — Validation: `code` required; `state` validated as above; requires ≥1 active bank account (400 "No active bank accounts found on your SePay account."); `bankAccountId`, if given, must exist/be active (404). Business logic: fetches full transaction history *before* opening the DB transaction (avoids holding a `Serializable` tx open across many outbound calls). DB work in a `Serializable` transaction. Only `basic`-type wallets count toward the 10-wallet cap (422 if exceeded) — linked wallets never count. Re-linking an already-linked `SepayBankAccountId` reuses the wallet and just refreshes tokens/balance. New link creates a `Wallet` (`walletType="sepay_linked"`, name `"SePay - {bank}"`, truncated to 120 chars) and a `SepayLink` (`authMode="oauth"`); tokens stored encrypted. Imports fetched history via upsert, runs AI categorization for new expenses post-commit, then best-effort auto-registers a webhook if `SePay:WebhookUrl`/`WebhookApiKey` are configured (failure never fails the link).
+**POST `/sepay/link` (OAuth)** — Validation: `code` required; `state` validated as above; requires ≥1 active bank account (400 "No active bank accounts found on your SePay account."); `bankAccountId`, if given, must exist/be active (404). Business logic: fetches full transaction history *before* opening the DB transaction (avoids holding a `Serializable` tx open across many outbound calls). DB work in a `Serializable` transaction. Only `basic`-type wallets count toward the 10-wallet cap (422 if exceeded) — linked wallets never count. Re-linking an already-linked `SepayBankAccountId` reuses the wallet and just refreshes tokens/balance. New link creates a `Wallet` (`walletType="sepay_linked"`, name `"SePay - {bank}"`, truncated to 120 chars) and a `SepayLink` (`authMode="oauth"`); tokens stored encrypted. Imports fetched history via upsert, queues new expenses for background AI categorization (see below), then best-effort auto-registers a webhook if `SePay:WebhookUrl`/`WebhookApiKey` are configured (failure never fails the link).
 
 **POST `/sepay/link-token` (static)** — Validation: `apiToken` required; SePay rejecting it → 400 "The SePay API token is invalid or expired." Business logic: no code/state exchange; stores the raw token itself (encrypted) as the "access token", no refresh token, no expiry ("static tokens do not expire"). `sepayBankAccountId = 0` (no numeric id available for static links). Re-link matched on `(authMode="static", accountNumber)` instead of bank-account id. No auto webhook registration (static links can't hold webhook scopes).
 
