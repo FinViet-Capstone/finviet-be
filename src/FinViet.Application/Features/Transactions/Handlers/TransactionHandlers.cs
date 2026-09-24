@@ -402,6 +402,7 @@ public class ClassifyTransactionHandler : IRequestHandler<ClassifyTransactionCom
         await TransactionRules.ValidateCategoryAsync(_categoryService, request.CategoryId, type, cancellationToken);
 
         var result = (await _transactionRepository.ClassifyAsync(
+            request.CustomerId,
             request.TransactionId,
             request.CategoryId,
             cancellationToken))!;

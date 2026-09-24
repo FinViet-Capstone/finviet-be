@@ -18,7 +18,7 @@ public interface ITransactionRepository
     Task<bool> DeleteAsync(Guid id, CancellationToken cancellationToken = default);
     Task<bool> DeleteForCustomerAsync(Guid customerId, Guid transactionId, CancellationToken cancellationToken = default);
 
-    Task<TransactionResponseDto?> ClassifyAsync(Guid transactionId, string? categoryId, CancellationToken cancellationToken = default);
+    Task<TransactionResponseDto?> ClassifyAsync(Guid customerId, Guid transactionId, string? categoryId, CancellationToken cancellationToken = default);
 
     // Partial update: a null parameter leaves that field unchanged. Reverses/reapplies the
     // wallet balance delta under lock when amount changes. Returns null if not found/not owned.
