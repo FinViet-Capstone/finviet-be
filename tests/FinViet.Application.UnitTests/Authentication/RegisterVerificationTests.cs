@@ -74,6 +74,29 @@ public class RegisterVerificationTests
         Assert.Contains("could not be sent", result);
     }
 
+    // Regression: a hanging email provider held the register response past the mobile 20s
+    // timeout, so the client saw a network error, retried, and hit 409 on the saved account.
+    [Fact]
+    public async Task Register_EmailProviderHangs_RespondsWithinSendTimeoutAndKeepsAccount()
+    {
+        await using var db = TestDbContextFactory.Create();
+        var email = new Mock<IEmailService>();
+        email.Setup(x => x.SendVerificationEmailAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()))
+            .Returns(new TaskCompletionSource().Task);
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["Email:SendTimeoutSeconds"] = "1" })
+            .Build();
+        var handler = new RegisterCommandHandler(db, email.Object, config, NullLogger<RegisterCommandHandler>.Instance);
+
+        var handling = handler.Handle(new RegisterCommand("Customer", "new@example.com", "Password1"), default);
+        var winner = await Task.WhenAny(handling, Task.Delay(TimeSpan.FromSeconds(5)));
+
+        Assert.Same(handling, winner);
+        Assert.Contains("could not be sent", await handling);
+        Assert.Single(db.Customers);
+        Assert.Single(db.EmailVerificationTokens);
+    }
+
     // TC-AUTH-U08
     [Fact]
     public async Task VerifyEmail_ValidToken_MarksCustomerAndConsumesToken()
