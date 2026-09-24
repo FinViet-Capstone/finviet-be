@@ -5,7 +5,6 @@ using FinViet.Application.Interfaces;
 using FinViet.Infrastructure.Persistence.Context;
 using FinViet.Infrastructure.Persistence.Entities;
 using FinViet.Infrastructure.Persistence.Idempotency;
-using FinViet.Infrastructure.Services;
 using Microsoft.EntityFrameworkCore;
 
 namespace FinViet.Infrastructure.Persistence.Repositories;
@@ -411,13 +410,14 @@ public class TransactionRepository : ITransactionRepository
         return true;
     }
 
-    public async Task<TransactionResponseDto?> ClassifyAsync(Guid customerId, Guid transactionId, string? categoryId, CancellationToken cancellationToken = default)
+    public async Task<TransactionResponseDto?> ClassifyAsync(Guid transactionId, string? categoryId, CancellationToken cancellationToken = default)
     {
         var transaction = await _context.Transactions.FindAsync(new object[] { transactionId }, cancellationToken: cancellationToken);
         if (transaction == null)
             return null;
 
-        await ManualCategoryLock.ApplyAsync(_context, transaction, customerId, categoryId, alwaysLogCorrection: false, cancellationToken);
+        transaction.CategoryId = categoryId;
+        transaction.UpdatedAt = DateTime.UtcNow;
 
         await _context.SaveChangesAsync(cancellationToken);
         return await ToDtoAsync(transaction, cancellationToken);
@@ -475,9 +475,8 @@ public class TransactionRepository : ITransactionRepository
                     : transactionDate.Value.ToUniversalTime();
         }
 
-        // An edit form that resends the current category is not a customer decision; leave AI state alone.
-        if (categoryId is not null && categoryId != target.CategoryId)
-            await ManualCategoryLock.ApplyAsync(_context, target, customerId, categoryId, alwaysLogCorrection: false, cancellationToken);
+        if (categoryId is not null)
+            target.CategoryId = categoryId;
 
         target.UpdatedAt = DateTime.UtcNow;
         await _context.SaveChangesAsync(cancellationToken);
