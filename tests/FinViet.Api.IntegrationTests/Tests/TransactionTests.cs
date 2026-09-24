@@ -198,6 +198,69 @@ public class TransactionTests : ApiTestBase
         finally { await DeleteWalletAsync(wid); }
     }
 
+    // sepay-ai T5 - override-batch applies each item independently and only the valid ones
+    [SkippableFact]
+    public async Task OverrideBatch_MixedItems_ReturnsPerItemOutcome_AndAppliesOnlyValidRows()
+    {
+        RequireServer();
+        string? wid = null;
+        try
+        {
+            wid = await CreateWalletAsync(Unique("TEST-ovbatch"), "basic", 500_000);
+            var validId = await CreateAiSuggestedExpenseAsync(wid);
+            var unavailableId = await CreateAiSuggestedExpenseAsync(wid);
+            var incomeCreated = await Fx.SendAsync(HttpMethod.Post, "/api/transactions", token: Cust,
+                headers: new Dictionary<string, string> { ["Idempotency-Key"] = Idem() },
+                body: Tx(wid, "cat_salary", "INCOME", 100_000, "batch income"));
+            var incomeId = ApiTestFixture.Data(incomeCreated)?["transactionId"]?.GetValue<string>();
+            Assert.False(string.IsNullOrEmpty(incomeId));
+            var missingId = Guid.NewGuid().ToString();
+
+            var batch = await Fx.SendAsync(HttpMethod.Post, "/api/ai/transactions/override-batch", token: Cust,
+                body: new
+                {
+                    items = new object[]
+                    {
+                        new { transactionId = validId, categoryId = "cat_transport" },
+                        new { transactionId = missingId, categoryId = "cat_transport" },
+                        new { transactionId = unavailableId, categoryId = "cat_does_not_exist" },
+                        new { transactionId = incomeId, categoryId = "cat_transport" }
+                    }
+                });
+            Assert.Equal(200, batch.Code);
+
+            var outcomes = ApiTestFixture.Data(batch)?["results"]?.AsArray()
+                .ToDictionary(r => r!["transactionId"]!.GetValue<string>(), r => r!["outcome"]!.GetValue<string>());
+            Assert.Equal("ok", outcomes![validId]);
+            Assert.Equal("not_found", outcomes[missingId]);
+            Assert.Equal("category_unavailable", outcomes[unavailableId]);
+            Assert.Equal("not_eligible", outcomes[incomeId!]);
+
+            await AssertLockedAndLoggedAsync(wid, validId, "cat_transport");
+
+            var list = await CustGet($"/api/transactions?walletId={wid}&pageSize=50");
+            var untouched = ApiTestFixture.Data(list)?["items"]?.AsArray()
+                .Single(i => i?["transactionId"]?.GetValue<string>() == unavailableId);
+            Assert.Equal("cat_food", untouched?["categoryId"]?.GetValue<string>());
+            Assert.Equal("ai_suggestion", untouched?["aiSource"]?.GetValue<string>());
+        }
+        finally { await DeleteWalletAsync(wid); }
+    }
+
+    // sepay-ai T5 - more than 200 items is rejected
+    [SkippableFact]
+    public async Task OverrideBatch_MoreThan200Items_Returns400()
+    {
+        RequireServer();
+        var items = Enumerable.Range(0, 201)
+            .Select(_ => new { transactionId = Guid.NewGuid(), categoryId = "cat_food" }).ToArray();
+
+        var r = await Fx.SendAsync(HttpMethod.Post, "/api/ai/transactions/override-batch", token: Cust,
+            body: new { items });
+
+        Assert.Equal(400, r.Code);
+    }
+
     // TC-TXN-06 — monthly summary feeds the Spending Dashboard (donut/bar/top-5)
     [SkippableFact]
     public async Task GetSummary_ReturnsDashboardAggregates()

@@ -1,7 +1,9 @@
 using FinViet.Api.Common;
 using FinViet.Application.Common;
 using FinViet.Application.DTOs.Ai;
+using FinViet.Application.Features.Ai.Commands.OverrideCategoryBatch;
 using FinViet.Application.Interfaces;
+using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -17,19 +19,22 @@ public class AiController : ControllerBase
     private readonly ISpendingScoreService _score;
     private readonly IWeeklyReportService _reports;
     private readonly IAiChatService _chat;
+    private readonly IMediator _mediator;
 
     public AiController(
         IAiCategorizationService categorization,
         IBeneficiaryRuleService rules,
         ISpendingScoreService score,
         IWeeklyReportService reports,
-        IAiChatService chat)
+        IAiChatService chat,
+        IMediator mediator)
     {
         _categorization = categorization;
         _rules = rules;
         _score = score;
         _reports = reports;
         _chat = chat;
+        _mediator = mediator;
     }
 
     // ── Categorization ───────────────────────────────────────────────────────────────
@@ -63,6 +68,16 @@ public class AiController : ControllerBase
         var customerId = User.GetCustomerId();
         var outcome = await _rules.OverrideCategoryAsync(customerId, transactionId, request, cancellationToken);
         return Ok(ApiResponse<CategorizationOutcome>.Ok(outcome, "Cập nhật danh mục thành công."));
+    }
+
+    [HttpPost("transactions/override-batch")]
+    public async Task<ActionResult<ApiResponse<OverrideCategoryBatchResponse>>> OverrideBatch(
+        [FromBody] OverrideCategoryBatchRequest request,
+        CancellationToken cancellationToken)
+    {
+        var customerId = User.GetCustomerId();
+        var response = await _mediator.Send(new OverrideCategoryBatchCommand(customerId, request), cancellationToken);
+        return Ok(ApiResponse<OverrideCategoryBatchResponse>.Ok(response, "Cập nhật danh mục hàng loạt hoàn tất."));
     }
 
     // ── Spending score ───────────────────────────────────────────────────────────────

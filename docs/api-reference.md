@@ -645,6 +645,7 @@ Only computed when `deadline` is set. `monthsRemaining` = whole calendar months 
 | POST | `/categorize/preview` | Customer | `CategorizePreviewRequest` | `ApiResponse<AiClassificationResult>` |
 | POST | `/categorize/{transactionId:guid}` | Customer | — | `ApiResponse<CategorizationOutcome>` |
 | POST | `/transactions/{transactionId:guid}/override` | Customer | `OverrideCategoryRequest` | `ApiResponse<CategorizationOutcome>` |
+| POST | `/transactions/override-batch` | Customer | `OverrideCategoryBatchRequest` | `ApiResponse<OverrideCategoryBatchResponse>` (400) |
 | GET | `/score?period=WEEKLY\|MONTHLY` | Customer | query `period` (default `WEEKLY`) | `ApiResponse<SpendingScoreResult>` |
 | GET | `/reports` | Customer | — | `ApiResponse<WeeklyReportResponse[]>` |
 | GET | `/reports/{reportId:guid}` | Customer | — | `ApiResponse<WeeklyReportResponse>` (404) |
@@ -662,6 +663,8 @@ Only computed when `deadline` is set. `monthsRemaining` = whole calendar months 
 
 **CategorizePreviewRequest**: `{ input: string }` — no length limit anywhere.
 **OverrideCategoryRequest**: `{ categoryId: string }` — no format validation.
+**OverrideCategoryBatchRequest**: `{ items: [{ transactionId: guid, categoryId: string }] }` — 1 to 200 items, each `transactionId` at most once.
+**OverrideCategoryBatchResponse**: `{ results: [{ transactionId, outcome: "ok" | "not_found" | "category_unavailable" | "not_eligible" }] }` — one entry per request item, in request order.
 **AiClassificationResult**: `{ categoryName?, confidence }`
 **CategorizationOutcome**
 ```ts
@@ -698,6 +701,10 @@ Only computed when `deadline` is set. `monthsRemaining` = whole calendar months 
 ### POST `/transactions/{transactionId}/override`
 **Validation**: `categoryId` unvalidated in format. 404 if transaction/category missing; **403** `ForbiddenException` if the transaction's wallet isn't owned by the caller.
 **Business logic — correction vs. the existing docs**: sets `categoryId`, `isAiClassified=false`, `aiConfidence=null`, `aiClassificationSource="manual"` (the row is now `reviewed` and locked against the SePay worker and merchant rules), and always inserts a `CategoryCorrectionLog` row (`customerId`, `transactionId`, `correctedCategoryId`, `originalAiGuess`). For an `expense`, budgets are re-checked for the transaction's month (`SyncBudgetOnTransactionChangeAsync`). This is also how the SePay review inbox accepts a suggestion: call it with the suggested category id. **It does NOT create or update a beneficiary rule** — despite the interface being named `IBeneficiaryRuleService`, there is no mapped `BeneficiaryRule` entity in the current schema at all (the `beneficiary_rule` table only exists in a legacy migration, and that migration actually deletes its own rows during the v21 schema change). Treat override purely as "correct this one transaction + log it for later analysis," not as "teach the system a rule" — that's what `POST /rules` is for. Returns `source: "MANUAL"`.
+
+### POST `/transactions/override-batch`
+**Validation**: 400 when `items` is empty, has more than 200 entries, repeats a `transactionId`, or has a blank `transactionId`/`categoryId`.
+**Business logic**: bulk form of the override above (the SePay review inbox uses it for "accept all suggestions"). Each item is applied independently, so one bad row never blocks the rest, and the HTTP status is 200 whenever the request itself is valid. Per item: `not_found` when the transaction does not exist or is not in one of the caller's wallets (other customers' ids are not disclosed, unlike the single route's 403); `category_unavailable` when the category does not exist or is another customer's custom category; `not_eligible` when the transaction is not an expense; otherwise `ok`. Each `ok` row gets the same effects as the single override (`aiClassificationSource="manual"`, one `CategoryCorrectionLog` row). Budgets are re-checked once per affected month for the whole request, not once per row, and not at all when no row was applied.
 
 ### GET `/score?period=`
 **Validation**: not rejecting — any value other than case-insensitive `"MONTHLY"` silently coerces to `"WEEKLY"` (no 400 for garbage input).
