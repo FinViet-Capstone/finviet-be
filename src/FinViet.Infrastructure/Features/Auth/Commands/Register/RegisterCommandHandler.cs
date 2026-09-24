@@ -90,7 +90,11 @@ public class RegisterCommandHandler : IRequestHandler<RegisterCommand, string>
 
         try
         {
-            await _emailService.SendVerificationEmailAsync(customer.Email, customer.FullName, code);
+            // Bounded so a slow provider can't hold the response past the client timeout: the
+            // account is already committed, and the user recovers through resend-verification.
+            var timeout = TimeSpan.FromSeconds(_config.GetValue("Email:SendTimeoutSeconds", 8));
+            await _emailService.SendVerificationEmailAsync(customer.Email, customer.FullName, code)
+                .WaitAsync(timeout, cancellationToken);
         }
         catch (Exception ex)
         {
