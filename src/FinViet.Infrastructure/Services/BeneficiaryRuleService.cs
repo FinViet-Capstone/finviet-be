@@ -10,12 +10,10 @@ namespace FinViet.Infrastructure.Services;
 public class BeneficiaryRuleService : IBeneficiaryRuleService
 {
     private readonly FinVietDbContext _db;
-    private readonly IBudgetService _budgets;
 
-    public BeneficiaryRuleService(FinVietDbContext db, IBudgetService budgets)
+    public BeneficiaryRuleService(FinVietDbContext db)
     {
         _db = db;
-        _budgets = budgets;
     }
 
     public async Task<CategorizationOutcome> OverrideCategoryAsync(
@@ -43,13 +41,27 @@ public class BeneficiaryRuleService : IBeneficiaryRuleService
             ?? throw new NotFoundException("Category", request.CategoryId);
 
         var transaction = txn.Txn;
-        await ManualCategoryLock.ApplyAsync(
-            _db, transaction, customerId, request.CategoryId, alwaysLogCorrection: true, cancellationToken);
-        await _db.SaveChangesAsync(cancellationToken);
+        var originalGuessName = transaction.AiCategoryGuess is null
+            ? null
+            : await _db.Categories.Where(c => c.CategoryId == transaction.AiCategoryGuess)
+                .Select(c => c.CategoryName).FirstOrDefaultAsync(cancellationToken);
 
-        if (string.Equals(transaction.TransactionType, "expense", StringComparison.OrdinalIgnoreCase)
-            && transaction.TransactionDate is { } date)
-            await _budgets.SyncBudgetOnTransactionChangeAsync(customerId, DateOnly.FromDateTime(date), cancellationToken);
+        _db.CategoryCorrectionLogs.Add(new CategoryCorrectionLog
+        {
+            LogId = Guid.NewGuid(),
+            CustomerId = customerId,
+            TransactionId = transactionId,
+            CorrectedCategoryId = request.CategoryId,
+            OriginalAiGuess = originalGuessName,
+            CreatedAt = DateTime.UtcNow
+        });
+
+        transaction.CategoryId = request.CategoryId;
+        transaction.IsAiClassified = false;
+        transaction.AiConfidence = null;
+        transaction.AiClassificationSource = "manual";
+        transaction.AiClassifiedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync(cancellationToken);
 
         return new CategorizationOutcome
         {

@@ -318,47 +318,16 @@ their own ratio via `POST /api/profile/income-allocation`.
   walletId?: Guid, type?: string,            // "expense" | "income" | "transfer_out" | "transfer_in" (case-insensitive)
   categoryId?: string, from?: DateTime, to?: DateTime,
   q?: string,               // free-text ILIKE search — see note below
-  uncategorizedOnly: boolean = false,
-  categorizationStatus?: string,  // comma-separated: none,pending,suggested,unsure,failed,applied,reviewed
-  entryMethod?: string            // e.g. "sepay_sync"
+  uncategorizedOnly: boolean = false
 }
 ```
-Results are always newest first.
-An unknown `categorizationStatus` value returns 400.
-Filters combine with `walletId` and paging.
-The SePay review inbox is `GET /api/transactions?categorizationStatus=pending,suggested,unsure,failed&entryMethod=sepay_sync`.
-For a badge count, use the same query with `pageSize=1` and read `totalItems`.
 > **Doc/code correction**: `q` searches `Description` and `Merchant` (Postgres `ILIKE '%term%'`), **not** `Note`/`BeneficiaryName` as a stale comment on the DTO claims — build the mobile search UI against `description`/`merchant`.
 
 **CreateTransactionDto**: `{ walletId, categoryId?, transactionType, amount, transactionDate, note?, description?, merchant?, entryMethod? }`
 **UpdateTransactionDto**: `{ categoryId?, amount?, merchant?, transactionDate? }` — **partial update**: a field left `null`/omitted is left unchanged. `walletId` and `transactionType` remain immutable after creation (out of scope for this endpoint).
 **ClassifyTransactionDto**: `{ categoryId?: string }`
 
-**TransactionResponseDto**: `{ transactionId, customerId, walletId, categoryId?, transactionType, sourceChannel, entryMethod, amount, transactionDate, note?, description?, merchant?, transferPairId?, externalId?, splitGroupId?, categorizationStatus, aiSuggestedCategoryId?, aiSuggestedCategoryName?, aiConfidence?, aiSource?, createdAt, updatedAt? }`
-
-**Categorization fields** (also returned on `WalletTransactionResponse` from `GET /wallets/{id}/transactions`):
-- `categorizationStatus`: `none | pending | suggested | unsure | failed | applied | reviewed`.
-  It is derived from existing columns, with no schema change.
-  One helper (`TransactionCategorization`) computes it for both the DTO and the list filter, so they cannot disagree.
-- `aiSuggestedCategoryId` / `aiSuggestedCategoryName`: the stored AI guess (`ai_category_guess`).
-  `categoryId` stays null until the guess is accepted.
-- `aiConfidence`: the stored `ai_confidence`.
-- `aiSource`: `manual | merchant_rule | ai_auto | ai_suggestion | fallback`, or null when never classified.
-
-Derivation rules, first match wins:
-
-| # | Status | Condition |
-|---|---|---|
-| 1 | `reviewed` | `aiSource = manual` |
-| 2 | `applied` | `categoryId` is set |
-| 3 | `none` | not a SePay expense (`entryMethod <> sepay_sync` or `type <> expense`) |
-| 4 | `suggested` | `aiSource = ai_suggestion` and an AI guess is set |
-| 5 | `unsure` | `aiSource = ai_suggestion` and no AI guess |
-| 6 | `pending` | `aiSource` is null and `ai_classified_at` is within the last 10 minutes |
-| 7 | `failed` | anything else |
-
-`ai_classified_at` has a second meaning: while a row is queued for AI (source still null) it holds the enqueue time, and it is overwritten with the completion time when the worker finishes.
-A row that stays queued for more than 10 minutes is reported as `failed`.
+**TransactionResponseDto**: `{ transactionId, customerId, walletId, categoryId?, transactionType, sourceChannel, entryMethod, amount, transactionDate, note?, description?, merchant?, transferPairId?, externalId?, createdAt, updatedAt? }`
 
 **TransactionSummaryResponseDto**: `{ income, expense, net, byCategory: {categoryId?, categoryName?, total}[], byDay: {date, income, expense, net}[], topBeneficiaries: {beneficiary, total}[] }`
 
@@ -368,11 +337,11 @@ A row that stays queued for more than 10 minutes is reported as `failed`.
 
 ### PUT `/{id}`
 **Validation**: transaction must exist and be owned (directly, or via the wallet) → 404 either way (no existence-leak). `EnsureNotTransfer` blocks editing transfer legs at all (any field) → 422 `transfer_managed`. If `amount` provided: `amount <= 0` → 400 (same rule as create). If `categoryId` provided: re-validated with the same rules as create — unknown category → 404, `cat_income` → `cat_income_other` remap, `cat_savings_goal` → 422 `goal_transaction_locked`, type mismatch → 422 `category_type_mismatch`. **`synced_transaction_fields_locked`**: if the transaction's wallet is `sepay_linked` and the request includes any of `amount`/`merchant`/`transactionDate` → 422 "Only the category can be changed for transactions from a bank-synced wallet." — category alone is still editable on a synced transaction; wallet type is immutable post-creation, so this is checked once, unlocked, before opening the write transaction (no race).
-**Business logic**: Runs inside a DB transaction with the same wallet row-lock pattern as create/delete (only acquired when `amount`/`merchant`/`transactionDate` is actually being changed — a category-only edit doesn't lock the wallet). If `amount` changed: reverses the old balance delta on the wallet and applies the new one; would-go-negative → 422 `insufficient_balance` (same code as create, reused). `merchant`/`transactionDate`, if provided, are written directly. `categoryId`, if provided, is applied through the same manual-lock path as `PATCH /{id}/classify` (source `manual`, `aiConfidence` cleared, correction log when the previous source was AI); classifying via `PUT` never creates/updates a beneficiary rule. If the resulting/unchanged type is `expense`, budgets are re-synced for that month afterward.
+**Business logic**: Runs inside a DB transaction with the same wallet row-lock pattern as create/delete (only acquired when `amount`/`merchant`/`transactionDate` is actually being changed — a category-only edit doesn't lock the wallet). If `amount` changed: reverses the old balance delta on the wallet and applies the new one; would-go-negative → 422 `insufficient_balance` (same code as create, reused). `merchant`/`transactionDate`, if provided, are written directly. `categoryId`, if provided, is written directly (no separate rule-service interaction — classifying via `PUT` never creates/updates a beneficiary rule). If the resulting/unchanged type is `expense`, budgets are re-synced for that month afterward.
 
 ### PATCH `/{id}/classify`
 **Validation**: same ownership/transfer/category rules as `PUT` above, but this endpoint only ever accepts `{ categoryId? }` — **no partial-update semantics**: whatever `categoryId` value is sent (including `null`) always overwrites the stored category.
-**Business logic**: Category is always editable regardless of wallet type (no wallet lock, no `synced_transaction_fields_locked`/`synced_transaction_locked` check). Like every category-edit route, it goes through the manual-lock path (`ManualCategoryLock`): sets `categoryId`, `aiClassificationSource = "manual"` (so `categorizationStatus` becomes `reviewed` and the SePay worker and merchant rules never touch the row again), clears `aiConfidence`, sets `isAiClassified=false`, and stamps `aiClassifiedAt`. When the previous source was AI (`ai_suggestion` or `ai_auto`) and a category was sent, it also inserts a `CategoryCorrectionLog` row (`originalAiGuess` = the name of `aiCategoryGuess`). `categoryId = null` clears the category and still locks the row (no correction log). Never creates/updates a beneficiary rule. If the resulting type is `expense`, budgets are re-synced for that month.
+**Business logic**: Calls the same underlying `ClassifyAsync(transactionId, categoryId, ...)` repository path used before the `PUT` rework — sets only `categoryId` + `updatedAt`, no wallet lock, does not check `synced_transaction_fields_locked`/`synced_transaction_locked` (category is always editable regardless of wallet type). Never creates/updates a beneficiary rule (only `POST /ai/transactions/{id}/override`... actually see AI section: even override no longer does this, see note there). If the resulting type is `expense`, budgets are re-synced for that month.
 
 ### DELETE `/{id}`
 **Business logic**: Runs in a DB transaction; not-found/not-owned → 404. **`synced_transaction_locked`**: if `entryMethod == "sepay_sync"` → 422 "Provider-synced transactions cannot be deleted." Wallet(s) row-locked; balance reversed (income reversed as `-amount`, expense as `+amount`); would-go-negative → 422 `reversal_insufficient_balance`. **Transfer pairs**: if `transferPairId` set, both legs must resolve to exactly one `transfer_out` + one `transfer_in` else 422 `transfer_pair_invalid`; both wallets must still be owned by the customer else 422 `transfer_wallet_missing`; either leg going negative on reversal → 422 `transfer_reversal_insufficient_balance`. Both legs deleted together.
@@ -421,13 +390,6 @@ A row that stays queued for more than 10 minutes is reported as `failed`.
 **WithdrawWalletRequest**: `{ fromWalletId, toWalletId?, amount, description? }`
 **WalletTransactionQuery**: `{ page=1, pageSize=10, fromDate?, toDate?, categoryId?, transactionType?, sortOrder="desc" }`
 
-**Background categorization**: link (OAuth, token, sandbox), `/{id}/sepay-sync`, `/sepay/sync-all` and the webhook no longer call Gemini inline; responses return without waiting for AI.
-New SePay expenses dated in the current or previous calendar month (Asia/Ho_Chi_Minh) are stamped with `ai_classified_at = now()` inside the import transaction (source stays null, so `categorizationStatus` is `pending`) and handed to an in-memory queue after commit.
-Nothing is queued when the customer's AI mode is `off`; older imported rows stay unprocessed and read as `failed`.
-`SepayCategorizationWorker` drains the queue in batches of up to 20 ids per customer on the `classification_batch` rate-limit tier and moves each row to `applied` (`merchant_rule` or `ai_auto`), `suggested`, `unsure` (`ai_suggestion` with no guess) or `failed` (`fallback`, on rate limit, provider error or empty input); rows that became `manual` meanwhile are skipped.
-After a batch applies any category, budgets are re-checked once per affected month.
-The queue is lost on restart; those rows read as `failed` once the 10-minute pending window lapses and are not retried automatically.
-
 **SePay DTOs** (unchanged from prior reference — see original field lists):
 `SepayAuthorizeUrlResponse`, `SepayBankAccountsRequest/Response`, `LinkSepayAccountRequest/TokenRequest`, `SepayLinkResult`, `SepayLinkStatusResponse`, `SepayWebhookRegistrationResponse`, `SepayWalletSyncResponse`, `SepaySyncAllResponse`, `SepayUnlinkResponse`, `SepayWebhookRequest/Result`.
 
@@ -451,7 +413,7 @@ The queue is lost on restart; those rows read as `failed` once the 10-minute pen
 
 **POST `/sepay/bank-accounts`** — Validation: `code` required; `state`, if present, must be a valid signature belonging to the caller else 422 `sepay_state_invalid`. Business logic: exchanged OAuth token is cached under `sepay:code:{customerId}:{sha256(code)}` for **5 minutes** (SePay codes are single-use, so the same code can serve both this call and the subsequent `link` call). `alreadyLinked` flags accounts already tied to a `SepayLink` for this customer.
 
-**POST `/sepay/link` (OAuth)** — Validation: `code` required; `state` validated as above; requires ≥1 active bank account (400 "No active bank accounts found on your SePay account."); `bankAccountId`, if given, must exist/be active (404). Business logic: fetches full transaction history *before* opening the DB transaction (avoids holding a `Serializable` tx open across many outbound calls). DB work in a `Serializable` transaction. Only `basic`-type wallets count toward the 10-wallet cap (422 if exceeded) — linked wallets never count. Re-linking an already-linked `SepayBankAccountId` reuses the wallet and just refreshes tokens/balance. New link creates a `Wallet` (`walletType="sepay_linked"`, name `"SePay - {bank}"`, truncated to 120 chars) and a `SepayLink` (`authMode="oauth"`); tokens stored encrypted. Imports fetched history via upsert, queues new expenses for background AI categorization (see below), then best-effort auto-registers a webhook if `SePay:WebhookUrl`/`WebhookApiKey` are configured (failure never fails the link).
+**POST `/sepay/link` (OAuth)** — Validation: `code` required; `state` validated as above; requires ≥1 active bank account (400 "No active bank accounts found on your SePay account."); `bankAccountId`, if given, must exist/be active (404). Business logic: fetches full transaction history *before* opening the DB transaction (avoids holding a `Serializable` tx open across many outbound calls). DB work in a `Serializable` transaction. Only `basic`-type wallets count toward the 10-wallet cap (422 if exceeded) — linked wallets never count. Re-linking an already-linked `SepayBankAccountId` reuses the wallet and just refreshes tokens/balance. New link creates a `Wallet` (`walletType="sepay_linked"`, name `"SePay - {bank}"`, truncated to 120 chars) and a `SepayLink` (`authMode="oauth"`); tokens stored encrypted. Imports fetched history via upsert, runs AI categorization for new expenses post-commit, then best-effort auto-registers a webhook if `SePay:WebhookUrl`/`WebhookApiKey` are configured (failure never fails the link).
 
 **POST `/sepay/link-token` (static)** — Validation: `apiToken` required; SePay rejecting it → 400 "The SePay API token is invalid or expired." Business logic: no code/state exchange; stores the raw token itself (encrypted) as the "access token", no refresh token, no expiry ("static tokens do not expire"). `sepayBankAccountId = 0` (no numeric id available for static links). Re-link matched on `(authMode="static", accountNumber)` instead of bank-account id. No auto webhook registration (static links can't hold webhook scopes).
 
@@ -697,7 +659,7 @@ Only computed when `deadline` is set. `monthsRemaining` = whole calendar months 
 
 ### POST `/transactions/{transactionId}/override`
 **Validation**: `categoryId` unvalidated in format. 404 if transaction/category missing; **403** `ForbiddenException` if the transaction's wallet isn't owned by the caller.
-**Business logic — correction vs. the existing docs**: sets `categoryId`, `isAiClassified=false`, `aiConfidence=null`, `aiClassificationSource="manual"` (the row is now `reviewed` and locked against the SePay worker and merchant rules), and always inserts a `CategoryCorrectionLog` row (`customerId`, `transactionId`, `correctedCategoryId`, `originalAiGuess`). For an `expense`, budgets are re-checked for the transaction's month (`SyncBudgetOnTransactionChangeAsync`). This is also how the SePay review inbox accepts a suggestion: call it with the suggested category id. **It does NOT create or update a beneficiary rule** — despite the interface being named `IBeneficiaryRuleService`, there is no mapped `BeneficiaryRule` entity in the current schema at all (the `beneficiary_rule` table only exists in a legacy migration, and that migration actually deletes its own rows during the v21 schema change). Treat override purely as "correct this one transaction + log it for later analysis," not as "teach the system a rule" — that's what `POST /rules` is for. Returns `source: "MANUAL"`.
+**Business logic — correction vs. the existing docs**: sets `categoryId`, `isAiClassified=false`, `aiConfidence=null`, and inserts a `CategoryCorrectionLog` row (`customerId`, `transactionId`, `correctedCategoryId`, `originalAiGuess`). **It does NOT create or update a beneficiary rule** — despite the interface being named `IBeneficiaryRuleService`, there is no mapped `BeneficiaryRule` entity in the current schema at all (the `beneficiary_rule` table only exists in a legacy migration, and that migration actually deletes its own rows during the v21 schema change). Treat override purely as "correct this one transaction + log it for later analysis," not as "teach the system a rule" — that's what `POST /rules` is for. Returns `source: "MANUAL"`.
 
 ### GET `/score?period=`
 **Validation**: not rejecting — any value other than case-insensitive `"MONTHLY"` silently coerces to `"WEEKLY"` (no 400 for garbage input).

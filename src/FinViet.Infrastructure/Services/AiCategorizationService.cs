@@ -359,220 +359,63 @@ public class AiCategorizationService : IAiCategorizationService
         }
     }
 
-    public async Task<IReadOnlyList<CategorizationOutcome>> CategorizeManyAsync(
+    public async Task<bool> ReprocessAsync(
         Guid customerId,
-        IReadOnlyList<Guid> transactionIds,
+        Guid transactionId,
+        string rawInput,
         CancellationToken cancellationToken = default)
     {
-        if (transactionIds.Count == 0)
-            return Array.Empty<CategorizationOutcome>();
-
-        var transactions = await _db.Transactions
-            .Where(t => t.CustomerId == customerId && transactionIds.Contains(t.TransactionId))
-            .ToListAsync(cancellationToken);
-        var outcomes = new List<CategorizationOutcome>(transactions.Count);
-        var candidates = new List<Transaction>();
-
-        foreach (var txn in transactions)
-        {
-            if (string.Equals(txn.AiClassificationSource, SourceManual, StringComparison.Ordinal))
-            {
-                outcomes.Add(Outcome(txn, txn.CategoryId, null, applied: false, source: "MANUAL", reason: "manual_locked"));
-                continue;
-            }
-
-            if (txn.CategoryId is not null)
-            {
-                outcomes.Add(Outcome(txn, txn.CategoryId, null, applied: false, source: "SKIPPED", reason: "already_categorized"));
-                continue;
-            }
-
-            var rule = await _ruleService.ResolveAsync(customerId, txn.Merchant, txn.Description, cancellationToken);
-            if (rule is not null && await IsVisibleCategoryAsync(customerId, rule.CategoryId, cancellationToken))
-            {
-                txn.CategoryId = rule.CategoryId;
-                txn.IsAiClassified = false;
-                txn.AiConfidence = null;
-                txn.AiCategoryGuess = null;
-                txn.AiClassificationSource = SourceRule;
-                txn.AiClassifiedAt = DateTime.UtcNow;
-                await _ruleService.IncrementAppliedAsync(rule.RuleId, cancellationToken: cancellationToken);
-                outcomes.Add(Outcome(txn, rule.CategoryId, rule.CategoryName, applied: true, source: "RULE"));
-                continue;
-            }
-
-            candidates.Add(txn);
-        }
-
-        var preference = await PreferenceAsync(customerId, cancellationToken);
-        var expenseCategories = await ExpenseCategoriesAsync(customerId, cancellationToken);
-        var categoryNames = expenseCategories.Keys.ToList();
-        var modeOff = string.Equals(preference.Mode, ModeOff, StringComparison.Ordinal);
-
-        var classifications = new BatchClassification[candidates.Count];
-        using (var gate = new SemaphoreSlim(MaxConcurrentBatchClassifications))
-        {
-            await Task.WhenAll(candidates.Select(async (txn, index) =>
-            {
-                var input = BuildInput(txn);
-                if (modeOff)
-                {
-                    classifications[index] = BatchClassification.Failed("mode_off");
-                    return;
-                }
-
-                if (string.IsNullOrWhiteSpace(input))
-                {
-                    classifications[index] = BatchClassification.Failed("empty_input");
-                    return;
-                }
-
-                await gate.WaitAsync(cancellationToken);
-                try
-                {
-                    classifications[index] = await ClassifyBatchRowAsync(
-                        customerId, input, expenseCategories, categoryNames, cancellationToken);
-                }
-                finally
-                {
-                    gate.Release();
-                }
-            }));
-        }
-
-        // The Gemini calls can take a while; a row the user accepted or dismissed in the meantime
-        // must keep its manual state, so re-read the lock right before persisting.
-        var candidateIds = candidates.Select(c => c.TransactionId).ToList();
-        var lockedIds = (await _db.Transactions.AsNoTracking()
-                .Where(t => candidateIds.Contains(t.TransactionId)
-                            && (t.AiClassificationSource == SourceManual || t.CategoryId != null))
-                .Select(t => t.TransactionId)
-                .ToListAsync(cancellationToken))
-            .ToHashSet();
-
-        for (var i = 0; i < candidates.Count; i++)
-        {
-            if (lockedIds.Contains(candidates[i].TransactionId))
-            {
-                await _db.Entry(candidates[i]).ReloadAsync(cancellationToken);
-                outcomes.Add(Outcome(candidates[i], candidates[i].CategoryId, null, applied: false, source: "SKIPPED", reason: "changed_while_queued"));
-                continue;
-            }
-
-            outcomes.Add(ApplyBatchClassification(candidates[i], classifications[i], preference));
-        }
-
-        await _db.SaveChangesAsync(cancellationToken);
-
-        foreach (var outcome in outcomes.Where(o => o.Source is not ("MANUAL" or "SKIPPED")))
-        {
-            await RecordDecisionAsync(
-                customerId,
-                outcome.TransactionId,
-                outcome.Source.ToLowerInvariant(),
-                outcome.Confidence,
-                outcome.Applied,
-                outcome.Reason,
+        var txn = await _db.Transactions
+            .FirstOrDefaultAsync(
+                t => t.TransactionId == transactionId && t.CustomerId == customerId,
                 cancellationToken);
-        }
+        if (txn is null || string.Equals(txn.AiClassificationSource, SourceManual, StringComparison.Ordinal))
+            return true;
 
-        return outcomes;
-    }
-
-    private static CategorizationOutcome ApplyBatchClassification(
-        Transaction txn,
-        BatchClassification classification,
-        (string Mode, decimal Threshold) preference)
-    {
-        txn.AiClassifiedAt = DateTime.UtcNow;
-
-        if (classification.FailureReason is not null)
-        {
-            txn.IsAiClassified = false;
-            txn.AiConfidence = null;
-            txn.AiCategoryGuess = null;
-            txn.AiClassificationSource = SourceFallback;
-            return Outcome(txn, txn.CategoryId, null, applied: false, source: "FALLBACK", reason: classification.FailureReason);
-        }
-
-        txn.IsAiClassified = false;
-        txn.AiClassificationSource = SourceSuggestion;
-
-        if (classification.CategoryId is null)
-        {
-            // The model answered but not with a category we can use: "unsure", not "failed".
-            txn.AiConfidence = null;
-            txn.AiCategoryGuess = null;
-            return Outcome(txn, txn.CategoryId, null, applied: false, source: "AI_SUGGESTION", reason: "unresolved_category");
-        }
-
-        txn.AiConfidence = classification.Confidence;
-        txn.AiCategoryGuess = classification.CategoryId;
-
-        if (string.Equals(preference.Mode, ModeAuto, StringComparison.Ordinal)
-            && classification.Confidence >= preference.Threshold)
-        {
-            txn.CategoryId = classification.CategoryId;
-            txn.IsAiClassified = true;
-            txn.AiClassificationSource = SourceAuto;
-            return Outcome(txn, classification.CategoryId, classification.CategoryName, applied: true, source: "AI_AUTO");
-        }
-
-        var reason = string.Equals(preference.Mode, ModeSuggestOnly, StringComparison.Ordinal)
-            ? "suggest_only"
-            : "below_threshold";
-        return Outcome(
-            txn,
-            txn.CategoryId,
-            null,
-            applied: false,
-            source: "AI_SUGGESTION",
-            suggestedCategoryId: classification.CategoryId,
-            suggestedCategoryName: classification.CategoryName,
-            reason: reason);
-    }
-
-    private async Task<BatchClassification> ClassifyBatchRowAsync(
-        Guid customerId,
-        string input,
-        Dictionary<string, string> expenseCategories,
-        IReadOnlyList<string> categoryNames,
-        CancellationToken cancellationToken)
-    {
         try
         {
-            if (!await TryAcquireAsync(customerId, FeatureClassificationBatch, cancellationToken))
-                return BatchClassification.Failed("rate_limited");
+            if (!await TryAcquireAsync(customerId, "classification_reprocess", cancellationToken))
+                return false;
 
+            var expenseCategories = await ExpenseCategoriesAsync(customerId, cancellationToken);
             var result = await _aiModel.ClassifyAsync(
-                input,
-                categoryNames,
+                rawInput,
+                expenseCategories.Keys.ToList(),
                 cancellationToken,
-                new AiRequestContext(FeatureClassificationBatch, customerId));
-
-            return result.CategoryName is not null
-                   && expenseCategories.TryGetValue(result.CategoryName, out var categoryId)
-                ? new BatchClassification(null, categoryId, result.CategoryName, result.Confidence)
-                : new BatchClassification(null, null, null, 0m);
+                new AiRequestContext("classification_reprocess", customerId));
+            if (result.CategoryName is not null && expenseCategories.TryGetValue(result.CategoryName, out var categoryId))
+            {
+                txn.AiConfidence = result.Confidence;
+                txn.AiCategoryGuess = categoryId;
+                txn.AiClassificationSource = SourceSuggestion;
+                txn.AiClassifiedAt = DateTime.UtcNow;
+                await _db.SaveChangesAsync(cancellationToken);
+                await RecordDecisionAsync(
+                    customerId,
+                    transactionId,
+                    SourceSuggestion,
+                    result.Confidence,
+                    applied: false,
+                    reason: "reprocess_suggestion",
+                    cancellationToken);
+            }
+            else
+            {
+                await RecordDecisionAsync(
+                    customerId,
+                    transactionId,
+                    SourceFallback,
+                    result.Confidence,
+                    applied: false,
+                    reason: "reprocess_unresolved",
+                    cancellationToken);
+            }
+            return true;
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        catch (AiProviderUnavailableException)
         {
-            throw;
+            return false;
         }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Background categorization failed for one row of customer {CustomerId}.", customerId);
-            return BatchClassification.Failed("provider_unavailable");
-        }
-    }
-
-    private sealed record BatchClassification(
-        string? FailureReason,
-        string? CategoryId,
-        string? CategoryName,
-        decimal Confidence)
-    {
-        public static BatchClassification Failed(string reason) => new(reason, null, null, 0m);
     }
 
     private static string BuildInput(Transaction txn)
