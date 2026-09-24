@@ -253,9 +253,6 @@ public static class DependencyInjection
         services.AddScoped<IDocumentIngestionService, PdfDocumentIngestionService>();
         services.AddScoped<IRagDocumentQueryService, RagDocumentQueryService>();
 
-        services.AddSingleton<SepayCategorizationQueue>();
-        services.AddSingleton<ISepayCategorizationQueue>(sp => sp.GetRequiredService<SepayCategorizationQueue>());
-        services.AddHostedService<SepayCategorizationWorker>();
         services.AddHostedService<WeeklyReportScheduler>();
 
         return services;

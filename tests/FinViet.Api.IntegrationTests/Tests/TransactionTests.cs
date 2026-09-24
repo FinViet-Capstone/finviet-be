@@ -133,49 +133,4 @@ public class TransactionTests : ApiTestBase
         Assert.NotNull(d?["byDay"]);        // daily bar chart
         Assert.NotNull(d?["topBeneficiaries"]); // top merchants
     }
-
-    // Categorization status + inbox filter (sepay-ai T1)
-    [SkippableFact]
-    public async Task CategorizationInboxFilter_ExcludesManualRows_AndStatusNoneIsReturned()
-    {
-        RequireServer();
-        string? wid = null;
-        try
-        {
-            wid = await CreateWalletAsync(Unique("TEST-inbox"), "basic", 1_000_000);
-            var create = await Fx.SendAsync(HttpMethod.Post, "/api/transactions", token: Cust,
-                headers: new Dictionary<string, string> { ["Idempotency-Key"] = Idem() },
-                body: Tx(wid, "cat_food", "EXPENSE", 20_000, "inbox probe"));
-            Assert.Equal(201, create.Code);
-            var txId = ApiTestFixture.Data(create)?["transactionId"]?.ToString();
-            Assert.Equal("applied", ApiTestFixture.Data(create)?["categorizationStatus"]?.ToString());
-
-            // A categorized manual row is never in the SePay review inbox.
-            var inbox = await CustGet(
-                $"/api/transactions?walletId={wid}&categorizationStatus=pending,suggested,unsure,failed&entryMethod=sepay_sync");
-            Assert.Equal(200, inbox.Code);
-            Assert.Empty(ApiTestFixture.Data(inbox)!["items"]!.AsArray());
-            Assert.Equal(0, ApiTestFixture.Data(inbox)!["totalItems"]!.GetValue<int>());
-
-            // The same row is found by its derived status, and carries the AI fields.
-            var applied = await CustGet($"/api/transactions?walletId={wid}&categorizationStatus=applied&entryMethod=manual");
-            Assert.Equal(200, applied.Code);
-            var items = ApiTestFixture.Data(applied)!["items"]!.AsArray();
-            var item = Assert.Single(items);
-            Assert.Equal(txId, item!["transactionId"]?.ToString());
-            Assert.Equal("applied", item["categorizationStatus"]?.ToString());
-            Assert.True(item.AsObject().ContainsKey("aiSuggestedCategoryId"));
-            Assert.True(item.AsObject().ContainsKey("aiConfidence"));
-            Assert.True(item.AsObject().ContainsKey("aiSource"));
-        }
-        finally { await DeleteWalletAsync(wid); }
-    }
-
-    [SkippableFact]
-    public async Task CategorizationStatusFilter_UnknownValue_Returns400()
-    {
-        RequireServer();
-        var r = await CustGet("/api/transactions?categorizationStatus=bogus");
-        Assert.Equal(400, r.Code);
-    }
 }
