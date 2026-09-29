@@ -72,7 +72,9 @@ public class ResendVerificationEmailCommandHandler : IRequestHandler<ResendVerif
 
         try
         {
-            await _emailService.SendVerificationEmailAsync(customer.Email, customer.FullName, code);
+            var timeout = TimeSpan.FromSeconds(_config.GetValue("Email:SendTimeoutSeconds", 8));
+            await _emailService.SendVerificationEmailAsync(customer.Email, customer.FullName, code)
+                .WaitAsync(timeout, cancellationToken);
         }
         catch (Exception ex)
         {
