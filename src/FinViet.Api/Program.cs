@@ -14,14 +14,6 @@ using System.Text;
 AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
 var builder = WebApplication.CreateBuilder(args);
 
-// Enable Sentry only when a DSN is configured.
-var sentryDsn = builder.Configuration["Sentry:Dsn"];
-if (!string.IsNullOrWhiteSpace(sentryDsn))
-{
-    builder.WebHost.UseSentry();
-}
-
-
 // ── Services ─────────────────────────────────────────────────────────────────
 // Application layer (FluentValidation + ValidationBehavior)
 builder.Services.AddApplicationServices();
@@ -223,7 +215,5 @@ app.MapGet("/health", () => Results.Ok(new
 {
     status = "healthy"
 }));
-
-app.MapGet("/sentry-test", object () => throw new Exception("Sentry test event"));
 
 app.Run();
