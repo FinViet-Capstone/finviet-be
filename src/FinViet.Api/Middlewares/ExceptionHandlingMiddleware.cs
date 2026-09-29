@@ -2,7 +2,6 @@ using FinViet.Application.Common;
 using FinViet.Application.Common.Exceptions;
 using FluentValidation;
 using Microsoft.AspNetCore.Hosting;
-using Sentry;
 using System.Text.Json;
 
 namespace FinViet.Api.Middlewares;
@@ -49,15 +48,6 @@ public class ExceptionHandlingMiddleware
                     "Handled exception while processing {Method} {Path}",
                     context.Request.Method,
                     context.Request.Path);
-
-                // BusinessRuleException covers money-rule rejections (insufficient_balance,
-                // linked_wallet_read_only, ...) that were previously invisible to Sentry —
-                // captured at Warning level so it's monitorable without being alerted on like an
-                // unhandled error.
-                if (ex is BusinessRuleException)
-                {
-                    SentrySdk.CaptureException(ex, scope => scope.Level = SentryLevel.Warning);
-                }
             }
             else
             {
@@ -66,8 +56,6 @@ public class ExceptionHandlingMiddleware
                     "Unhandled exception while processing {Method} {Path}",
                     context.Request.Method,
                     context.Request.Path);
-
-                SentrySdk.CaptureException(ex);
             }
 
             await HandleExceptionAsync(context, ex);
