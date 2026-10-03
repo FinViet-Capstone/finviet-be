@@ -8,4 +8,8 @@ public class RagDocumentResponse
     public string? Uri { get; set; }
     public DateTime CreatedAt { get; set; }
     public int ChunkCount { get; set; }
+
+    /// <summary>False for documents ingested before original files were stored in the database —
+    /// their chunks still serve RAG, but the file itself is gone and must be re-uploaded.</summary>
+    public bool HasFile { get; set; }
 }

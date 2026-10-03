@@ -9,6 +9,12 @@ namespace FinViet.Infrastructure.IntegrationTests;
 
 public sealed class DatabaseBootstrapTests
 {
+    // Every embedded VNNNN__*.sql script, so these assertions don't go stale with each new migration.
+    private static readonly long MigrationScriptCount = typeof(DbInitializer).Assembly
+        .GetManifestResourceNames()
+        .LongCount(name => name.Contains(".Persistence.Migrations.V", StringComparison.Ordinal)
+            && name.EndsWith(".sql", StringComparison.Ordinal));
+
     [SkippableFact]
     public async Task InitializeAsync_FreshDatabase_IsCompleteAndRepeatable()
     {
@@ -28,7 +34,7 @@ public sealed class DatabaseBootstrapTests
         await using var connection = new NpgsqlConnection(database.ConnectionString);
         await connection.OpenAsync();
 
-        Assert.Equal(3, await ScalarAsync<long>(connection, "SELECT count(*) FROM public.schema_versions;"));
+        Assert.Equal(MigrationScriptCount, await ScalarAsync<long>(connection, "SELECT count(*) FROM public.schema_versions;"));
         Assert.Equal(3, await ScalarAsync<long>(connection, "SELECT count(*) FROM public.buckets;"));
         Assert.Equal(18, await ScalarAsync<long>(connection, "SELECT count(*) FROM public.categories;"));
         Assert.Equal(1, await ScalarAsync<long>(connection, "SELECT count(*) FROM public.admins;"));
@@ -50,7 +56,7 @@ public sealed class DatabaseBootstrapTests
                 NullLogger.Instance);
         }
 
-        Assert.Equal(3, await ScalarAsync<long>(connection, "SELECT count(*) FROM public.schema_versions;"));
+        Assert.Equal(MigrationScriptCount, await ScalarAsync<long>(connection, "SELECT count(*) FROM public.schema_versions;"));
         Assert.Equal(18, await ScalarAsync<long>(connection, "SELECT count(*) FROM public.categories;"));
         Assert.Equal(1, await ScalarAsync<long>(connection, "SELECT count(*) FROM public.admins;"));
     }
@@ -74,7 +80,7 @@ public sealed class DatabaseBootstrapTests
 
         await using var connection = new NpgsqlConnection(database.ConnectionString);
         await connection.OpenAsync();
-        Assert.Equal(3, await ScalarAsync<long>(connection, "SELECT count(*) FROM public.schema_versions;"));
+        Assert.Equal(MigrationScriptCount, await ScalarAsync<long>(connection, "SELECT count(*) FROM public.schema_versions;"));
         Assert.Equal(0, await ScalarAsync<long>(connection, "SELECT count(*) FROM public.admins;"));
     }
 
@@ -145,7 +151,7 @@ public sealed class DatabaseBootstrapTests
 
         await using var connection = new NpgsqlConnection(database!.ConnectionString);
         await connection.OpenAsync();
-        Assert.Equal(3, await ScalarAsync<long>(connection, "SELECT count(*) FROM public.schema_versions;"));
+        Assert.Equal(MigrationScriptCount, await ScalarAsync<long>(connection, "SELECT count(*) FROM public.schema_versions;"));
         Assert.Equal(1, await ScalarAsync<long>(connection, "SELECT count(*) FROM public.admins;"));
         Assert.Equal(18, await ScalarAsync<long>(connection, "SELECT count(*) FROM public.categories;"));
     }

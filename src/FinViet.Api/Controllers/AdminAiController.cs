@@ -50,13 +50,22 @@ public class AdminAiController : ControllerBase
         return Ok(ApiResponse<Guid>.Ok(documentId, "Đã nạp tài liệu vào kho tri thức."));
     }
 
-    /// <summary>List RAG documents (global + per-customer) for the Knowledge Base admin screen.</summary>
+    /// <summary>List global knowledge documents (uploaded PDFs) for the Knowledge Base admin screen.</summary>
     [HttpGet("documents")]
     public async Task<ActionResult<ApiResponse<IReadOnlyList<RagDocumentResponse>>>> GetDocuments(
         CancellationToken cancellationToken)
     {
         var documents = await _documents.GetDocumentsAsync(cancellationToken);
         return Ok(ApiResponse<IReadOnlyList<RagDocumentResponse>>.Ok(documents));
+    }
+
+    /// <summary>Stream a global knowledge document's original uploaded file, for the admin preview.
+    /// 404 when the document predates file storage and must be re-uploaded.</summary>
+    [HttpGet("documents/{id:guid}/file")]
+    public async Task<IActionResult> GetDocumentFile(Guid id, CancellationToken cancellationToken)
+    {
+        var file = await _documents.GetDocumentFileAsync(id, cancellationToken);
+        return File(file.Content, file.ContentType);
     }
 
     /// <summary>Lists every AI feature's editable prompt settings for the admin "AI config" screen.</summary>
