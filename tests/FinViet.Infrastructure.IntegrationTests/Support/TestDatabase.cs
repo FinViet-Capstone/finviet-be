@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using FinViet.Infrastructure.Persistence.Context;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.FileProviders;
@@ -14,10 +15,16 @@ namespace FinViet.Infrastructure.IntegrationTests.Support;
 /// </summary>
 internal static class TestDatabase
 {
+    // One data source per database, like the app's single registered data source. EF Core builds
+    // an internal service provider per distinct data source instance and fails once more than 20
+    // exist, so a fresh data source per context breaks as soon as the suite grows.
+    private static readonly ConcurrentDictionary<string, NpgsqlDataSource> DataSources = new();
+
     internal static FinVietDbContext CreateDbContext(string connectionString)
     {
+        var dataSource = DataSources.GetOrAdd(connectionString, DependencyInjection.BuildDataSource);
         var options = new DbContextOptionsBuilder<FinVietDbContext>()
-            .UseNpgsql(DependencyInjection.BuildDataSource(connectionString), options => options.UseVector())
+            .UseNpgsql(dataSource, options => options.UseVector())
             .Options;
         return new FinVietDbContext(options);
     }
@@ -95,6 +102,8 @@ internal static class TestDatabase
 
         public async ValueTask DisposeAsync()
         {
+            if (DataSources.TryRemove(ConnectionString, out var dataSource))
+                await dataSource.DisposeAsync();
             NpgsqlConnection.ClearAllPools();
             await using var connection = new NpgsqlConnection(_adminConnectionString);
             await connection.OpenAsync();

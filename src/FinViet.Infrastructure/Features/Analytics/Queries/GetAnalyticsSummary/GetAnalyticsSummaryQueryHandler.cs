@@ -1,6 +1,8 @@
 using FinViet.Application.DTOs.Analytics;
 using FinViet.Application.Features.Analytics.Queries.GetAnalyticsSummary;
 using FinViet.Infrastructure.Persistence.Context;
+using FinViet.Infrastructure.Services;
+using FinViet.Infrastructure.Services.Subscriptions;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
 
@@ -9,7 +11,13 @@ namespace FinViet.Infrastructure.Features.Analytics.Queries.GetAnalyticsSummary;
 public class GetAnalyticsSummaryQueryHandler : IRequestHandler<GetAnalyticsSummaryQuery, AdminAnalyticsSummaryDto>
 {
     private readonly FinVietDbContext _db;
-    public GetAnalyticsSummaryQueryHandler(FinVietDbContext db) => _db = db;
+    private readonly TimeProvider _time;
+
+    public GetAnalyticsSummaryQueryHandler(FinVietDbContext db, TimeProvider time)
+    {
+        _db = db;
+        _time = time;
+    }
 
     public async Task<AdminAnalyticsSummaryDto> Handle(GetAnalyticsSummaryQuery request, CancellationToken cancellationToken)
     {
@@ -25,11 +33,12 @@ public class GetAnalyticsSummaryQueryHandler : IRequestHandler<GetAnalyticsSumma
         var totalWallets = await _db.Wallets.AsNoTracking().CountAsync(w => !w.IsDeleted, cancellationToken);
         var totalBudgets = await _db.Budgets.AsNoTracking().CountAsync(cancellationToken);
 
-        // Premium = distinct customers holding an active subscription to a paid plan. Distinct-by-
+        // Premium = distinct customers whose paid period covers today, on a paid plan. Distinct-by-
         // customer (not raw row count) so a customer somehow holding >1 active row is still counted
         // once. Valid (returns 0, not an error) when SubscriptionPlan has no rows yet.
         var premiumSubscriptions = await _db.CustomerSubscriptions.AsNoTracking()
-            .Where(s => s.Status == "active" && s.CustomerId != null && s.Plan != null && s.Plan.Price > 0)
+            .Where(SubscriptionPeriods.ActiveOn(VietnamClock.Today(_time)))
+            .Where(s => s.CustomerId != null && s.Plan != null && s.Plan.Price > 0)
             .Select(s => s.CustomerId!.Value)
             .Distinct()
             .CountAsync(cancellationToken);

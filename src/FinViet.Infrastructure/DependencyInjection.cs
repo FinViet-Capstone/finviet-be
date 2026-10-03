@@ -13,12 +13,14 @@ using FinViet.Infrastructure.Identity;
 using FinViet.Infrastructure.Persistence.Context;
 using FinViet.Infrastructure.Persistence.Repositories;
 using FinViet.Infrastructure.Services;
+using FinViet.Infrastructure.Services.Subscriptions;
 using FinViet.Infrastructure.Services.Background;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Google.GenAI;
 using Google.GenAI.Types;
 using Npgsql;
@@ -120,6 +122,22 @@ public static class DependencyInjection
             sp.GetRequiredService<PayOS.PayOSClient>(),
             sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<PayOSGateway>>()));
         services.AddScoped<ISubscriptionPaymentResultService, SubscriptionPaymentResultService>();
+
+        // Subscription lifecycle: expiry + resubscribe reminders (finviet-be#138).
+        services.TryAddSingleton(TimeProvider.System);
+        services.AddOptions<SubscriptionLifecycleOptions>()
+            .Bind(configuration.GetSection(SubscriptionLifecycleOptions.SectionName))
+            .Validate(o => o.ReminderLeadDays is >= 1 and <= 30,
+                "Subscriptions:ReminderLeadDays must be between 1 and 30.")
+            .Validate(o => o.SweepIntervalMinutes is >= 1 and <= 1440,
+                "Subscriptions:SweepIntervalMinutes must be between 1 and 1440.")
+            .Validate(o => o.ReminderStartHour is >= 0 and <= 23 && o.ReminderEndHour is >= 1 and <= 24
+                    && o.ReminderStartHour < o.ReminderEndHour,
+                "Subscriptions:ReminderStartHour/ReminderEndHour must form a window within 0-24.")
+            .Validate(o => o.ExpiredReminderMaxAgeDays >= 1,
+                "Subscriptions:ExpiredReminderMaxAgeDays must be at least 1.")
+            .ValidateOnStart();
+        services.AddScoped<ISubscriptionLifecycleService, SubscriptionLifecycleService>();
 
         // JWT
         services.AddScoped<IJwtTokenService, JwtTokenService>();
@@ -260,6 +278,7 @@ public static class DependencyInjection
         services.AddScoped<IRagDocumentQueryService, RagDocumentQueryService>();
 
         services.AddHostedService<WeeklyReportScheduler>();
+        services.AddHostedService<SubscriptionLifecycleScheduler>();
 
         return services;
     }
