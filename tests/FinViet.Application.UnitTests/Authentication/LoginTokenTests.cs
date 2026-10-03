@@ -37,7 +37,6 @@ public class LoginTokenTests
     // TC-AUTH-U13
     [Theory]
     [InlineData(false, true, "Password1")]
-    [InlineData(true, false, "Password1")]
     [InlineData(true, true, "WrongPassword1")]
     public async Task Login_InvalidAccountStateOrPassword_ThrowsExpectedException(
         bool verified, bool active, string password)
@@ -51,6 +50,51 @@ public class LoginTokenTests
             await Assert.ThrowsAsync<BadRequestException>(() => handler.Handle(new LoginCommand("customer@example.com", password), default));
         else
             await Assert.ThrowsAsync<UnauthorizedException>(() => handler.Handle(new LoginCommand("customer@example.com", password), default));
+        Assert.Empty(db.RefreshTokens);
+    }
+
+    // A locked account only learns it is locked after proving the password, so the response
+    // can't be used to probe which emails exist or are locked.
+    [Fact]
+    public async Task Login_LockedAccount_CorrectPassword_ThrowsForbiddenWithAccountDeactivatedCode()
+    {
+        await using var db = TestDbContextFactory.Create();
+        db.Customers.Add(TestData.Customer(isActive: false));
+        await db.SaveChangesAsync();
+
+        var ex = await Assert.ThrowsAsync<ForbiddenException>(() =>
+            new LoginCommandHandler(db, Jwt().Object, Configuration())
+                .Handle(new LoginCommand("customer@example.com", "Password1"), default));
+
+        Assert.Equal(AccountStatusCodes.AccountDeactivated, ex.Code);
+        Assert.Empty(db.RefreshTokens);
+    }
+
+    [Fact]
+    public async Task Login_LockedAccount_WrongPassword_StaysInvalidCredentials()
+    {
+        await using var db = TestDbContextFactory.Create();
+        db.Customers.Add(TestData.Customer(isActive: false));
+        await db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<UnauthorizedException>(() =>
+            new LoginCommandHandler(db, Jwt().Object, Configuration())
+                .Handle(new LoginCommand("customer@example.com", "WrongPassword1"), default));
+    }
+
+    // A customer who deleted their own account was not locked by an admin.
+    [Fact]
+    public async Task Login_DeletedAccount_StaysInvalidCredentials()
+    {
+        await using var db = TestDbContextFactory.Create();
+        var customer = TestData.Customer(isActive: false);
+        customer.DeletedAt = DateTime.UtcNow;
+        db.Customers.Add(customer);
+        await db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<UnauthorizedException>(() =>
+            new LoginCommandHandler(db, Jwt().Object, Configuration())
+                .Handle(new LoginCommand("customer@example.com", "Password1"), default));
         Assert.Empty(db.RefreshTokens);
     }
 
