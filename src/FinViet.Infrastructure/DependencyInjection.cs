@@ -123,6 +123,8 @@ public static class DependencyInjection
 
         // JWT
         services.AddScoped<IJwtTokenService, JwtTokenService>();
+        // Per-request "is the customer still active?" check used by JwtBearer OnTokenValidated.
+        services.AddScoped<ICustomerAccountStatusService, CustomerAccountStatusService>();
 
         // Email (SendGrid)
         services.AddScoped<IEmailService, EmailService>();
