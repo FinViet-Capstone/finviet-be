@@ -65,8 +65,9 @@ public class PayOSSubscriptionTests
     }
 
     [Fact]
-    public async Task CreatePayment_AlreadySubscribed_Throws422()
+    public async Task CreatePayment_WhileSubscribed_CreatesRenewalCharge()
     {
+        // finviet-be#138: each payOS payment buys one more interval, so a subscriber can pay again.
         await using var db = TestDbContextFactory.Create();
         var customerId = Guid.NewGuid();
         var plan = SeedPlan();
@@ -85,9 +86,12 @@ public class PayOSSubscriptionTests
             DefaultPayOSOptions(),
             NullLogger<CreatePaymentCommandHandler>.Instance);
 
-        var ex = await Assert.ThrowsAsync<BusinessRuleException>(() =>
-            handler.Handle(new CreatePaymentCommand(customerId, plan.PlanId, null), default));
-        Assert.Equal("already_subscribed", ex.Code);
+        var result = await handler.Handle(new CreatePaymentCommand(customerId, plan.PlanId, null), default);
+
+        Assert.Equal("QR", result.QrCode);
+        var payment = db.Payments.Single();
+        Assert.Equal("renewal", payment.ChargeType);
+        Assert.Null(payment.SubscriptionId);
     }
 
     [Fact]
@@ -177,8 +181,7 @@ public class PayOSSubscriptionTests
 
         var gateway = new FakePaymentGateway(webhookResult: new WebhookVerificationResult(
             orderCode, 59000, Success: true, TransactionId: "TXN-001"));
-        var resultService = new SubscriptionPaymentResultService(db,
-            NullLogger<SubscriptionPaymentResultService>.Instance);
+        var resultService = new SubscriptionPaymentResultService(db, TimeProvider.System, NullLogger<SubscriptionPaymentResultService>.Instance);
         var handler = new ProcessPayOSWebhookCommandHandler(db, gateway, resultService,
             NullLogger<ProcessPayOSWebhookCommandHandler>.Instance);
 
@@ -219,8 +222,7 @@ public class PayOSSubscriptionTests
         // change between order creation and payment) — must not activate the subscription.
         var gateway = new FakePaymentGateway(webhookResult: new WebhookVerificationResult(
             orderCode, 39000, Success: true, TransactionId: "TXN-MISMATCH"));
-        var resultService = new SubscriptionPaymentResultService(db,
-            NullLogger<SubscriptionPaymentResultService>.Instance);
+        var resultService = new SubscriptionPaymentResultService(db, TimeProvider.System, NullLogger<SubscriptionPaymentResultService>.Instance);
         var handler = new ProcessPayOSWebhookCommandHandler(db, gateway, resultService,
             NullLogger<ProcessPayOSWebhookCommandHandler>.Instance);
 
@@ -256,8 +258,7 @@ public class PayOSSubscriptionTests
 
         var gateway = new FakePaymentGateway(webhookResult: new WebhookVerificationResult(
             orderCode, 49000, Success: true, TransactionId: "TXN-DUP"));
-        var resultService = new SubscriptionPaymentResultService(db,
-            NullLogger<SubscriptionPaymentResultService>.Instance);
+        var resultService = new SubscriptionPaymentResultService(db, TimeProvider.System, NullLogger<SubscriptionPaymentResultService>.Instance);
         var handler = new ProcessPayOSWebhookCommandHandler(db, gateway, resultService,
             NullLogger<ProcessPayOSWebhookCommandHandler>.Instance);
 
@@ -274,8 +275,7 @@ public class PayOSSubscriptionTests
 
         var gateway = new FakePaymentGateway(webhookResult: new WebhookVerificationResult(
             777777L, 10000, Success: true, TransactionId: null));
-        var resultService = new SubscriptionPaymentResultService(db,
-            NullLogger<SubscriptionPaymentResultService>.Instance);
+        var resultService = new SubscriptionPaymentResultService(db, TimeProvider.System, NullLogger<SubscriptionPaymentResultService>.Instance);
         var handler = new ProcessPayOSWebhookCommandHandler(db, gateway, resultService,
             NullLogger<ProcessPayOSWebhookCommandHandler>.Instance);
 
@@ -301,7 +301,7 @@ public class PayOSSubscriptionTests
     private static GetPaymentStatusQueryHandler CreateStatusHandler(
         FinViet.Infrastructure.Persistence.Context.FinVietDbContext db, IPaymentGateway gateway) =>
         new(db, gateway,
-            new SubscriptionPaymentResultService(db, NullLogger<SubscriptionPaymentResultService>.Instance),
+            new SubscriptionPaymentResultService(db, TimeProvider.System, NullLogger<SubscriptionPaymentResultService>.Instance),
             NullLogger<GetPaymentStatusQueryHandler>.Instance);
 
     [Fact]
@@ -441,7 +441,7 @@ public class PayOSSubscriptionTests
             new CustomerSubscription { SubscriptionId = Guid.NewGuid(), CustomerId = Guid.NewGuid(), Status = "active" });
         await db.SaveChangesAsync();
 
-        var handler = new GetCurrentSubscriptionQueryHandler(db);
+        var handler = new GetCurrentSubscriptionQueryHandler(db, TimeProvider.System);
         Assert.Null(await handler.Handle(new(customerId), default));
 
         var active = new CustomerSubscription
@@ -520,55 +520,5 @@ public class PayOSSubscriptionTests
 
         await Assert.ThrowsAsync<BadRequestException>(() =>
             handler.Handle(new ConfirmPayOSWebhookCommand(null), default));
-    }
-
-    // ── Fake gateway ────────────────────────────────────────────
-
-    private sealed class FakePaymentGateway : IPaymentGateway
-    {
-        private readonly string _qrCode;
-        private readonly string _checkoutUrl;
-        private readonly WebhookVerificationResult? _webhookResult;
-        private readonly PaymentStatusResult? _orderStatusResult;
-        private readonly Exception? _orderStatusException;
-        private readonly ConfirmWebhookResult? _confirmWebhookResult;
-        private readonly Exception? _confirmWebhookException;
-
-        public FakePaymentGateway(string qrCode = "", string checkoutUrl = "",
-            WebhookVerificationResult? webhookResult = null,
-            PaymentStatusResult? orderStatusResult = null,
-            Exception? orderStatusException = null,
-            ConfirmWebhookResult? confirmWebhookResult = null,
-            Exception? confirmWebhookException = null)
-        {
-            _qrCode = qrCode;
-            _checkoutUrl = checkoutUrl;
-            _webhookResult = webhookResult;
-            _orderStatusResult = orderStatusResult;
-            _orderStatusException = orderStatusException;
-            _confirmWebhookResult = confirmWebhookResult;
-            _confirmWebhookException = confirmWebhookException;
-        }
-
-        public Task<CreateOrderResult> CreateOrderAsync(
-            long orderCode, int amount, string description, DateTimeOffset expiry,
-            string returnUrl, string cancelUrl, CancellationToken cancellationToken = default) =>
-            Task.FromResult(new CreateOrderResult(_qrCode, _checkoutUrl));
-
-        public Task<WebhookVerificationResult> VerifyWebhookAsync(
-            string webhookBody, CancellationToken cancellationToken = default) =>
-            Task.FromResult(_webhookResult ?? throw new BadRequestException("No webhook result configured."));
-
-        public Task<PaymentStatusResult> GetOrderStatusAsync(
-            long orderCode, CancellationToken cancellationToken = default) =>
-            _orderStatusException is not null
-                ? Task.FromException<PaymentStatusResult>(_orderStatusException)
-                : Task.FromResult(_orderStatusResult ?? throw new BadRequestException("No order status configured."));
-
-        public Task<ConfirmWebhookResult> ConfirmWebhookAsync(
-            string webhookUrl, CancellationToken cancellationToken = default) =>
-            _confirmWebhookException is not null
-                ? Task.FromException<ConfirmWebhookResult>(_confirmWebhookException)
-                : Task.FromResult(_confirmWebhookResult ?? throw new BadRequestException("No confirm-webhook result configured."));
     }
 }

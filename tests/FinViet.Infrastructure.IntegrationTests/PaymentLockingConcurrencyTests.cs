@@ -37,8 +37,7 @@ public sealed class PaymentLockingConcurrencyTests
         async Task<bool> RunWebhookDeliveryAsync()
         {
             await using var db = TestDatabase.CreateDbContext(database.ConnectionString);
-            var resultService = new SubscriptionPaymentResultService(
-                db, NullLogger<SubscriptionPaymentResultService>.Instance);
+            var resultService = new SubscriptionPaymentResultService(db, TimeProvider.System, NullLogger<SubscriptionPaymentResultService>.Instance);
             var handler = new ProcessPayOSWebhookCommandHandler(
                 db,
                 new FakeGateway(orderCode),
@@ -68,8 +67,7 @@ public sealed class PaymentLockingConcurrencyTests
         async Task<bool> RunWebhookDeliveryAsync()
         {
             await using var db = TestDatabase.CreateDbContext(database.ConnectionString);
-            var resultService = new SubscriptionPaymentResultService(
-                db, NullLogger<SubscriptionPaymentResultService>.Instance);
+            var resultService = new SubscriptionPaymentResultService(db, TimeProvider.System, NullLogger<SubscriptionPaymentResultService>.Instance);
             var handler = new ProcessPayOSWebhookCommandHandler(
                 db,
                 new FakeGateway(orderCode),
@@ -82,8 +80,7 @@ public sealed class PaymentLockingConcurrencyTests
         async Task RunReconciliationAsync()
         {
             await using var db = TestDatabase.CreateDbContext(database.ConnectionString);
-            var resultService = new SubscriptionPaymentResultService(
-                db, NullLogger<SubscriptionPaymentResultService>.Instance);
+            var resultService = new SubscriptionPaymentResultService(db, TimeProvider.System, NullLogger<SubscriptionPaymentResultService>.Instance);
             var handler = new GetPaymentStatusQueryHandler(
                 db,
                 new FakeGateway(orderCode),

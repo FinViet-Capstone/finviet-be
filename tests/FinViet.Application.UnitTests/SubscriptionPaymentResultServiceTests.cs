@@ -36,7 +36,7 @@ public class SubscriptionPaymentResultServiceTests
     public async Task InitialSuccess_CreatesSubscription_LockedPriceMatchesPaymentAmount()
     {
         await using var db = TestDbContextFactory.Create();
-        var service = new SubscriptionPaymentResultService(db, NullLogger<SubscriptionPaymentResultService>.Instance);
+        var service = new SubscriptionPaymentResultService(db, TimeProvider.System, NullLogger<SubscriptionPaymentResultService>.Instance);
 
         var plan = NewPlan(price: 109000m, billingIntervalMonths: 1);
         var payment = NewPayment(plan.PlanId, amount: 59000m, chargeType: "initial");
@@ -60,7 +60,7 @@ public class SubscriptionPaymentResultServiceTests
     public async Task InitialFailure_MarksPaymentFailed_NoSubscriptionCreated()
     {
         await using var db = TestDbContextFactory.Create();
-        var service = new SubscriptionPaymentResultService(db, NullLogger<SubscriptionPaymentResultService>.Instance);
+        var service = new SubscriptionPaymentResultService(db, TimeProvider.System, NullLogger<SubscriptionPaymentResultService>.Instance);
 
         var plan = NewPlan();
         var payment = NewPayment(plan.PlanId, amount: 49000m, chargeType: "initial");
@@ -80,7 +80,7 @@ public class SubscriptionPaymentResultServiceTests
     public async Task AmountMismatch_MarksPaymentFailed_NoSubscriptionCreated_EvenWhenProviderReportsSuccess()
     {
         await using var db = TestDbContextFactory.Create();
-        var service = new SubscriptionPaymentResultService(db, NullLogger<SubscriptionPaymentResultService>.Instance);
+        var service = new SubscriptionPaymentResultService(db, TimeProvider.System, NullLogger<SubscriptionPaymentResultService>.Instance);
 
         var plan = NewPlan();
         var payment = NewPayment(plan.PlanId, amount: 49000m, chargeType: "initial");
@@ -97,41 +97,10 @@ public class SubscriptionPaymentResultServiceTests
     }
 
     [Fact]
-    public async Task RenewalSuccess_AdvancesFromPreviousNextBillingDate_NotFromToday()
-    {
-        await using var db = TestDbContextFactory.Create();
-        var service = new SubscriptionPaymentResultService(db, NullLogger<SubscriptionPaymentResultService>.Instance);
-
-        var plan = NewPlan(billingIntervalMonths: 1);
-        var originalNextBillingDate = new DateOnly(2026, 8, 1);
-        var subscription = new CustomerSubscription
-        {
-            SubscriptionId = Guid.NewGuid(),
-            PlanId = plan.PlanId,
-            Status = "past_due",
-            StartDate = new DateOnly(2026, 6, 1),
-            LockedPrice = 49000m,
-            AutoRenew = false,
-            NextBillingDate = originalNextBillingDate,
-        };
-        var payment = NewPayment(plan.PlanId, amount: 49000m, chargeType: "renewal", subscription.SubscriptionId);
-        db.SubscriptionPlans.Add(plan);
-        db.CustomerSubscriptions.Add(subscription);
-        db.Payments.Add(payment);
-        await db.SaveChangesAsync();
-
-        await service.ApplyResultAsync(payment, success: true, amount: 49000, "TXN-REF-002", """{"code":"00"}""");
-
-        var reloaded = await db.CustomerSubscriptions.SingleAsync(s => s.SubscriptionId == subscription.SubscriptionId);
-        Assert.Equal(originalNextBillingDate.AddMonths(1), reloaded.NextBillingDate);
-        Assert.Equal("active", reloaded.Status);
-    }
-
-    [Fact]
     public async Task AlreadyResolvedPayment_IsANoOp_IdempotentAgainstDuplicateWebhook()
     {
         await using var db = TestDbContextFactory.Create();
-        var service = new SubscriptionPaymentResultService(db, NullLogger<SubscriptionPaymentResultService>.Instance);
+        var service = new SubscriptionPaymentResultService(db, TimeProvider.System, NullLogger<SubscriptionPaymentResultService>.Instance);
 
         var plan = NewPlan();
         var payment = NewPayment(plan.PlanId, amount: 49000m, chargeType: "initial");

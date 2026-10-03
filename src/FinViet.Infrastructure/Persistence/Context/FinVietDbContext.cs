@@ -80,6 +80,8 @@ public partial class FinVietDbContext : DbContext
 
     public virtual DbSet<RagDocumentFile> RagDocumentFiles { get; set; }
 
+    public virtual DbSet<SubscriptionReminder> SubscriptionReminders { get; set; }
+
     public virtual DbSet<SepayLink> SepayLinks { get; set; }
 
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
@@ -950,6 +952,27 @@ public partial class FinVietDbContext : DbContext
                 .HasForeignKey(d => d.DocumentId)
                 .OnDelete(DeleteBehavior.Cascade)
                 .HasConstraintName("rag_chunk_document_id_fkey");
+        });
+
+        modelBuilder.Entity<SubscriptionReminder>(entity =>
+        {
+            entity.HasKey(e => new { e.SubscriptionId, e.Kind, e.PeriodEndDate })
+                .HasName("subscription_reminders_pkey");
+            entity.ToTable("subscription_reminders");
+
+            entity.Property(e => e.SubscriptionId).HasColumnName("subscription_id");
+            entity.Property(e => e.Kind)
+                .HasMaxLength(20)
+                .HasColumnName("kind");
+            entity.Property(e => e.PeriodEndDate).HasColumnName("period_end_date");
+            entity.Property(e => e.SentAt)
+                .HasDefaultValueSql("now()")
+                .HasColumnName("sent_at");
+
+            entity.HasOne(d => d.Subscription).WithMany()
+                .HasForeignKey(d => d.SubscriptionId)
+                .OnDelete(DeleteBehavior.Cascade)
+                .HasConstraintName("subscription_reminders_subscription_id_fkey");
         });
 
         modelBuilder.Entity<RagDocumentFile>(entity =>

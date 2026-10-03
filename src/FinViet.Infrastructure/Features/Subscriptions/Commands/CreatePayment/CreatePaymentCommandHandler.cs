@@ -16,7 +16,6 @@ namespace FinViet.Infrastructure.Features.Subscriptions.Commands.CreatePayment;
 internal class CreatePaymentCommandHandler : IRequestHandler<CreatePaymentCommand, CreatePaymentResultDto>
 {
     private const string Operation = "subscription-create-payment";
-    private const string Active = "active";
     private const int MaxOrderCodeAttempts = 5;
 
     private readonly FinVietDbContext _db;
@@ -68,11 +67,12 @@ internal class CreatePaymentCommandHandler : IRequestHandler<CreatePaymentComman
             if (!plan.IsActive)
                 throw new BusinessRuleException("This plan is no longer offered.", "plan_discontinued");
 
-            var hasActiveSubscription = await _db.CustomerSubscriptions
+            // Each payOS payment buys one more billing interval, so an active or lapsed subscriber
+            // may always pay again (finviet-be#138). The charge type here is provisional;
+            // SubscriptionPaymentResultService records what the payment actually did once paid.
+            var hasSubscription = await _db.CustomerSubscriptions
                 .AsNoTracking()
-                .AnyAsync(s => s.CustomerId == request.CustomerId && s.Status == Active, cancellationToken);
-            if (hasActiveSubscription)
-                throw new BusinessRuleException("You already have an active subscription.", "already_subscribed");
+                .AnyAsync(s => s.CustomerId == request.CustomerId, cancellationToken);
 
             payment = new Payment
             {
@@ -81,7 +81,7 @@ internal class CreatePaymentCommandHandler : IRequestHandler<CreatePaymentComman
                 PlanId = plan.PlanId,
                 SubscriptionId = null,
                 Amount = plan.Price,
-                ChargeType = "initial",
+                ChargeType = hasSubscription ? "renewal" : "initial",
                 Status = "pending",
                 OrderCode = OrderCodeFactory(),
                 IdempotencyKey = request.IdempotencyKey,

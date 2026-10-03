@@ -17,9 +17,31 @@ The client renders that string into a scannable QR code itself; PayOS does not h
 3. Read `data.orderCode`, `data.qrCode`, `data.amount` (VND), and `data.expiresAt` (UTC, 15 minutes after creation). Render `qrCode` locally as a QR code. The amount is taken from the server's plan price, never the client.
 4. Poll `GET /api/subscriptions/payment-status/{orderCode}` with the same customer's bearer token, for example every 3 seconds while the checkout is visible. Stop on a terminal status or when leaving the screen. Another customer's order code returns 404. Show success only for `data.status == "succeeded"`; `data.subscriptionId` then identifies the activated subscription.
 5. At checkout expiry, stop offering the old QR. A pending payment remains pending until the webhook arrives or the next status poll triggers reconciliation; time passing alone is not proof that payment failed or succeeded. Recheck status before offering another attempt. Use a new idempotency key for a new purchase attempt; reuse the original key and identical body only for network retries.
-6. `GET /api/subscriptions/current` returns the signed-in customer's `active`/`past_due` subscription, or null. Use it to avoid offering a second purchase while a current subscription exists.
+6. `GET /api/subscriptions/current` returns the signed-in customer's subscription while its paid period covers today, or null once it has lapsed.
+   `data.expiresAt` is the last covered day (Vietnam calendar date, inclusive) and `data.nextBillingDate` the day after it.
 
-A `create-payment` call fails with `already_subscribed` (422) if the customer already holds an `active` subscription, or `plan_discontinued` (422) if the plan is no longer offered.
+A `create-payment` call fails with `plan_discontinued` (422) if the plan is no longer offered.
+It does not refuse existing subscribers: each payment buys one more billing interval (see below), so offer "Gia hạn" (renew) while a subscription is current and "Đăng ký lại" (resubscribe) after it lapses.
+
+## Paid periods, expiry and renewal
+
+payOS charges here are one-off QR payments, so each successful payment buys exactly one billing interval of the paid plan:
+
+- **No current subscription:** a new subscription covers today through `today + interval - 1 day`.
+- **Paying while active:** the subscription is extended from its current `expiresAt`, not from today, so paying early loses no days.
+- **Paying after it lapsed:** the customer's existing subscription row is reactivated for a new period starting today.
+- **Two paid orders for the same period** (double tap, or web and mobile): both succeed and stack two intervals. A payment payOS confirmed as paid is never stored as `failed`.
+- The latest paid plan governs: the subscription takes that plan and its price.
+
+`SubscriptionLifecycleScheduler` runs shortly after startup and then every `Subscriptions:SweepIntervalMinutes` (default 60).
+Each run marks active subscriptions whose period has ended as `expired`, and sends the customer an in-app notification (type `announcement`, entity `system`):
+
+- `Subscriptions:ReminderLeadDays` (default 3) days before the end date: "sắp hết hạn";
+- on the end date: "hết hạn hôm nay";
+- once it has expired: "đã hết hạn".
+
+Each reminder is sent at most once per paid period (`subscription_reminders`), only between `Subscriptions:ReminderStartHour` and `ReminderEndHour` Vietnam time (default 08:00-21:00), and only to active accounts.
+Readers (`GET /subscriptions/current`, admin analytics, the admin user list) also check the end date themselves, so a lapsed subscription stops counting as premium even before the next run.
 
 ## Server-side confirmation: webhook plus self-healing reconciliation
 
@@ -36,7 +58,7 @@ Both paths share one outcome handler that:
 
 - Row-locks the `Payment` (`FOR UPDATE`) before applying a result, and is a no-op if the payment is no longer `pending` — so a webhook retry, or a race between the webhook and a status poll, is always safe.
 - Treats a reported amount that doesn't match the order's stored amount as a failure regardless of the provider's success flag, as defense-in-depth against a plan-price change or a mis-provisioned order.
-- On a genuine success for an initial charge, creates the `CustomerSubscription` (`active`, `NextBillingDate` = today + the plan's billing interval) and links it back onto the `Payment`.
+- On a genuine success, takes a per-customer advisory lock, then creates, extends or reactivates the customer's `CustomerSubscription` as described above and links it back onto the `Payment` (recording `charge_type` as `initial` or `renewal` by what actually happened).
 
 ## Merchant setup and verification
 
