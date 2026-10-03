@@ -22,6 +22,10 @@ namespace FinViet.Infrastructure.IntegrationTests;
 /// </summary>
 public sealed class PaymentLockingConcurrencyTests
 {
+    // Persisted verbatim into payments.raw_webhook_payload (jsonb), so it must be valid JSON like a
+    // real PayOS delivery; FakeGateway ignores its content.
+    private const string WebhookBody = """{"code":"00","desc":"success","success":true}""";
+
     [SkippableFact]
     public async Task ConcurrentWebhookDeliveries_ForSameOrderCode_ApplyResultExactlyOnce()
     {
@@ -41,7 +45,7 @@ public sealed class PaymentLockingConcurrencyTests
                 resultService,
                 NullLogger<ProcessPayOSWebhookCommandHandler>.Instance);
 
-            return await handler.Handle(new ProcessPayOSWebhookCommand("raw-body"), CancellationToken.None);
+            return await handler.Handle(new ProcessPayOSWebhookCommand(WebhookBody), CancellationToken.None);
         }
 
         // Two concurrent webhook deliveries for the same orderCode (a PayOS retry racing the
@@ -72,7 +76,7 @@ public sealed class PaymentLockingConcurrencyTests
                 resultService,
                 NullLogger<ProcessPayOSWebhookCommandHandler>.Instance);
 
-            return await handler.Handle(new ProcessPayOSWebhookCommand("raw-body"), CancellationToken.None);
+            return await handler.Handle(new ProcessPayOSWebhookCommand(WebhookBody), CancellationToken.None);
         }
 
         async Task RunReconciliationAsync()

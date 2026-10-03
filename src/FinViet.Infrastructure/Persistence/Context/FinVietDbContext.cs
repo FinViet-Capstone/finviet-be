@@ -78,6 +78,8 @@ public partial class FinVietDbContext : DbContext
 
     public virtual DbSet<RagChunk> RagChunks { get; set; }
 
+    public virtual DbSet<RagDocumentFile> RagDocumentFiles { get; set; }
+
     public virtual DbSet<SepayLink> SepayLinks { get; set; }
 
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
@@ -948,6 +950,27 @@ public partial class FinVietDbContext : DbContext
                 .HasForeignKey(d => d.DocumentId)
                 .OnDelete(DeleteBehavior.Cascade)
                 .HasConstraintName("rag_chunk_document_id_fkey");
+        });
+
+        modelBuilder.Entity<RagDocumentFile>(entity =>
+        {
+            entity.HasKey(e => e.DocumentId).HasName("rag_document_file_pkey");
+            entity.ToTable("rag_document_file");
+
+            entity.Property(e => e.DocumentId).HasColumnName("document_id");
+            entity.Property(e => e.Content).HasColumnName("content");
+            entity.Property(e => e.ContentType)
+                .HasMaxLength(100)
+                .HasColumnName("content_type");
+            entity.Property(e => e.SizeBytes).HasColumnName("size_bytes");
+            entity.Property(e => e.CreatedAt)
+                .HasDefaultValueSql("now()")
+                .HasColumnName("created_at");
+
+            entity.HasOne(d => d.Document).WithOne(p => p.File)
+                .HasForeignKey<RagDocumentFile>(d => d.DocumentId)
+                .OnDelete(DeleteBehavior.Cascade)
+                .HasConstraintName("rag_document_file_document_id_fkey");
         });
 
         OnModelCreatingPartial(modelBuilder);

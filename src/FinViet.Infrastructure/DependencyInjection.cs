@@ -28,14 +28,12 @@ namespace FinViet.Infrastructure;
 
 public static class DependencyInjection
 {
-    public static IServiceCollection AddInfrastructureServices(
-        this IServiceCollection services,
-        IConfiguration configuration)
+    /// <summary>The single Npgsql data source configuration (enum mappings, pgvector) shared by the
+    /// app and the real-Postgres integration tests, so the two can't drift apart.</summary>
+    public static NpgsqlDataSource BuildDataSource(string? connectionString)
     {
-        // Database — build an Npgsql data source so Postgres enums can be mapped to CLR enums.
         // Default snake_case name translator maps e.g. VerifyEmail -> verify_email.
-        var dataSourceBuilder = new NpgsqlDataSourceBuilder(
-            configuration.GetConnectionString("DefaultConnection"));
+        var dataSourceBuilder = new NpgsqlDataSourceBuilder(connectionString);
         dataSourceBuilder.MapEnum<EmailTokenType>("email_token_type");
         dataSourceBuilder.MapEnum<Gender>("gender");
         dataSourceBuilder.MapEnum<AppLanguage>("app_language");
@@ -57,7 +55,15 @@ public static class DependencyInjection
         // migrations through a separate raw connection before this data source is first opened.
         dataSourceBuilder.EnableUnmappedTypes();
         dataSourceBuilder.UseVector();
-        var dataSource = dataSourceBuilder.Build();
+        return dataSourceBuilder.Build();
+    }
+
+    public static IServiceCollection AddInfrastructureServices(
+        this IServiceCollection services,
+        IConfiguration configuration)
+    {
+        // Database — build an Npgsql data source so Postgres enums can be mapped to CLR enums.
+        var dataSource = BuildDataSource(configuration.GetConnectionString("DefaultConnection"));
 
         void ConfigureDatabase(DbContextOptionsBuilder options) =>
             options.UseNpgsql(dataSource, o => o.UseVector());

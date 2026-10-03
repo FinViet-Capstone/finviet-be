@@ -1,4 +1,3 @@
-using FinViet.Domain.Enums;
 using FinViet.Infrastructure.Persistence.Context;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.FileProviders;
@@ -17,27 +16,8 @@ internal static class TestDatabase
 {
     internal static FinVietDbContext CreateDbContext(string connectionString)
     {
-        var dataSourceBuilder = new NpgsqlDataSourceBuilder(connectionString);
-        dataSourceBuilder.MapEnum<EmailTokenType>("email_token_type");
-        dataSourceBuilder.MapEnum<Gender>("gender");
-        dataSourceBuilder.MapEnum<AppLanguage>("app_language");
-        dataSourceBuilder.MapEnum<AppTheme>("app_theme");
-        dataSourceBuilder.MapEnum<WalletType>("wallet_type");
-        dataSourceBuilder.MapEnum<TransactionType>("transaction_type");
-        dataSourceBuilder.MapEnum<EntryMethod>("entry_method");
-        dataSourceBuilder.MapEnum<CategoryType>("category_type");
-        dataSourceBuilder.MapEnum<CategorySource>("category_source");
-        dataSourceBuilder.MapEnum<NotificationType>("notification_type");
-        dataSourceBuilder.MapEnum<NotificationEntityType>("notification_entity_type");
-        dataSourceBuilder.MapEnum<SubscriptionStatus>("subscription_status");
-        dataSourceBuilder.MapEnum<ChatRole>("chat_role");
-        dataSourceBuilder.MapEnum<ScoreView>("score_view");
-        dataSourceBuilder.MapEnum<ScoreColor>("score_color");
-        dataSourceBuilder.EnableUnmappedTypes();
-        dataSourceBuilder.UseVector();
-
         var options = new DbContextOptionsBuilder<FinVietDbContext>()
-            .UseNpgsql(dataSourceBuilder.Build(), options => options.UseVector())
+            .UseNpgsql(DependencyInjection.BuildDataSource(connectionString), options => options.UseVector())
             .Options;
         return new FinVietDbContext(options);
     }

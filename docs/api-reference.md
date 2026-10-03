@@ -618,6 +618,8 @@ Only computed when `deadline` is set. `monthsRemaining` = whole calendar months 
 | PATCH | `/chat/sessions/{sessionId:guid}` | Customer | `UpdateChatSessionRequest` | `ApiResponse<ChatSessionResponse>` |
 | DELETE | `/chat/sessions/{sessionId:guid}` | Customer | — | 204 |
 | POST | `/documents` | Admin | multipart: `file` (PDF, ≤20 MB) + `title?` | `ApiResponse<Guid>` (documentId) |
+| GET | `/documents` | Admin | — | `ApiResponse<RagDocumentResponse[]>` |
+| GET | `/documents/{id:guid}/file` | Admin | — | raw file bytes (`application/pdf`) (404) |
 | GET | `/prompt-configs` | Admin | — | `ApiResponse<AiPromptConfigDto[]>` |
 | PUT | `/prompt-configs/{featureKey}` | Admin | `UpdateAiPromptConfigRequest` | `ApiResponse<AiPromptConfigDto>` (404) |
 | GET | `/prompt-configs/{featureKey}/history` | Admin | — | `ApiResponse<AiPromptConfigHistoryDto[]>` (404) |
@@ -696,10 +698,13 @@ Only computed when `deadline` is set. `monthsRemaining` = whole calendar months 
 
 ### POST `/documents` (Admin)
 **Authorization/validation**: Exposed by a separate Admin-only controller at the existing `/api/ai/documents` route, avoiding combined Customer+Admin authorization. `[RequestSizeLimit(20 MB)]`; null/empty file → 400. First 4 bytes must be the PDF magic number (`%PDF`) → 400 "Tệp không phải PDF hợp lệ." otherwise. Empty extracted text → 400.
-**Business logic**: PdfPig extracts pages and chunks text into 800-character windows with 150-character overlap. `gemini-embedding-001` generates exactly 768 dimensions through the official SDK; wrong/empty output fails as provider unavailable. Documents are global (`customerId=null`). The uploaded PDF's raw bytes are now persisted to `wwwroot/documents/{id}.pdf` and served statically at `Uri = "/documents/{id}.pdf"` (previously discarded after text extraction, leaving `Uri` null). Existing Ollama vectors must be re-indexed before `Gemini:RagEnabled=true`; see `docs/gemini-setup.md`.
+**Business logic**: PdfPig extracts pages and chunks text into 800-character windows with 150-character overlap. `gemini-embedding-001` generates exactly 768 dimensions through the official SDK; wrong/empty output fails as provider unavailable. Documents are global (`customerId=null`). The uploaded PDF's raw bytes are stored in `rag_document_file` (V0014) in the same `SaveChanges` as the document and its chunks, and `Uri = "/api/ai/documents/{id}/file"`. They used to be written to `wwwroot/documents/` on local disk, which Render wipes on every redeploy/restart. Existing Ollama vectors must be re-indexed before `Gemini:RagEnabled=true`; see `docs/gemini-setup.md`.
 
 ### GET `/documents` (Admin)
-**Business logic**: Lists every `RagDocument` (global PDFs and per-customer weekly-report narratives) newest first: `{ id, title, sourceType, uri?, createdAt, chunkCount }`. `uri` is a servable `/documents/{id}.pdf` path for `sourceType="pdf"`; for `sourceType="weekly_report"` it's a non-dereferenceable `report:{id}` idempotency marker, not a real link. No pagination — admin-curated, low document volume.
+**Business logic**: Lists only GLOBAL knowledge documents (`customerId=null`, `sourceType="pdf"`) newest first: `{ id, title, sourceType, uri?, createdAt, chunkCount, hasFile }`. Per-customer weekly-report narratives are private RAG corpus entries and are never listed. `hasFile=false` means the document was ingested before V0014: its chunks still serve RAG, but the original file is gone and must be re-uploaded. No pagination — admin-curated, low document volume.
+
+### GET `/documents/{id:guid}/file` (Admin)
+**Business logic**: Returns the original uploaded bytes of a global knowledge document with its stored content type, for the admin Knowledge Base preview. 404 when the document doesn't exist, isn't a global PDF, or has no stored file (`hasFile=false`).
 
 ### AI prompt configs (`/prompt-configs`, Admin)
 Admin-tunable prompt settings backing every Gemini generation call (`ai_prompt_configs`, seeded by `V0010`). Four fixed feature keys: `chat`, `weekly_report`, `score_comment`, `classification`.

@@ -25,4 +25,7 @@ public partial class RagDocument
     public DateTime CreatedAt { get; set; }
 
     public virtual ICollection<RagChunk> Chunks { get; set; } = new List<RagChunk>();
+
+    /// <summary>The original uploaded file; only global PDFs have one.</summary>
+    public virtual RagDocumentFile? File { get; set; }
 }
