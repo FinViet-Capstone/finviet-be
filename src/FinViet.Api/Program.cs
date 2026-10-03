@@ -1,5 +1,6 @@
 using FinViet.Api.Middlewares;
 using FinViet.Application;
+using FinViet.Application.Common.Exceptions;
 using FinViet.Application.Interfaces;
 using FinViet.Infrastructure;
 using FinViet.Infrastructure.Persistence;
@@ -8,7 +9,9 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
+using System.Security.Claims;
 using System.Text;
+using System.Text.Json;
 
 
 AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
@@ -47,6 +50,9 @@ builder.Services.AddControllers().AddJsonOptions(options =>
 var jwtSecret = builder.Configuration["Jwt:Secret"]
     ?? throw new InvalidOperationException("Jwt:Secret is not configured.");
 
+// HttpContext.Items flag set by OnTokenValidated when the customer is locked/deleted.
+const string AccountDeactivatedItemKey = "FinViet.AccountDeactivated";
+
 builder.Services.AddAuthentication(options =>
 {
     options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
@@ -63,6 +69,53 @@ builder.Services.AddAuthentication(options =>
         ValidateAudience        = true,
         ValidAudience           = builder.Configuration["Jwt:Audience"],
         ClockSkew               = TimeSpan.Zero
+    };
+
+    // Access tokens are stateless JWTs (45 min). Without this check a customer locked by
+    // an admin keeps full API access until the token expires, because deactivation only
+    // revokes refresh tokens. Re-check the account on every authenticated customer request.
+    options.Events = new JwtBearerEvents
+    {
+        OnTokenValidated = async context =>
+        {
+            var principal = context.Principal;
+            if (principal is null || !principal.IsInRole("Customer")) return; // Admin tokens: unaffected
+
+            var idValue = principal.FindFirst("customerId")?.Value
+                       ?? principal.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (!Guid.TryParse(idValue, out var customerId))
+            {
+                context.Fail("Token is missing a valid customer id.");
+                return;
+            }
+
+            var statusService = context.HttpContext.RequestServices
+                .GetRequiredService<ICustomerAccountStatusService>();
+            if (!await statusService.IsActiveAsync(customerId, context.HttpContext.RequestAborted))
+            {
+                context.HttpContext.Items[AccountDeactivatedItemKey] = true;
+                context.Fail("Account is deactivated.");
+            }
+        },
+
+        // A failed OnTokenValidated normally becomes a bare 401, which the mobile client
+        // would treat as "access token expired" and try to refresh. Answer with 403 + a
+        // stable code instead so the client force-logs-out and tells the user why.
+        OnChallenge = async context =>
+        {
+            if (!context.HttpContext.Items.ContainsKey(AccountDeactivatedItemKey)) return;
+
+            context.HandleResponse();
+            context.Response.StatusCode  = StatusCodes.Status403Forbidden;
+            context.Response.ContentType = "application/json";
+            await context.Response.WriteAsync(JsonSerializer.Serialize(new
+            {
+                success = false,
+                message = "Your account has been deactivated. Please contact support.",
+                code    = AccountStatusCodes.AccountDeactivated,
+                errors  = (object?)null
+            }, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase }));
+        }
     };
 });
 

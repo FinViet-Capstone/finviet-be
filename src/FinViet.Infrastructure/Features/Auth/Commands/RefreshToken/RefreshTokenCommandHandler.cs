@@ -29,9 +29,12 @@ public class RefreshTokenCommandHandler : IRequestHandler<RefreshTokenCommand, A
             .FirstOrDefaultAsync(t => t.Token == request.RefreshToken, cancellationToken);
 
         if (stored is null)          throw new UnauthorizedException("Invalid refresh token.");
+        // Checked before IsRevoked: deactivation also revokes every refresh token, and the
+        // client needs the specific code to show "account locked" instead of a generic expiry.
+        if (!stored.Customer.IsActive || stored.Customer.DeletedAt != null)
+            throw new ForbiddenException("Account is deactivated.", AccountStatusCodes.AccountDeactivated);
         if (stored.IsRevoked)        throw new UnauthorizedException("Refresh token has been revoked.");
         if (stored.ExpiresAt < DateTime.UtcNow) throw new UnauthorizedException("Refresh token has expired.");
-        if (!stored.Customer.IsActive) throw new ForbiddenException("Account is deactivated.");
 
         // Rotation: revoke old
         stored.IsRevoked = true;

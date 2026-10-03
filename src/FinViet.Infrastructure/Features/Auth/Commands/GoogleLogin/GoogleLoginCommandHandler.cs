@@ -80,7 +80,7 @@ public class GoogleLoginCommandHandler : IRequestHandler<GoogleLoginCommand, Aut
         else
         {
             if (!customer.IsActive)
-                throw new ForbiddenException("This account has been deactivated.");
+                throw new ForbiddenException("This account has been deactivated.", AccountStatusCodes.AccountDeactivated);
 
             if (customer.GoogleId is not null && customer.GoogleId != firebaseUser.Uid)
                 throw new ConflictException("This account is already linked to another Google identity.");

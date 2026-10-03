@@ -22,7 +22,13 @@ public class UnauthorizedException : Exception
 /// <summary>Thrown when the caller does not have permission (→ HTTP 403).</summary>
 public class ForbiddenException : Exception
 {
-    public ForbiddenException(string message = "Access denied.") : base(message) { }
+    /// <summary>Optional machine-readable code (e.g. "account_deactivated") for clients.</summary>
+    public string? Code { get; }
+
+    public ForbiddenException(string message = "Access denied.", string? code = null) : base(message)
+    {
+        Code = code;
+    }
 }
 
 /// <summary>General bad request error (→ HTTP 400).</summary>

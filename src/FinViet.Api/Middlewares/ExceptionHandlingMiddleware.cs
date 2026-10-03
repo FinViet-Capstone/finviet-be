@@ -108,7 +108,7 @@ public class ExceptionHandlingMiddleware
                                          (StatusCodes.Status404NotFound,      nfe2.Message, null, null),
             ConflictException ce      => (StatusCodes.Status409Conflict,      ce.Message,  null, null),
             UnauthorizedException ue  => (StatusCodes.Status401Unauthorized,  ue.Message,  null, null),
-            ForbiddenException fe     => (StatusCodes.Status403Forbidden,     fe.Message,  null, null),
+            ForbiddenException fe     => (StatusCodes.Status403Forbidden,     fe.Message,  null, fe.Code),
             UnauthorizedAccessException uae =>
                                          (StatusCodes.Status401Unauthorized,  uae.Message, null, null),
             _                         => (StatusCodes.Status500InternalServerError,
