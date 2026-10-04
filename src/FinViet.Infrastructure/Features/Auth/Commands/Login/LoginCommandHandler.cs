@@ -26,12 +26,18 @@ public class LoginCommandHandler : IRequestHandler<LoginCommand, AuthResponseDto
 
     public async Task<AuthResponseDto> Handle(LoginCommand request, CancellationToken cancellationToken)
     {
+        // Deleted accounts read as unknown. A locked one is only reported as locked once the
+        // password checks out, so this can't be used to probe which emails exist or are locked;
+        // the code matches Google login and token refresh so the app shows "account locked".
         var customer = await _db.Customers
             .Include(c => c.Setting)
-            .FirstOrDefaultAsync(c => c.Email == request.Email.ToLower() && c.IsActive, cancellationToken);
+            .FirstOrDefaultAsync(c => c.Email == request.Email.ToLower() && c.DeletedAt == null, cancellationToken);
 
         if (customer is null || !BCrypt.Net.BCrypt.Verify(request.Password, customer.PasswordHash))
             throw new UnauthorizedException("Invalid email or password.");
+
+        if (!customer.IsActive)
+            throw new ForbiddenException("This account has been deactivated.", AccountStatusCodes.AccountDeactivated);
 
         if (!customer.IsEmailVerified)
             throw new BadRequestException("Please verify your email before logging in.");
